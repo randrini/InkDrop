@@ -1,105 +1,71 @@
-    .calendar-page-head {
+    /* Calendar page */
+    .calendar-page {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
       gap: 12px;
+    }
+    .calendar-page-head {
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid var(--line-soft);
-      padding: 0 0 10px;
+      gap: 12px;
+      flex-wrap: wrap;
     }
-    .calendar-page-head h2 {
-      margin: 0;
-      font-size: var(--font-2xl);
-      line-height: 1.15;
-    }
+    .calendar-page-head h2 { font-size: var(--font-xl); }
+    .calendar-page-head .mini { color: var(--text-secondary); font-size: 12px; }
     .calendar-window-control {
-      display: inline-flex;
+      display: flex;
       align-items: center;
       gap: 6px;
     }
     .calendar-window-control select {
-      min-height: 32px;
+      padding: 5px 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 12px;
     }
     .calendar-page-body {
       display: grid;
-      gap: 12px;
-    }
-    .calendar-summary-row {
-      color: var(--muted);
-    }
-    .calendar-forward-note {
-      border: 1px solid var(--line-soft);
-      border-radius: 6px;
-      padding: 8px 10px;
-      background: rgba(114, 210, 255, .05);
-    }
-    .calendar-error {
-      color: var(--bad);
-    }
-    .calendar-truncated-note {
-      color: var(--muted);
-    }
-    .calendar-day-list {
-      display: grid;
-      gap: 10px;
-    }
-    .calendar-day-card {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px 12px;
-      background: var(--panel);
-      display: grid;
       gap: 8px;
     }
-    .calendar-day-today {
-      border-color: rgba(114, 210, 255, .48);
-      background: rgba(18, 29, 45, .5);
+    .calendar-page-body .mini { color: var(--text-muted); font-size: 12px; }
+
+    /* Calendar day */
+    .calendar-day {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 12px 16px;
     }
-    .calendar-day-head {
+    .calendar-day-header {
       display: flex;
-      align-items: baseline;
-      gap: 8px;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
     }
-    .calendar-day-head strong {
+    .calendar-day-header strong {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-size: 16px;
       color: var(--text);
-      font-size: var(--font-md);
-      font-weight: var(--weight-semibold);
     }
-    .calendar-today-badge {
-      border: 1px solid rgba(114, 210, 255, .48);
-      border-radius: 999px;
-      padding: 1px 8px;
-      color: var(--accent);
-      font-size: var(--font-2xs);
-      font-weight: var(--weight-bold);
-      text-transform: uppercase;
+    .calendar-day-header span {
+      font-size: 12px;
+      color: var(--text-muted);
     }
-    .calendar-entry-list {
+    .calendar-day-items {
       display: grid;
-      gap: 6px;
+      gap: 4px;
     }
-    .calendar-entry-row {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto auto;
+    .calendar-item {
+      display: flex;
       align-items: center;
       gap: 8px;
-      min-width: 0;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
     }
-    .calendar-entry-title {
-      overflow-wrap: anywhere;
-      color: var(--text);
-    }
-    .calendar-entry-unit,
-    .calendar-entry-status {
-      white-space: nowrap;
-    }
-    .calendar-status-pip {
-      width: 9px;
-      height: 9px;
-      border-radius: 999px;
-      flex: 0 0 auto;
-      background: var(--muted);
-    }
-    .calendar-status-pip.calendar-status-good { background: var(--good); }
-    .calendar-status-pip.calendar-status-warn { background: var(--warn); }
-    .calendar-status-pip.calendar-status-accent { background: var(--accent); }
-    .calendar-status-pip.calendar-status-muted { background: var(--muted); }
+    .calendar-item:hover { background: var(--surface-2); }
+    .calendar-item strong { color: var(--text); }
+    .calendar-item span { color: var(--text-muted); font-size: 12px; }
+    .calendar-item .badge { font-size: 10px; }

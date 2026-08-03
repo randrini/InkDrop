@@ -736,14 +736,20 @@ HTML = r"""<!doctype html>
   <link rel="icon" type="image/png" href="/inkdrop-logo-mark.png?v=20260728-opaque-logo">
   <link rel="apple-touch-icon" href="/inkdrop-logo-mark.png?v=20260728-opaque-logo">
   <title>InkDrop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
   <style id="inkdrop-critical-fallback">
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #181c21; color: #dce4ec; }
+    :root { color-scheme: dark; font-family: 'DM Sans', system-ui, sans-serif; background: #0f1117; color: #dce4ec; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #181c21; color: #dce4ec; }
-    main { width: min(1280px, calc(100vw - 24px)); margin: 0 auto; padding: 12px 0 32px; }
-    .arr-nav-shell { display: grid; gap: 8px; padding: 10px; border: 1px solid #343c46; background: #1e2329; }
-    .arr-nav, .arr-settings-subnav, .arr-activity-subnav { display: flex; flex-wrap: wrap; gap: 6px; }
-    button, input, select { min-height: 34px; border: 1px solid #46515d; background: #252b32; color: inherit; padding: 6px 9px; }
+    body { margin: 0; background: #0f1117; color: #dce4ec; min-height: 100vh; }
+    .inkdrop-app-layout { display: flex; min-height: 100vh; }
+    .inkdrop-sidebar { width: 240px; flex-shrink: 0; background: #13161e; border-right: 1px solid #1e2330; display: flex; flex-direction: column; }
+    .inkdrop-sidebar.collapsed { width: 60px; }
+    .inkdrop-content { flex: 1; min-width: 0; padding: 16px 24px 40px; max-width: 1400px; }
+    .arr-nav-shell { display: flex; flex-direction: column; gap: 2px; padding: 8px; }
+    .arr-nav, .arr-settings-subnav, .arr-activity-subnav { display: flex; flex-direction: column; gap: 2px; }
+    button, input, select { min-height: 34px; border: 1px solid #2a3040; background: #1a1e2a; color: inherit; padding: 6px 9px; border-radius: 6px; }
     [hidden] { display: none !important; }
   </style>
   <link rel="stylesheet" href="/static/css/inkdrop.css?v=__INKDROP_UI_CSS_VERSION__" onload="document.getElementById('inkdrop-critical-fallback')?.remove()">
@@ -756,91 +762,85 @@ HTML = r"""<!doctype html>
 <body>
   <div id="inkdropAuthRoot" class="inkdrop-auth-root" aria-live="polite"></div>
   <main id="inkdropAppShell" hidden>
-    <header>
-      <div class="inkdrop-header-brand">
-        <span class="inkdrop-logo-mark" aria-hidden="true"><img class="inkdrop-logo-img" src="/inkdrop-logo-mark.png?v=20260728-opaque-logo" alt="" loading="eager" decoding="async"></span>
-        <div>
-          <h1>InkDrop</h1>
-          <p class="lede">Add or monitor a series. InkDrop keeps missing issues moving through automation and separates real decisions from parked source checks.</p>
-      </div>
-      <div class="status-pill" id="status">Status: <strong>loading...</strong></div>
-    </header>
-
-    <div class="arr-nav-shell">
-      <div class="arr-nav-brand">
-        <span class="arr-nav-mark inkdrop-logo-mark" aria-hidden="true"><img class="inkdrop-logo-img" src="/inkdrop-logo-mark.png?v=20260728-opaque-logo" alt="" loading="eager" decoding="async"></span>
-        <div>
-          <strong>InkDrop</strong>
-        </div>
-      </div>
-      <input class="arr-nav-search" id="inkdropSeriesNavSearch" type="search" placeholder="Search Series..." autocomplete="off" aria-label="Search existing series">
-      <nav class="arr-nav" aria-label="InkDrop sections">
-        <span class="arr-nav-group-label">Library</span>
-        <!-- Pulled for this release: no forward-looking release-date data yet. See INKDROP_CALENDAR_ENABLED. -->
-        <button type="button" data-arr-section="calendar" data-arr-icon-key="calendar" data-arr-static-nav="true" onclick="openInkdropNavSection('calendar')" hidden aria-hidden="true"><span class="arr-nav-label">Calendar</span></button>
-        <button type="button" data-arr-section="series" data-arr-icon-key="series" data-arr-badge-mode="label" onclick="openInkdropNavSection('series')"><span class="arr-nav-label">Series</span><span class="arr-nav-count" id="navSeriesCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
-        <span class="arr-nav-group-label">Operations</span>
-        <button type="button" data-arr-section="wanted" data-arr-icon-key="wanted" data-arr-badge-mode="label" onclick="openInkdropNavSection('wanted')"><span class="arr-nav-label">Wanted</span><span class="arr-nav-count" id="navWantedCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
-        <button type="button" data-arr-section="activity" data-arr-icon-key="activity" data-arr-badge-mode="label" onclick="openInkdropNavSection('activity')"><span class="arr-nav-label">Activity</span><span class="arr-nav-count" id="navActivityCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
-        <div class="arr-activity-subnav" aria-label="Activity areas">
-          <button type="button" data-arr-section="queue" data-arr-subsection="activity" onclick="openInkdropNavSection('queue')">Queue</button>
-          <button type="button" data-arr-section="history" data-arr-subsection="activity" onclick="openInkdropNavSection('history')">History</button>
-          <button type="button" data-arr-section="source_memory" data-arr-subsection="activity" onclick="openInkdropNavSection('source_memory')">Blocklist</button>
-        </div>
-        <button type="button" data-arr-section="manual_review" data-arr-icon-key="manual-review" data-arr-badge-mode="label" onclick="openInkdropNavSection('manual_review')"><span class="arr-nav-label">Manual Review</span><span class="arr-nav-count" id="navReviewCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
-        <span class="arr-nav-group-label">Administration</span>
-        <button type="button" data-arr-section="settings" data-arr-icon-key="settings" data-arr-static-nav="true" onclick="openInkdropSettingsArea('setup')"><span class="arr-nav-label">Settings</span></button>
-        <div class="arr-settings-subnav" aria-label="Settings areas">
-          <button type="button" data-settings-nav-area="setup" onclick="openInkdropSettingsArea('setup')">Setup</button>
-          <button type="button" data-settings-nav-area="media_management" onclick="openInkdropSettingsArea('media_management')">Media Management</button>
-          <button type="button" data-settings-nav-area="language" onclick="openInkdropSettingsArea('language')">Language</button>
-          <button type="button" data-settings-nav-area="indexers" onclick="openInkdropSettingsArea('indexers')">Indexers</button>
-          <button type="button" data-settings-nav-area="download_clients" onclick="openInkdropSettingsArea('download_clients')">Download Clients</button>
-          <!-- Pulled for this release: no working import source behind it yet. See INKDROP_IMPORT_LISTS_ENABLED. -->
-          <button type="button" data-settings-nav-area="import_lists" onclick="openInkdropSettingsArea('import_lists')" hidden aria-hidden="true">Import Lists</button>
-          <button type="button" data-settings-nav-area="connect" onclick="openInkdropSettingsArea('connect')">Connect</button>
-          <button type="button" data-settings-nav-area="metadata" onclick="openInkdropSettingsArea('metadata')">Metadata</button>
-          <button type="button" data-settings-nav-area="general" onclick="openInkdropSettingsArea('general')">General</button>
-          <button type="button" data-settings-nav-area="ui" onclick="openInkdropSettingsArea('ui')">UI</button>
-          <button type="button" data-settings-nav-area="root_folders" onclick="openInkdropSettingsArea('root_folders')">Paths</button>
-          <!-- Nav entry pulled for this release: the "Add source" list under here
-               mixes real Automatic Search tuning with a generic source-template
-               catalog that includes non-comic templates (Gutendex, Standard Ebooks)
-               InkDrop has no feature behind. The templates are real backend
-               registrations shared with other source types, not dead scaffolding,
-               so only the nav entry is hidden here -- the settings area and its
-               backing providers are untouched. -->
-          <button type="button" data-settings-nav-area="automation" onclick="openInkdropSettingsArea('automation')" hidden aria-hidden="true">Automatic Search</button>
-        </div>
-        <button type="button" data-arr-section="system" data-arr-icon-key="system" data-arr-static-nav="true" onclick="openInkdropNavSection('system')"><span class="arr-nav-label">System</span></button>
-      </nav>
-      <div class="arr-nav-actions">
-        <button class="arr-nav-add" type="button" onclick="goToWorkflowTarget('seriesSearchSection')">Add Series</button>
-      </div>
-      <div class="activity-region" aria-live="polite">
-        <button class="activity-status" id="activityStatus" type="button" hidden></button>
-        <section class="activity-dock" id="activityDock" hidden>
-          <button class="activity-sidebar-link" id="activitySidebarLink" type="button">
-            <span id="activityDockTitle">Activity · unavailable</span>
+    <div class="inkdrop-app-layout">
+      <aside class="inkdrop-sidebar" id="inkdropSidebar">
+        <div class="inkdrop-sidebar-header">
+          <span class="inkdrop-logo-mark" aria-hidden="true"><img class="inkdrop-logo-img" src="/inkdrop-logo-mark.png?v=20260728-opaque-logo" alt="" loading="eager" decoding="async"></span>
+          <span class="inkdrop-sidebar-title">InkDrop</span>
+          <button class="inkdrop-sidebar-toggle" id="inkdropSidebarToggle" type="button" aria-label="Toggle sidebar" onclick="toggleInkdropSidebar()">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
-          <div class="activity-dock-legacy" hidden inert aria-hidden="true">
-            <span id="activityDockSummary"></span>
-            <span id="activityCount"></span>
-            <button id="activityDockPrimaryAction" type="button" hidden disabled tabindex="-1"></button>
-            <button id="activityDockToggle" type="button" hidden disabled tabindex="-1"></button>
-            <div id="activityDockDestination" hidden></div>
-            <div id="activityDockCompactTarget" hidden></div>
-            <div id="activitySummary" hidden></div>
-            <div id="activityOperatorBoard" hidden></div>
-            <div id="activityDockNowRail" hidden></div>
-            <div id="activityDockLaneStrip" hidden></div>
-            <div id="activityRouteStrip" hidden></div>
-            <div id="activityList" hidden></div>
+        </div>
+        <input class="arr-nav-search" id="inkdropSeriesNavSearch" type="search" placeholder="Search Series..." autocomplete="off" aria-label="Search existing series">
+        <nav class="arr-nav" aria-label="InkDrop sections">
+          <span class="arr-nav-group-label">Library</span>
+          <button type="button" data-arr-section="calendar" data-arr-icon-key="calendar" data-arr-static-nav="true" onclick="openInkdropNavSection('calendar')" hidden aria-hidden="true"><span class="arr-nav-label">Calendar</span></button>
+          <button type="button" data-arr-section="series" data-arr-icon-key="series" data-arr-badge-mode="label" onclick="openInkdropNavSection('series')"><span class="arr-nav-label">Series</span><span class="arr-nav-count" id="navSeriesCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <span class="arr-nav-group-label">Operations</span>
+          <button type="button" data-arr-section="wanted" data-arr-icon-key="wanted" data-arr-badge-mode="label" onclick="openInkdropNavSection('wanted')"><span class="arr-nav-label">Wanted</span><span class="arr-nav-count" id="navWantedCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <button type="button" data-arr-section="activity" data-arr-icon-key="activity" data-arr-badge-mode="label" onclick="openInkdropNavSection('activity')"><span class="arr-nav-label">Activity</span><span class="arr-nav-count" id="navActivityCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <div class="arr-activity-subnav" aria-label="Activity areas">
+            <button type="button" data-arr-section="queue" data-arr-subsection="activity" onclick="openInkdropNavSection('queue')">Queue</button>
+            <button type="button" data-arr-section="history" data-arr-subsection="activity" onclick="openInkdropNavSection('history')">History</button>
+            <button type="button" data-arr-section="source_memory" data-arr-subsection="activity" onclick="openInkdropNavSection('source_memory')">Blocklist</button>
           </div>
-        </section>
-        <div class="toast" id="toast"></div>
-      </div>
-    </div>
+          <button type="button" data-arr-section="manual_review" data-arr-icon-key="manual-review" data-arr-badge-mode="label" onclick="openInkdropNavSection('manual_review')"><span class="arr-nav-label">Manual Review</span><span class="arr-nav-count" id="navReviewCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <span class="arr-nav-group-label">Administration</span>
+          <button type="button" data-arr-section="settings" data-arr-icon-key="settings" data-arr-static-nav="true" onclick="openInkdropSettingsArea('setup')"><span class="arr-nav-label">Settings</span></button>
+          <div class="arr-settings-subnav" aria-label="Settings areas">
+            <button type="button" data-settings-nav-area="setup" onclick="openInkdropSettingsArea('setup')">Setup</button>
+            <button type="button" data-settings-nav-area="media_management" onclick="openInkdropSettingsArea('media_management')">Media Management</button>
+            <button type="button" data-settings-nav-area="language" onclick="openInkdropSettingsArea('language')">Language</button>
+            <button type="button" data-settings-nav-area="indexers" onclick="openInkdropSettingsArea('indexers')">Indexers</button>
+            <button type="button" data-settings-nav-area="download_clients" onclick="openInkdropSettingsArea('download_clients')">Download Clients</button>
+            <button type="button" data-settings-nav-area="import_lists" onclick="openInkdropSettingsArea('import_lists')" hidden aria-hidden="true">Import Lists</button>
+            <button type="button" data-settings-nav-area="connect" onclick="openInkdropSettingsArea('connect')">Connect</button>
+            <button type="button" data-settings-nav-area="metadata" onclick="openInkdropSettingsArea('metadata')">Metadata</button>
+            <button type="button" data-settings-nav-area="general" onclick="openInkdropSettingsArea('general')">General</button>
+            <button type="button" data-settings-nav-area="ui" onclick="openInkdropSettingsArea('ui')">UI</button>
+            <button type="button" data-settings-nav-area="root_folders" onclick="openInkdropSettingsArea('root_folders')">Paths</button>
+            <button type="button" data-settings-nav-area="automation" onclick="openInkdropSettingsArea('automation')" hidden aria-hidden="true">Automatic Search</button>
+          </div>
+          <button type="button" data-arr-section="system" data-arr-icon-key="system" data-arr-static-nav="true" onclick="openInkdropNavSection('system')"><span class="arr-nav-label">System</span></button>
+        </nav>
+        <div class="arr-nav-actions">
+          <button class="arr-nav-add" type="button" onclick="goToWorkflowTarget('seriesSearchSection')">Add Series</button>
+        </div>
+        <div class="activity-region" aria-live="polite">
+          <button class="activity-status" id="activityStatus" type="button" hidden></button>
+          <section class="activity-dock" id="activityDock" hidden>
+            <button class="activity-sidebar-link" id="activitySidebarLink" type="button">
+              <span id="activityDockTitle">Activity · unavailable</span>
+            </button>
+            <div class="activity-dock-legacy" hidden inert aria-hidden="true">
+              <span id="activityDockSummary"></span>
+              <span id="activityCount"></span>
+              <button id="activityDockPrimaryAction" type="button" hidden disabled tabindex="-1"></button>
+              <button id="activityDockToggle" type="button" hidden disabled tabindex="-1"></button>
+              <div id="activityDockDestination" hidden></div>
+              <div id="activityDockCompactTarget" hidden></div>
+              <div id="activitySummary" hidden></div>
+              <div id="activityOperatorBoard" hidden></div>
+              <div id="activityDockNowRail" hidden></div>
+              <div id="activityDockLaneStrip" hidden></div>
+              <div id="activityRouteStrip" hidden></div>
+              <div id="activityList" hidden></div>
+            </div>
+          </section>
+          <div class="toast" id="toast"></div>
+        </div>
+      </aside>
+      <div class="inkdrop-content">
+        <header>
+          <div class="inkdrop-header-brand">
+            <span class="inkdrop-logo-mark" aria-hidden="true"><img class="inkdrop-logo-img" src="/inkdrop-logo-mark.png?v=20260728-opaque-logo" alt="" loading="eager" decoding="async"></span>
+            <div>
+              <h1>InkDrop</h1>
+              <p class="lede">Add or monitor a series. InkDrop keeps missing issues moving through automation and separates real decisions from parked source checks.</p>
+            </div>
+          </div>
+          <div class="status-pill" id="status">Status: <strong>loading...</strong></div>
+        </header>
 
     <div class="arr-content-shell">
     <section class="arr-page-masthead" id="inkdropPageMasthead" aria-live="polite">
@@ -1467,6 +1467,8 @@ HTML = r"""<!doctype html>
         </div>
       </div>
     </section>
+      </div><!-- .inkdrop-content -->
+    </div><!-- .inkdrop-app-layout -->
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
@@ -34906,6 +34908,20 @@ HTML = r"""<!doctype html>
     installGeneratedShortcutChromeObserver();
     scrubGeneratedShortcutChrome();
     resetSeriesAutoDefault();
+    const INKDROP_SIDEBAR_KEY = "inkdrop.sidebarCollapsed";
+    function toggleInkdropSidebar() {
+      const sidebar = document.getElementById("inkdropSidebar");
+      if (!sidebar) return;
+      sidebar.classList.toggle("collapsed");
+      try { window.localStorage.setItem(INKDROP_SIDEBAR_KEY, sidebar.classList.contains("collapsed") ? "1" : "0"); } catch (_) {}
+    }
+    (function restoreInkdropSidebar() {
+      const sidebar = document.getElementById("inkdropSidebar");
+      if (!sidebar) return;
+      try {
+        if (window.localStorage?.getItem(INKDROP_SIDEBAR_KEY) === "1") sidebar.classList.add("collapsed");
+      } catch (_) {}
+    })();
     function startInkdropApplication() {
       if (window.__inkdropApplicationStarted) return;
       window.__inkdropApplicationStarted = true;
