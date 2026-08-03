@@ -1,14 +1,15 @@
 /* ===== Settings ===== */
-.settings-drawer { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); margin: 12px 0; }
+.settings-drawer { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); margin: 12px 0; transition: border-color var(--transition); }
+.settings-drawer:hover { border-color: var(--line-light); }
 .settings-drawer > summary { padding: 12px 16px; cursor: pointer; }
 .settings-drawer > summary h2 { font-size: var(--font-lg); }
 .settings-drawer > summary .mini { color: var(--muted); font-size: var(--font-sm); }
 .settings-body { padding: 16px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
 .settings-search { flex: 1; min-width: 200px; }
-.settings-search input { width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-alt); color: var(--text); font-size: 13px; outline: none; }
-.settings-search input:focus { border-color: var(--accent); }
-.settings-search input::placeholder { color: var(--text-muted); }
+.settings-search input { width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-alt); color: var(--text); font-size: 13px; outline: none; transition: border-color var(--transition), box-shadow var(--transition); }
+.settings-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.settings-search input::placeholder { color: var(--text-muted); font-style: italic; }
 .settings-grid { display: grid; gap: 12px; }
 .settings-grid .mini { color: var(--text-muted); font-size: var(--font-sm); }
 

@@ -1,7 +1,7 @@
 /* ===== Series Detail ===== */
 .series-detail { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
 .series-detail-head { display: flex; gap: 16px; padding: 16px; background: var(--bg-alt); border-bottom: 1px solid var(--line); }
-.series-detail-cover { width: 120px; height: 160px; object-fit: cover; border-radius: var(--radius-md); border: 1px solid var(--border); flex-shrink: 0; }
+.series-detail-cover { width: 120px; height: 160px; object-fit: cover; border-radius: var(--radius-md); border: 1px solid var(--line); flex-shrink: 0; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
 .series-detail-info { display: grid; gap: 4px; min-width: 0; }
 .series-detail-info h2 { font-size: var(--font-2xl); color: var(--text); }
 .series-detail-info .meta { font-size: var(--font-sm); color: var(--text-muted); }
@@ -13,8 +13,8 @@
 .series-detail-section { margin-bottom: 16px; }
 .series-detail-section h3 { font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line-soft); }
 .issue-list { display: grid; gap: 4px; }
-.issue-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 13px; }
-.issue-row:hover { background: var(--surface-2); }
+.issue-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 13px; transition: background var(--transition); }
+.issue-row:hover { background: var(--accent-warm); }
 .issue-row .issue-number { font-weight: 600; color: var(--text); min-width: 40px; }
 .issue-row .issue-title { color: var(--muted); flex: 1; }
 .issue-row .issue-status { font-size: 11px; padding: 1px 6px; border-radius: 999px; }
@@ -25,4 +25,5 @@
 .series-add-top-slot[hidden] { display: none; }
 .series-art-coverage-strip { display: flex; gap: 6px; padding: 8px 0; overflow-x: auto; }
 .series-art-coverage-strip[hidden] { display: none; }
-.series-art-coverage-strip img { width: 50px; height: 70px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+.series-art-coverage-strip img { width: 50px; height: 70px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line); transition: transform var(--transition), box-shadow var(--transition); }
+.series-art-coverage-strip img:hover { transform: scale(1.08); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }

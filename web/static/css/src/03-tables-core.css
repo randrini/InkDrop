@@ -1,5 +1,6 @@
 /* ===== Core Tables / Section Panels ===== */
-.core-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; }
+.core-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; transition: border-color var(--transition); }
+.core-panel:hover { border-color: var(--line-light); }
 .core-panel[hidden] { display: none; }
 .core-shell-title { padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); margin-bottom: 12px; }
 .core-shell-title[hidden] { display: none; }
@@ -13,10 +14,12 @@
 .section-command-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .section-active-filter { font-size: var(--font-sm); color: var(--text-muted); padding: 4px 8px; background: var(--bg-alt); border-radius: var(--radius-sm); }
 .section-refresh { padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); color: var(--muted); font-size: var(--font-sm); cursor: pointer; transition: all var(--transition); }
-.section-refresh:hover { background: var(--surface-3); color: var(--text); }
+.section-refresh:hover { background: var(--surface-3); color: var(--text); border-color: var(--accent-dim); }
 .section-refresh.bad { border-color: rgba(239, 68, 68, 0.4); color: var(--bad); }
+.section-refresh.bad:hover { background: rgba(239, 68, 68, 0.08); }
 .section-view-mode { display: flex; gap: 4px; }
-.section-view-mode button { padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-alt); color: var(--text-muted); font-size: var(--font-sm); cursor: pointer; }
+.section-view-mode button { padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-alt); color: var(--text-muted); font-size: var(--font-sm); cursor: pointer; transition: all var(--transition); }
+.section-view-mode button:hover { color: var(--text); border-color: var(--accent-dim); }
 .section-view-mode button.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
 
 /* Core overview drawer */
