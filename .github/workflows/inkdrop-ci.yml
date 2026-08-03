@@ -87,7 +87,7 @@ jobs:
         uses: hadolint/hadolint-action@v3.4.0
         with:
           dockerfile: Dockerfile
-          failure-threshold: warning
+          failure-threshold: error
 
       - name: Validate Docker Compose config
         run: docker compose config --quiet
