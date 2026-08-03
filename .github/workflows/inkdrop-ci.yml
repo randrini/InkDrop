@@ -86,7 +86,7 @@ jobs:
             --no-error-on-unmatched-pattern 2>&1 | tail -20
 
       - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3
+        uses: hadolint/hadolint-action@v3.4.0
         with:
           dockerfile: Dockerfile
           failure-threshold: warning
