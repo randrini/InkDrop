@@ -207,3 +207,38 @@
 /* Source health grid */
 .source-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
 .source-grid > * { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-alt); }
+
+/* ===== Unstyled HTML IDs — Core Section ===== */
+#inkdropCore {  }
+#inkdropCoreOverview {  }
+#inkdropCoreOverviewSummary { font-size: var(--font-sm); color: var(--text-muted); }
+#inkdropCoreSections {  }
+#inkdropSectionPanel {  }
+#inkdropSectionRows { display: grid; gap: 0; }
+#inkdropSectionEyebrow {  }
+#inkdropSectionTitle { font-size: var(--font-lg); font-family: 'DM Serif Display', Georgia, serif; color: var(--text); }
+#inkdropSectionMeta { font-size: var(--font-sm); color: var(--text-muted); }
+#inkdropSectionViewMode {  }
+#inkdropSectionActiveFilter {  }
+#inkdropSectionRefreshBtn {  }
+#inkdropSectionResetAttemptsBtn {  }
+#inkdropSectionNotice {  }
+#inkdropSectionSummary {  }
+#inkdropSectionFilters {  }
+#inkdropLaneBoard {  }
+#inkdropLaneRibbon {  }
+#inkdropWorkerActivityPanel {  }
+#inkdropSeriesLibraryToolbar {  }
+#inkdropSeriesArtCoverage {  }
+#inkdropTriageStrip {  }
+#inkdropOperatorNow {  }
+#inkdropPolicyStrip {  }
+#inkdropSectionWorkbench {  }
+#inkdropMissingRecovery {  }
+#inkdropSectionNotice { font-size: var(--font-sm); color: var(--text-muted); padding: 4px 0; }
+#seriesAutopilotStrip {  }
+#seriesAutopilotState {  }
+#seriesAutopilotDetail {  }
+#seriesAutopilotRun { display: flex; gap: 6px; }
+#automaticSearchReadiness {  }
+#automationSourceNotice { font-size: var(--font-sm); color: var(--text-muted); padding: 4px 0; }

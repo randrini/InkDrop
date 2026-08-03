@@ -17,3 +17,11 @@
 #activityDockDestination[hidden], #activityDockCompactTarget[hidden] { display: none; }
 #activityDockPrimaryAction, #activityDockToggle { padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-alt); color: var(--muted); font-size: 11px; cursor: pointer; min-height: auto; }
 #activityDockPrimaryAction:hover, #activityDockToggle:hover { border-color: var(--accent-dim); }
+
+/* ===== Unstyled HTML IDs — Activity / Queue / History ===== */
+#inkdropActivitySummary { display: grid; gap: 8px; padding: 8px 0; }
+#inkdropActivitySummary[hidden] { display: none; }
+#inkdropQueuePreview { display: grid; gap: 8px; }
+#inkdropQueuePreview[hidden] { display: none; }
+#inkdropHistoryPreview { display: grid; gap: 8px; }
+#inkdropHistoryPreview[hidden] { display: none; }
