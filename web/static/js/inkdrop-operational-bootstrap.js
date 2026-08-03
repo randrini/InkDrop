@@ -8,7 +8,7 @@
     "inkdrop-operational-row-controls.js",
     "inkdrop-transfer-telemetry.js",
     "inkdrop-version-about.js",
-    "inkdrop-operational-bootstrap.js"
+    "inkdrop-operational-bootstrap.js",
   ]);
 
   var ASSET_GLOBALS = Object.freeze({
@@ -18,7 +18,7 @@
     "inkdrop-operational-row-controls.js": "InkDropOperationalRowControls",
     "inkdrop-transfer-telemetry.js": "InkDropTransferTelemetry",
     "inkdrop-version-about.js": "InkDropVersionAbout",
-    "inkdrop-operational-bootstrap.js": "InkDropOperationalBootstrap"
+    "inkdrop-operational-bootstrap.js": "InkDropOperationalBootstrap",
   });
 
   function asRoot(root) {
@@ -60,8 +60,12 @@
       script.async = false;
       if (options.defer !== false) script.defer = true;
       if (options.nonce) script.nonce = options.nonce;
-      script.onload = function () { resolve({ asset: assetName, state: "loaded" }); };
-      script.onerror = function () { reject(new Error("Failed to load " + assetName)); };
+      script.onload = function () {
+        resolve({ asset: assetName, state: "loaded" });
+      };
+      script.onerror = function () {
+        reject(new Error("Failed to load " + assetName));
+      };
       var parent = documentRef.head || documentRef.body || documentRef.documentElement;
       if (!parent?.appendChild && !parent?.append) {
         reject(new Error("A document head or body is required to load InkDrop UI assets"));
@@ -95,8 +99,11 @@
 
   function parseJson(value, fallback) {
     if (!value) return fallback || {};
-    try { return JSON.parse(value); }
-    catch (_error) { return fallback || {}; }
+    try {
+      return JSON.parse(value);
+    } catch (_error) {
+      return fallback || {};
+    }
   }
 
   function once(node, key, mount) {
@@ -117,11 +124,15 @@
       return once(node, "inkdropTableControlsMounted", function () {
         var tableSelector = node.getAttribute("data-table");
         var statusSelector = node.getAttribute("data-status");
-        return api.mount(Object.assign({}, adapters.tableControls || {}, parseJson(node.getAttribute("data-config")), {
-          root: node,
-          table: tableSelector ? root.querySelector(tableSelector) : node.closest("[data-inkdrop-operational-region]")?.querySelector("table"),
-          status: statusSelector ? root.querySelector(statusSelector) : undefined
-        }));
+        return api.mount(
+          Object.assign({}, adapters.tableControls || {}, parseJson(node.getAttribute("data-config")), {
+            root: node,
+            table: tableSelector
+              ? root.querySelector(tableSelector)
+              : node.closest("[data-inkdrop-operational-region]")?.querySelector("table"),
+            status: statusSelector ? root.querySelector(statusSelector) : undefined,
+          }),
+        );
       });
     });
   }
@@ -131,12 +142,16 @@
     return Array.from(root.querySelectorAll("[data-inkdrop-query-controls]")).map(function (node) {
       return once(node, "inkdropQueryControlsMounted", function () {
         var resetSelector = node.getAttribute("data-reset");
-        return api.mount(Object.assign({}, adapters.queryControls || {}, parseJson(node.getAttribute("data-config")), {
-          root: node,
-          resetHost: resetSelector ? root.querySelector(resetSelector) : node.querySelector("[data-query-reset-host]") || undefined,
-          routeKey: node.getAttribute("data-route-key") || undefined,
-          fullSetLoaded: node.getAttribute("data-full-set-loaded") === "true"
-        }));
+        return api.mount(
+          Object.assign({}, adapters.queryControls || {}, parseJson(node.getAttribute("data-config")), {
+            root: node,
+            resetHost: resetSelector
+              ? root.querySelector(resetSelector)
+              : node.querySelector("[data-query-reset-host]") || undefined,
+            routeKey: node.getAttribute("data-route-key") || undefined,
+            fullSetLoaded: node.getAttribute("data-full-set-loaded") === "true",
+          }),
+        );
       });
     });
   }
@@ -148,12 +163,18 @@
         var detailSelector = node.getAttribute("data-details");
         var menuSelector = node.getAttribute("data-menu");
         var statusSelector = node.getAttribute("data-status");
-        return api.mount(Object.assign({}, adapters.rowControls || {}, parseJson(node.getAttribute("data-config")), {
-          details: detailSelector ? root.querySelector(detailSelector) : undefined,
-          disclosureHost: node.querySelector("[data-row-disclosure-host]") || undefined,
-          menuHost: menuSelector ? root.querySelector(menuSelector) : node.querySelector("[data-row-menu-host]") || undefined,
-          statusHost: statusSelector ? root.querySelector(statusSelector) : node.querySelector("[data-row-status-host]") || undefined
-        }));
+        return api.mount(
+          Object.assign({}, adapters.rowControls || {}, parseJson(node.getAttribute("data-config")), {
+            details: detailSelector ? root.querySelector(detailSelector) : undefined,
+            disclosureHost: node.querySelector("[data-row-disclosure-host]") || undefined,
+            menuHost: menuSelector
+              ? root.querySelector(menuSelector)
+              : node.querySelector("[data-row-menu-host]") || undefined,
+            statusHost: statusSelector
+              ? root.querySelector(statusSelector)
+              : node.querySelector("[data-row-status-host]") || undefined,
+          }),
+        );
       });
     });
   }
@@ -171,7 +192,10 @@
     var api = requireApi("InkDropVersionAbout");
     return Array.from(root.querySelectorAll("[data-inkdrop-version-about]")).map(function (node) {
       return once(node, "inkdropVersionAboutMounted", function () {
-        return api.mount(node, Object.assign({}, adapters.versionAbout || {}, parseJson(node.getAttribute("data-config"))));
+        return api.mount(
+          node,
+          Object.assign({}, adapters.versionAbout || {}, parseJson(node.getAttribute("data-config"))),
+        );
       });
     });
   }
@@ -184,7 +208,7 @@
       queryControls: mountQueryControls(root, adapters),
       rowControls: mountRowControls(root, adapters),
       transferTelemetry: renderTransferTelemetry(root),
-      versionAbout: mountVersionAbout(root, adapters)
+      versionAbout: mountVersionAbout(root, adapters),
     });
   }
 
@@ -195,6 +219,6 @@
     },
     loadAssets: loadAssets,
     mount: mount,
-    parseJson: parseJson
+    parseJson: parseJson,
   });
 })(typeof window !== "undefined" ? window : globalThis);

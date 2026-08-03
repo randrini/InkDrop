@@ -29,7 +29,9 @@
       status.textContent = open ? "Details expanded." : "Details collapsed.";
       if (typeof config.onDetailsChange === "function") config.onDetailsChange(open);
     }
-    disclosure.onclick = function () { setOpen(!(details && details.open)); };
+    disclosure.onclick = function () {
+      setOpen(!(details && details.open));
+    };
 
     var actionMenu = element("details", "arr-table-menu inkdrop-row-action-menu");
     var summary = element("summary", "inkdrop-row-action-summary", "More");
@@ -48,7 +50,9 @@
     }
 
     function addAction(action) {
-      var control = action.href ? element("a", "inkdrop-row-action", action.label) : element("button", "inkdrop-row-action", action.label);
+      var control = action.href
+        ? element("a", "inkdrop-row-action", action.label)
+        : element("button", "inkdrop-row-action", action.label);
       control.setAttribute("role", "menuitem");
       if (action.href) control.href = action.href;
       else control.type = "button";
@@ -66,18 +70,22 @@
           control.classList.add("is-busy");
           control.textContent = action.busyLabel || "Working...";
           status.textContent = action.pendingMessage || action.label + " started.";
-          try { result = action.onSelect ? action.onSelect() : undefined; }
-          catch (error) {
+          try {
+            result = action.onSelect ? action.onSelect() : undefined;
+          } catch (error) {
             finishAction(control, action.label, action.errorMessage || "Action failed.");
             if (typeof config.onError === "function") config.onError(error, action);
             return;
           }
-          Promise.resolve(result).then(function () {
-            finishAction(control, action.label, action.successMessage || action.label + " completed.");
-          }, function (error) {
-            finishAction(control, action.label, action.errorMessage || "Action failed.");
-            if (typeof config.onError === "function") config.onError(error, action);
-          });
+          Promise.resolve(result).then(
+            function () {
+              finishAction(control, action.label, action.successMessage || action.label + " completed.");
+            },
+            function (error) {
+              finishAction(control, action.label, action.errorMessage || "Action failed.");
+              if (typeof config.onError === "function") config.onError(error, action);
+            },
+          );
         };
       }
       panel.append(control);

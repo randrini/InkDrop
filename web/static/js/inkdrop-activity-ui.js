@@ -5,7 +5,7 @@
     summary: "/api/inkdrop-activity/summary",
     current: "/api/inkdrop-activity/current",
     detail: "/api/inkdrop-activity/",
-    deferred: "/api/inkdrop-maintenance/deferred-queue-sync"
+    deferred: "/api/inkdrop-maintenance/deferred-queue-sync",
   };
   const mountedRoots = new WeakSet();
   let remountTimer = null;
@@ -15,13 +15,17 @@
   }
 
   function escapeHtml(value) {
-    return text(value).replace(/[&<>"']/g, char => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      "\"": "&quot;",
-      "'": "&#39;"
-    }[char]));
+    return text(value).replace(
+      /[&<>"']/g,
+      (char) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[char],
+    );
   }
 
   function scrub(value) {
@@ -34,7 +38,10 @@
   }
 
   function normalize(value) {
-    return text(value).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return text(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
   }
 
   function first(row, names) {
@@ -104,7 +111,10 @@
   }
 
   function humanize(value) {
-    return text(value).trim().replace(/[_-]+/g, " ").replace(/\b\w/g, letter => letter.toUpperCase());
+    return text(value)
+      .trim()
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
   function formatSuccessfulAction(value) {
@@ -124,8 +134,8 @@
       method: "GET",
       credentials: "same-origin",
       cache: "no-store",
-      headers: { Accept: "application/json" }
-    }).then(response => {
+      headers: { Accept: "application/json" },
+    }).then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
     });
@@ -141,7 +151,9 @@
   function rowsFrom(payload) {
     if (!payload) return [];
     if (Array.isArray(payload)) return payload;
-    return payload.activity || payload.items || payload.rows || payload.activities || payload.current || payload.data || [];
+    return (
+      payload.activity || payload.items || payload.rows || payload.activities || payload.current || payload.data || []
+    );
   }
 
   function countFrom(summary, names, rows, predicate) {
@@ -153,7 +165,7 @@
 
   function activityStatus(summary, rows) {
     const raw = normalize(first(summary || {}, ["status", "state", "overall_status"]));
-    if (raw.includes("attention") || rows.some(row => row.needs_user || normalize(row.stage).includes("attention"))) {
+    if (raw.includes("attention") || rows.some((row) => row.needs_user || normalize(row.stage).includes("attention"))) {
       return { label: "Needs Attention", tone: "danger" };
     }
     if (raw.includes("idle") || (!rows.length && !countFrom(summary, ["active_total", "active"], rows, () => true))) {
@@ -165,8 +177,8 @@
   function completionLabel(row) {
     const nested = row && row.ownership_evidence && row.ownership_evidence.completion;
     const raw = normalize(
-      first(row, ["completion_state", "reader_state", "library_state", "verification_state"])
-      || first(nested || {}, ["state"])
+      first(row, ["completion_state", "reader_state", "library_state", "verification_state"]) ||
+        first(nested || {}, ["state"]),
     );
     const labels = {
       downloaded: "Downloaded",
@@ -188,13 +200,20 @@
       reader_visibility_unavailable: "Kavita unavailable",
       reader_visibility_mismatch: "Reader visibility mismatch",
       visibility_mismatch: "Reader visibility mismatch",
-      identity_conflict: "Identity conflict"
+      identity_conflict: "Identity conflict",
     };
     return labels[raw] || "";
   }
 
   function sourceClient(row) {
-    const child = first(row, ["child_source_name", "child_source_id", "child_source", "indexer", "provider_child", "source_child"]);
+    const child = first(row, [
+      "child_source_name",
+      "child_source_id",
+      "child_source",
+      "indexer",
+      "provider_child",
+      "source_child",
+    ]);
     const parent = first(row, ["provider", "source", "client", "download_client", "source_client"]);
     if (parent && child && text(parent) !== text(child)) return scrub(`${parent} · ${child}`);
     return scrub(parent || child || "Not reported");
@@ -209,10 +228,12 @@
     if (explicit) return scrub(explicit);
     if (raw === "import_ready" || next.includes("ready_to_import")) return "Ready to import";
     if (raw.includes("importing")) {
-      const owned = row.importer_active || row.importer_owned || row.import_owner || row.importer || row.import_started_at;
+      const owned =
+        row.importer_active || row.importer_owned || row.import_owner || row.importer || row.import_started_at;
       return owned ? "Importing" : "Ready to import";
     }
-    if (client.includes("slskd") && (raw.includes("remote") || raw.includes("queued"))) return "Queued remotely in SLSKD";
+    if (client.includes("slskd") && (raw.includes("remote") || raw.includes("queued")))
+      return "Queued remotely in SLSKD";
     if (raw.includes("reader") && raw.includes("pending")) return "Reader scan pending";
     if (raw.includes("kavita") && raw.includes("wait")) return "Waiting for Kavita";
     if (raw.includes("download") && raw.includes("complete")) return "Client complete";
@@ -223,7 +244,11 @@
     if (raw.includes("retry")) return "Retry scheduled";
     if (raw.includes("identity")) return "Identity conflict";
     if (raw.includes("visibility")) return "Reader visibility mismatch";
-    if (raw) return raw.split("_").map(part => part ? part[0].toUpperCase() + part.slice(1) : "").join(" ");
+    if (raw)
+      return raw
+        .split("_")
+        .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : ""))
+        .join(" ");
     return completionLabel(row) || "Waiting";
   }
 
@@ -235,9 +260,8 @@
     }
     const kind = normalize(first(row, ["progress_kind", "progress_type"]));
     const corePercent = number(row && row.percent_complete);
-    let pct = corePercent == null
-      ? percent(first(row, ["progress_percent", "percent", "completion_percent"]))
-      : corePercent;
+    let pct =
+      corePercent == null ? percent(first(row, ["progress_percent", "percent", "completion_percent"])) : corePercent;
     const done = number(first(row, ["bytes_completed", "bytes_done", "completed_bytes", "downloaded_bytes"]));
     const total = number(first(row, ["bytes_total", "total_bytes", "size_bytes"]));
     if (pct == null && done != null && total && total > 0) pct = (done / total) * 100;
@@ -271,7 +295,9 @@
   }
 
   function title(row) {
-    const series = scrub(first(row, ["display_title", "series_title", "series", "title", "work_title"]) || "Unknown series");
+    const series = scrub(
+      first(row, ["display_title", "series_title", "series", "title", "work_title"]) || "Unknown series",
+    );
     const issue = scrub(first(row, ["issue_or_volume", "issue_label", "issue", "unit_label", "chapter_label"]));
     return issue ? `${series} ${issue}` : series;
   }
@@ -287,19 +313,44 @@
     const status = activityStatus(summary, rows);
     const chips = [
       ["Active", countFrom(summary, ["active_total", "active"], rows, () => true)],
-      ["Searching", countFrom(summary, ["searching"], rows, row => normalize(row.stage).includes("search"))],
-      ["Client queued", countFrom(summary, ["client_queued", "queued_in_clients"], rows, row => normalize(row.stage).includes("queued"))],
-      ["Downloading", countFrom(summary, ["downloading"], rows, row => normalize(row.stage).includes("download"))],
-      ["Ready to import", countFrom(summary, ["ready_to_import", "import_ready"], rows, row => normalize(row.stage) === "import_ready")],
-      ["Importing", countFrom(summary, ["importing"], rows, row => normalize(row.stage).includes("importing") && (row.importer_active || row.importer_owned))],
-      ["Reader verification", countFrom(summary, ["reader_verification"], rows, row => normalize(row.completion_state).includes("reader"))],
-      ["Retry scheduled", countFrom(summary, ["retry_scheduled"], rows, row => normalize(row.stage).includes("retry"))],
-      ["Needs user", countFrom(summary, ["needs_user"], rows, row => row.needs_user)]
+      ["Searching", countFrom(summary, ["searching"], rows, (row) => normalize(row.stage).includes("search"))],
+      [
+        "Client queued",
+        countFrom(summary, ["client_queued", "queued_in_clients"], rows, (row) =>
+          normalize(row.stage).includes("queued"),
+        ),
+      ],
+      ["Downloading", countFrom(summary, ["downloading"], rows, (row) => normalize(row.stage).includes("download"))],
+      [
+        "Ready to import",
+        countFrom(summary, ["ready_to_import", "import_ready"], rows, (row) => normalize(row.stage) === "import_ready"),
+      ],
+      [
+        "Importing",
+        countFrom(
+          summary,
+          ["importing"],
+          rows,
+          (row) => normalize(row.stage).includes("importing") && (row.importer_active || row.importer_owned),
+        ),
+      ],
+      [
+        "Reader verification",
+        countFrom(summary, ["reader_verification"], rows, (row) => normalize(row.completion_state).includes("reader")),
+      ],
+      [
+        "Retry scheduled",
+        countFrom(summary, ["retry_scheduled"], rows, (row) => normalize(row.stage).includes("retry")),
+      ],
+      ["Needs user", countFrom(summary, ["needs_user"], rows, (row) => row.needs_user)],
     ];
-    const last = formatSuccessfulAction(first(summary || {}, ["last_successful_action", "last_success", "last_action"]));
-    const nextRunValue = first(deferred || {}, ["next_scheduled_worker_run", "next_worker_run", "next_run", "next_run_at"])
-      || first(summary || {}, ["next_scheduled_worker_run", "next_worker_run", "next_run", "next_run_at"])
-      || first((summary || {}).scheduler || {}, ["next_run_at"]);
+    const last = formatSuccessfulAction(
+      first(summary || {}, ["last_successful_action", "last_success", "last_action"]),
+    );
+    const nextRunValue =
+      first(deferred || {}, ["next_scheduled_worker_run", "next_worker_run", "next_run", "next_run_at"]) ||
+      first(summary || {}, ["next_scheduled_worker_run", "next_worker_run", "next_run", "next_run_at"]) ||
+      first((summary || {}).scheduler || {}, ["next_run_at"]);
     const nextRun = formatScheduled(nextRunValue);
     return `
       <section class="inkdrop-activity-summary" aria-label="Activity summary">
@@ -324,11 +375,12 @@
           <th>Series / Issue</th><th>Stage</th><th>Source / Client</th><th>Progress</th><th>ETA / Age</th><th>Next</th><th>Actions</th>
         </tr></thead>
         <tbody>
-          ${rows.map((row, index) => {
-            const id = activityId(row, index);
-            const progress = progressModel(row);
-            const completion = completionLabel(row);
-            return `<tr class="inkdrop-activity-row" data-activity-id="${escapeHtml(id)}">
+          ${rows
+            .map((row, index) => {
+              const id = activityId(row, index);
+              const progress = progressModel(row);
+              const completion = completionLabel(row);
+              return `<tr class="inkdrop-activity-row" data-activity-id="${escapeHtml(id)}">
               <td data-label="Series / Issue"><strong title="${escapeHtml(title(row))}">${escapeHtml(title(row))}</strong><span>${escapeHtml(scrub(first(row, ["subtitle", "description", "issue_title"]) || ""))}</span></td>
               <td data-label="Stage"><span class="inkdrop-stage">${escapeHtml(stageLabel(row))}</span>${completion ? `<span class="inkdrop-completion">${escapeHtml(completion)}</span>` : ""}</td>
               <td data-label="Source / Client">${escapeHtml(sourceClient(row))}</td>
@@ -337,7 +389,8 @@
               <td data-label="Next">${escapeHtml(nextText(row))}</td>
               <td data-label="Actions"><button type="button" class="inkdrop-activity-expand" aria-expanded="false" aria-controls="inkdrop-activity-detail-${escapeHtml(id)}">Details</button></td>
             </tr><tr id="inkdrop-activity-detail-${escapeHtml(id)}" class="inkdrop-activity-detail" hidden><td colspan="7"><div class="inkdrop-activity-detail-box">Details load on demand.</div></td></tr>`;
-          }).join("")}
+            })
+            .join("")}
         </tbody>
       </table>`;
   }
@@ -364,7 +417,7 @@
     const fixtureState = {
       summary: fixture(root, "data-activity-summary-fixture"),
       current: fixture(root, "data-activity-current-fixture"),
-      deferred: fixture(root, "data-activity-deferred-fixture")
+      deferred: fixture(root, "data-activity-deferred-fixture"),
     };
     if (fixtureState.summary || fixtureState.current || fixtureState.deferred) {
       render(root, fixtureState);
@@ -372,11 +425,11 @@
     }
     return Promise.all([apiGet(ENDPOINTS.summary), apiGet(ENDPOINTS.current), apiGet(ENDPOINTS.deferred)])
       .then(([summary, current, deferred]) => render(root, { summary, current, deferred }))
-      .catch(error => renderError(root, error));
+      .catch((error) => renderError(root, error));
   }
 
   function bind(root) {
-    root.addEventListener("click", event => {
+    root.addEventListener("click", (event) => {
       const retry = event.target.closest(".inkdrop-activity-retry");
       if (retry) {
         load(root);
@@ -395,19 +448,19 @@
         const box = detail.querySelector(".inkdrop-activity-detail-box");
         box.textContent = "Loading details...";
         apiGet(`${ENDPOINTS.detail}${encodeURIComponent(id)}`)
-          .then(payload => {
+          .then((payload) => {
             detail.dataset.loaded = "true";
             const safe = scrub(JSON.stringify(payload, null, 2));
             box.innerHTML = `<pre>${escapeHtml(safe)}</pre>`;
           })
-          .catch(error => {
+          .catch((error) => {
             box.textContent = `Details unavailable: ${scrub(error.message || error)}`;
           });
       }
     });
-    root.addEventListener("keydown", event => {
+    root.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      root.querySelectorAll(".inkdrop-activity-expand[aria-expanded='true']").forEach(button => {
+      root.querySelectorAll(".inkdrop-activity-expand[aria-expanded='true']").forEach((button) => {
         button.setAttribute("aria-expanded", "false");
         const detail = root.querySelector(`#${CSS.escape(button.getAttribute("aria-controls"))}`);
         if (detail) detail.hidden = true;
@@ -417,7 +470,7 @@
 
   function mount(scope) {
     const searchRoot = scope || document;
-    searchRoot.querySelectorAll("[data-inkdrop-activity-dashboard]").forEach(root => {
+    searchRoot.querySelectorAll("[data-inkdrop-activity-dashboard]").forEach((root) => {
       if (mountedRoots.has(root)) return;
       mountedRoots.add(root);
       bind(root);
@@ -439,10 +492,11 @@
     // body precedes main, so "main, #content, .content, body" always resolved
     // to body -- the panel was prepended outside the app shell and rendered
     // full document width across the sidebar.
-    const host = document.querySelector("main")
-      || document.querySelector("#content")
-      || document.querySelector(".content")
-      || document.body;
+    const host =
+      document.querySelector("main") ||
+      document.querySelector("#content") ||
+      document.querySelector(".content") ||
+      document.body;
     if (!host) return;
     const root = document.createElement("section");
     root.setAttribute("data-inkdrop-activity-dashboard", "auto");

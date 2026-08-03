@@ -7,7 +7,7 @@
     thumbnails: true,
     detailsOpen: false,
     pageSize: 24,
-    columns: []
+    columns: [],
   });
 
   function copyDefaults() {
@@ -16,7 +16,7 @@
       thumbnails: DEFAULTS.thumbnails,
       detailsOpen: DEFAULTS.detailsOpen,
       pageSize: DEFAULTS.pageSize,
-      columns: DEFAULTS.columns.slice()
+      columns: DEFAULTS.columns.slice(),
     };
   }
 
@@ -29,28 +29,39 @@
       detailsOpen: input.detailsOpen === true,
       pageSize: [24, 50, 100, 250].indexOf(pageSize) >= 0 ? pageSize : DEFAULTS.pageSize,
       columns: Array.isArray(input.columns)
-        ? input.columns.filter(function (column) { return typeof column === "string" && column.length > 0; })
-        : DEFAULTS.columns.slice()
+        ? input.columns.filter(function (column) {
+            return typeof column === "string" && column.length > 0;
+          })
+        : DEFAULTS.columns.slice(),
     };
   }
 
   function storageFor(candidate) {
     if (candidate) return candidate;
-    try { return global.localStorage; } catch (_error) { return null; }
+    try {
+      return global.localStorage;
+    } catch (_error) {
+      return null;
+    }
   }
 
   function load(storage) {
     var target = storageFor(storage);
     if (!target) return copyDefaults();
-    try { return normalize(JSON.parse(target.getItem(STORAGE_KEY) || "{}")); }
-    catch (_error) { return copyDefaults(); }
+    try {
+      return normalize(JSON.parse(target.getItem(STORAGE_KEY) || "{}"));
+    } catch (_error) {
+      return copyDefaults();
+    }
   }
 
   function save(preferences, storage) {
     var value = normalize(preferences);
     var target = storageFor(storage);
     if (target) {
-      try { target.setItem(STORAGE_KEY, JSON.stringify(value)); } catch (_error) {}
+      try {
+        target.setItem(STORAGE_KEY, JSON.stringify(value));
+      } catch (_error) {}
     }
     return value;
   }
@@ -58,7 +69,9 @@
   function reset(storage) {
     var target = storageFor(storage);
     if (target) {
-      try { target.removeItem(STORAGE_KEY); } catch (_error) {}
+      try {
+        target.removeItem(STORAGE_KEY);
+      } catch (_error) {}
     }
     return copyDefaults();
   }
@@ -92,6 +105,6 @@
     reset: reset,
     apply: apply,
     update: update,
-    storageKey: STORAGE_KEY
+    storageKey: STORAGE_KEY,
   });
 })(typeof window !== "undefined" ? window : globalThis);

@@ -7,7 +7,7 @@
     title: 100,
     summary: 280,
     highlights: 8,
-    highlight: 200
+    highlight: 200,
   });
   var DETAILED_RELEASE_LIMIT = 10;
   var GITHUB_RELEASE_HISTORY_URL = "https://github.com/jaredbahr/InkDrop/releases";
@@ -25,7 +25,8 @@
     if (!/^\d{4}-\d{2}-\d{2}$/.test(release.released_at)) throw new Error("Release date must use YYYY-MM-DD");
     if (release.title.length > RELEASE_LIMITS.title) throw new Error("Release title is too long");
     if (release.summary.length > RELEASE_LIMITS.summary) throw new Error("Release summary is too long");
-    if (!highlights.length || highlights.length > RELEASE_LIMITS.highlights) throw new Error("Release highlights are out of bounds");
+    if (!highlights.length || highlights.length > RELEASE_LIMITS.highlights)
+      throw new Error("Release highlights are out of bounds");
     var historyUrl = String(release.history_url || "").trim();
     if (historyUrl && historyUrl !== GITHUB_RELEASE_HISTORY_URL) throw new Error("Release history URL is not allowed");
     highlights.forEach(function (highlight) {
@@ -41,7 +42,7 @@
       summary: release.summary,
       highlights: Object.freeze(highlights),
       compact: release.compact === true,
-      history_url: historyUrl
+      history_url: historyUrl,
     });
   }
 
@@ -53,18 +54,19 @@
       slug: "v0-1-06",
       released_at: "2026-08-02",
       title: "Notifications become a real system, and SLSKD gets smarter searches",
-      summary: "Notifications now support per-channel event triggers, series scoping, quiet hours, and delivery history. SLSKD searches use better terms and more patience, several stuck-download patterns are fixed, and provider secrets no longer leak into diagnostics.",
+      summary:
+        "Notifications now support per-channel event triggers, series scoping, quiet hours, and delivery history. SLSKD searches use better terms and more patience, several stuck-download patterns are fixed, and provider secrets no longer leak into diagnostics.",
       highlights: [
         "Notifications are a real system now: per-channel event triggers, series scoping, quiet hours, delivery history, and test buttons for Discord and Pushover.",
-        "SLSKD searches no longer waste queries on literal \"cbz\"/\"cbr\" keywords or miss singular/plural title variants, and get more time before assuming a timeout.",
+        'SLSKD searches no longer waste queries on literal "cbz"/"cbr" keywords or miss singular/plural title variants, and get more time before assuming a timeout.',
         "Fixed several stuck-download patterns: repeat-reject loops, permanent single-timeout blocks, and dead-end searches that only turn up already-rejected results.",
         "Fixed downloads that were grabbed but never finished landing in your library.",
         "Rate-limited or temporarily unavailable sources no longer get mislabeled as failed transfers.",
-        "The \"item imported\" notification no longer repeats for the same file on every re-check.",
+        'The "item imported" notification no longer repeats for the same file on every re-check.',
         "Provider API keys and webhook tokens no longer show up in error messages or diagnostic output.",
-        "Recover Missing's tiles no longer overlap, Search All's scope is clearer, and SLSKD's default per-user transfer cap was raised."
-      ]
-    })
+        "Recover Missing's tiles no longer overlap, Search All's scope is clearer, and SLSKD's default per-user transfer cap was raised.",
+      ],
+    }),
   ]);
 
   var PUBLIC_RELEASES = Object.freeze(DETAILED_RELEASES.slice(0, DETAILED_RELEASE_LIMIT));
@@ -74,7 +76,8 @@
     var seenSlugs = new Set();
     var previousDate = "9999-99-99";
     catalog.forEach(function (release) {
-      if (seenVersions.has(release.version) || seenSlugs.has(release.slug)) throw new Error("Release versions and slugs must be unique");
+      if (seenVersions.has(release.version) || seenSlugs.has(release.slug))
+        throw new Error("Release versions and slugs must be unique");
       if (release.released_at > previousDate) throw new Error("Release catalog must be newest first");
       seenVersions.add(release.version);
       seenSlugs.add(release.slug);
@@ -102,7 +105,7 @@
 
   var PRERELEASE_STAGES = Object.freeze({
     alpha: { label: "Closed Alpha", stage: "Closed alpha · not publicly launched" },
-    beta: { label: "Beta", stage: "Public beta" }
+    beta: { label: "Beta", stage: "Public beta" },
   });
 
   // Three shapes, newest first. Current releases are the bare number: 0.1.02.
@@ -121,7 +124,7 @@
         prerelease: trailing[4].toLowerCase(),
         update: Number(trailing[5]),
         counterInPatch: false,
-        patchText: trailing[3]
+        patchText: trailing[3],
       };
     }
     var inPatch = /^v?(\d+)\.(\d+)\.(\d+)-(alpha|beta)$/i.exec(raw);
@@ -134,7 +137,7 @@
         update: Number(inPatch[3]),
         counterInPatch: true,
         // Kept as written so 0.1.01-beta does not render as 0.1.1-beta.
-        patchText: inPatch[3]
+        patchText: inPatch[3],
       };
     }
     // Releases from 0.1.02 on carry no stage suffix at all: the version is just
@@ -151,7 +154,7 @@
       update: Number(plain[3]),
       counterInPatch: true,
       // Kept as written so 0.1.02 does not render as 0.1.2.
-      patchText: plain[3]
+      patchText: plain[3],
     };
   }
 
@@ -201,7 +204,9 @@
     options = options || {};
     var catalog = validateCatalog((options.catalog || PUBLIC_RELEASES).map(publicRelease));
     var requested = String(options.releaseVersion || releaseFromHash(options.hash)).trim();
-    var selectedIndex = catalog.findIndex(function (release) { return release.version === requested; });
+    var selectedIndex = catalog.findIndex(function (release) {
+      return release.version === requested;
+    });
     if (selectedIndex < 0) selectedIndex = 0;
     container.replaceChildren();
     container.classList.add("inkdrop-release-notes");
@@ -330,7 +335,7 @@
       row("Built", text(metadata.build_date, "unknown"), "Build date"),
       metadata.image_digest || metadata.digest
         ? copyableRow("Image digest", text(metadata.image_digest || metadata.digest), "Container image digest")
-        : null
+        : null,
     ].filter(Boolean);
     container.append.apply(container, rows);
     return metadata;
@@ -343,7 +348,9 @@
     if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required");
     container.setAttribute("aria-busy", "true");
     try {
-      var response = await fetchImpl(options.endpoint || "/api/system/version", { headers: { Accept: "application/json" } });
+      var response = await fetchImpl(options.endpoint || "/api/system/version", {
+        headers: { Accept: "application/json" },
+      });
       if (!response || !response.ok) throw new Error("Version metadata request failed");
       return render(container, await response.json());
     } finally {
@@ -362,7 +369,7 @@
     render: render,
     renderReleases: renderReleases,
     releaseFromHash: releaseFromHash,
-    mount: mount
+    mount: mount,
   });
   if (typeof global.dispatchEvent === "function" && typeof global.Event === "function") {
     global.dispatchEvent(new global.Event("inkdrop-version-about-ready"));

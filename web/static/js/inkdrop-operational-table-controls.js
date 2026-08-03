@@ -50,7 +50,11 @@
     var cleanups = Array.from(root.querySelectorAll("details.arr-table-menu")).map(function (menu) {
       return enhanceMenu(menu, root);
     });
-    return function () { cleanups.forEach(function (cleanup) { cleanup(); }); };
+    return function () {
+      cleanups.forEach(function (cleanup) {
+        cleanup();
+      });
+    };
   }
 
   function mount(config) {
@@ -93,7 +97,9 @@
         checkbox.disabled = column.required === true;
         if (column.required === true) checkbox.title = "This identity column is required.";
         checkbox.onchange = function () {
-          var selected = Array.from(columnGroup.querySelectorAll("input[type=checkbox]:checked")).map(function (input) { return input.value; });
+          var selected = Array.from(columnGroup.querySelectorAll("input[type=checkbox]:checked")).map(function (input) {
+            return input.value;
+          });
           update({ columns: selected }, "Visible columns updated.");
         };
         checkbox.value = column.key;
@@ -111,19 +117,28 @@
       option.selected = current.pageSize === size;
       pageSize.append(option);
     });
-    pageSize.onchange = function () { update({ pageSize: Number(pageSize.value) }, "Page size updated."); };
+    pageSize.onchange = function () {
+      update({ pageSize: Number(pageSize.value) }, "Page size updated.");
+    };
     panel.append(field("Rows per page", pageSize));
 
     var thumbnails = element("input");
     thumbnails.type = "checkbox";
     thumbnails.checked = current.thumbnails;
-    thumbnails.onchange = function () { update({ thumbnails: thumbnails.checked }, thumbnails.checked ? "Thumbnails shown." : "Thumbnails hidden."); };
+    thumbnails.onchange = function () {
+      update({ thumbnails: thumbnails.checked }, thumbnails.checked ? "Thumbnails shown." : "Thumbnails hidden.");
+    };
     panel.append(field("Show thumbnails", thumbnails));
 
     var detailsOpen = element("input");
     detailsOpen.type = "checkbox";
     detailsOpen.checked = current.detailsOpen;
-    detailsOpen.onchange = function () { update({ detailsOpen: detailsOpen.checked }, detailsOpen.checked ? "Details open by default." : "Details collapsed by default."); };
+    detailsOpen.onchange = function () {
+      update(
+        { detailsOpen: detailsOpen.checked },
+        detailsOpen.checked ? "Details open by default." : "Details collapsed by default.",
+      );
+    };
     panel.append(field("Open row details by default", detailsOpen));
 
     if (config.optionsHost) {
@@ -134,11 +149,15 @@
     var compactButton = element("button", "inkdrop-table-view-choice", "Compact");
     compactButton.type = "button";
     compactButton.title = "Compact rows for fast scanning";
-    compactButton.onclick = function () { update({ density: "compact" }, "Compact table view enabled."); };
+    compactButton.onclick = function () {
+      update({ density: "compact" }, "Compact table view enabled.");
+    };
     var detailedButton = element("button", "inkdrop-table-view-choice", "Detailed");
     detailedButton.type = "button";
     detailedButton.title = "Taller rows with more operational context";
-    detailedButton.onclick = function () { update({ density: "detailed" }, "Detailed table view enabled."); };
+    detailedButton.onclick = function () {
+      update({ density: "detailed" }, "Detailed table view enabled.");
+    };
     var futureButton = element("button", "inkdrop-table-view-choice", "Cards");
     futureButton.type = "button";
     futureButton.disabled = true;
@@ -165,7 +184,9 @@
         pageSize.value = String(current.pageSize);
         thumbnails.checked = current.thumbnails;
         detailsOpen.checked = current.detailsOpen;
-        panel.querySelectorAll("input[type=checkbox][value]").forEach(function (input) { input.checked = true; });
+        panel.querySelectorAll("input[type=checkbox][value]").forEach(function (input) {
+          input.checked = true;
+        });
         refreshViewButtons();
         if (typeof config.onReset === "function") config.onReset();
         notify("Default table order and view restored.");
@@ -173,16 +194,20 @@
     }
 
     return Object.freeze({
-      get value() { return current; },
-      reset: function () { if (config.resetButton) config.resetButton.click(); },
+      get value() {
+        return current;
+      },
+      reset: function () {
+        if (config.resetButton) config.resetButton.click();
+      },
       status: status,
-      destroy: removeMenuBehavior
+      destroy: removeMenuBehavior,
     });
   }
 
   global.InkDropOperationalTableControls = Object.freeze({
     mount: mount,
     enhanceMenu: enhanceMenu,
-    enhanceMenus: enhanceMenus
+    enhanceMenus: enhanceMenus,
   });
 })(typeof window !== "undefined" ? window : globalThis);

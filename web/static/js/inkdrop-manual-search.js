@@ -3,7 +3,17 @@
 
   const ROOT_ID = "inkdropManualSearch";
   const ROUTE_KEY = "manual-search";
-  const TERMINAL_STATES = new Set(["complete", "completed", "partial", "failed", "cancelled", "expired", "timed_out", "rate_limited", "unavailable"]);
+  const TERMINAL_STATES = new Set([
+    "complete",
+    "completed",
+    "partial",
+    "failed",
+    "cancelled",
+    "expired",
+    "timed_out",
+    "rate_limited",
+    "unavailable",
+  ]);
   const state = {
     context: null,
     run: null,
@@ -42,13 +52,23 @@
   }
 
   function escapeHtml(value) {
-    return text(value).replace(/[&<>'"]/g, (char) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
-    }[char]));
+    return text(value).replace(
+      /[&<>'"]/g,
+      (char) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          "'": "&#39;",
+          '"': "&quot;",
+        })[char],
+    );
   }
 
   function humanize(value) {
-    return text(value).replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+    return text(value)
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
   }
 
   function formatBytes(value) {
@@ -57,7 +77,7 @@
     if (bytes === 0) return "0 B";
     const units = ["B", "KB", "MB", "GB", "TB"];
     const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-    return `${(bytes / (1024 ** index)).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
+    return `${(bytes / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
   }
 
   function formatAge(seconds) {
@@ -84,11 +104,20 @@
 
   function statusLabel(raw) {
     const labels = {
-      queued: "Planned", planned: "Planned", running: "Searching", searching: "Searching",
-      complete: "Complete", completed: "Complete", zero_results: "Zero results",
-      partial: "Complete with provider issues", expired: "Expired",
-      timed_out: "Timed out", rate_limited: "Rate limited", unavailable: "Unavailable",
-      cancelled: "Cancelled", failed: "Search failed",
+      queued: "Planned",
+      planned: "Planned",
+      running: "Searching",
+      searching: "Searching",
+      complete: "Complete",
+      completed: "Complete",
+      zero_results: "Zero results",
+      partial: "Complete with provider issues",
+      expired: "Expired",
+      timed_out: "Timed out",
+      rate_limited: "Rate limited",
+      unavailable: "Unavailable",
+      cancelled: "Cancelled",
+      failed: "Search failed",
     };
     return labels[text(raw).toLowerCase()] || humanize(raw || "Not started");
   }
@@ -114,15 +143,20 @@
       ? rows.map((row) => text(row?.failure_code || row?.reason_code).toLowerCase()).filter(Boolean)
       : [];
     const providerKey = text(attempt?.provider_id).toLowerCase();
-    const isProwlarr = providerKey === "prowlarr" || providerKey.startsWith("prowlarr_") || providerKey.startsWith("prowlarr-");
+    const isProwlarr =
+      providerKey === "prowlarr" || providerKey.startsWith("prowlarr_") || providerKey.startsWith("prowlarr-");
     const genericMessages = {
-      provider_credentials_unavailable: "Provider credentials unavailable. Check this provider's configuration in Settings.",
+      provider_credentials_unavailable:
+        "Provider credentials unavailable. Check this provider's configuration in Settings.",
       provider_http_error: "Provider returned an HTTP error. Check its health in Settings > Download Sources.",
-      provider_connection_failed: "InkDrop could not reach this provider. Check its configured address and container network.",
+      provider_connection_failed:
+        "InkDrop could not reach this provider. Check its configured address and container network.",
       provider_timeout: "Provider did not finish before the deadline. Check its health or adjust the timeout.",
       malformed_provider_response: "Provider returned an unreadable response. Check its logs and version.",
-      provider_response_too_large: "The provider sent back more data than InkDrop will accept. Narrow the search, or check the provider.",
-      provider_request_blocked: "InkDrop blocked this provider request because its configured destination is not allowed.",
+      provider_response_too_large:
+        "The provider sent back more data than InkDrop will accept. Narrow the search, or check the provider.",
+      provider_request_blocked:
+        "InkDrop blocked this provider request because its configured destination is not allowed.",
       provider_configuration_required: "Provider needs configuration in Settings.",
       provider_request_failed: "A provider request failed. Check its health and configuration.",
       unsupported_adapter: "This provider is not supported in this version of InkDrop.",
@@ -130,13 +164,18 @@
     };
     const prowlarrMessages = {
       ...genericMessages,
-      provider_credentials_unavailable: "Prowlarr credentials unavailable. Check its API key or config mount in Settings > Indexers.",
+      provider_credentials_unavailable:
+        "Prowlarr credentials unavailable. Check its API key or config mount in Settings > Indexers.",
       provider_http_error: "Prowlarr returned an HTTP error. Check the affected indexer in Prowlarr.",
-      provider_connection_failed: "InkDrop could not reach Prowlarr. Check its address and container network in Settings > Indexers.",
-      provider_timeout: "Prowlarr did not finish before the provider deadline. Check indexer health or adjust the timeout.",
+      provider_connection_failed:
+        "InkDrop could not reach Prowlarr. Check its address and container network in Settings > Indexers.",
+      provider_timeout:
+        "Prowlarr did not finish before the provider deadline. Check indexer health or adjust the timeout.",
       malformed_provider_response: "Prowlarr returned an unreadable response. Check its logs and version.",
-      provider_response_too_large: "Prowlarr sent back more data than InkDrop will accept. Narrow the search, or check the indexer.",
-      provider_request_blocked: "InkDrop blocked the Prowlarr request because its configured destination is not allowed.",
+      provider_response_too_large:
+        "Prowlarr sent back more data than InkDrop will accept. Narrow the search, or check the indexer.",
+      provider_request_blocked:
+        "InkDrop blocked the Prowlarr request because its configured destination is not allowed.",
       provider_configuration_required: "Prowlarr needs configuration in Settings > Indexers.",
       provider_request_failed: "A Prowlarr request failed. Check the provider-row details and Prowlarr indexer health.",
     };
@@ -155,13 +194,17 @@
   function decision(candidate) {
     const core = candidate.decision && typeof candidate.decision === "object" ? candidate.decision : {};
     const raw = text(core.decision || candidate.decision || "").toLowerCase();
-    if (candidate.already_downloading || raw === "already_downloading") return { label: "Already Downloading", tone: "info", rank: 0 };
-    if (candidate.already_imported || raw === "already_imported") return { label: "Already Imported", tone: "good", rank: 0 };
-    if (candidate.acquisition_capability === "assisted" || candidate.assisted_only || raw === "assisted") return { label: "Assisted", tone: "warn", rank: 3 };
+    if (candidate.already_downloading || raw === "already_downloading")
+      return { label: "Already Downloading", tone: "info", rank: 0 };
+    if (candidate.already_imported || raw === "already_imported")
+      return { label: "Already Imported", tone: "good", rank: 0 };
+    if (candidate.acquisition_capability === "assisted" || candidate.assisted_only || raw === "assisted")
+      return { label: "Assisted", tone: "warn", rank: 3 };
     if (raw === "source_unavailable") return { label: "Source Unavailable", tone: "bad", rank: 4 };
     if (candidate.accepted && candidate.pack_candidate) return { label: "Safe Pack", tone: "good", rank: 1 };
     if (candidate.accepted) return { label: "Safe Match", tone: "good", rank: 0 };
-    if (["possible", "possible_match", "review"].includes(raw)) return { label: "Possible Match", tone: "warn", rank: 2 };
+    if (["possible", "possible_match", "review"].includes(raw))
+      return { label: "Possible Match", tone: "warn", rank: 2 };
     return { label: "Rejected by policy", tone: "bad", rank: 4 };
   }
 
@@ -169,18 +212,30 @@
     const core = candidate.decision && typeof candidate.decision === "object" ? candidate.decision : {};
     const positive = core.positive_evidence || candidate.positive_evidence || [];
     const negative = core.negative_evidence || candidate.rejection_explanations || candidate.rejection_codes || [];
-    return { positive: Array.from(positive), negative: Array.from(negative), explanation: core.explanation || candidate.explanation || "" };
+    return {
+      positive: Array.from(positive),
+      negative: Array.from(negative),
+      explanation: core.explanation || candidate.explanation || "",
+    };
   }
 
   function sourceLabel(candidate) {
-    const provider = candidate.provider_display_name || candidate.provider_result_label || candidate.provider_id || "Unknown provider";
+    const provider =
+      candidate.provider_display_name || candidate.provider_result_label || candidate.provider_id || "Unknown provider";
     const child = candidate.child_source_name || candidate.indexer_or_extension || "";
     return child && text(child).toLowerCase() !== text(provider).toLowerCase() ? `${provider} · ${child}` : provider;
   }
 
   function interpretedMatch(candidate) {
-    return [candidate.interpreted_work, candidate.interpreted_edition, candidate.interpreted_unit_number ? `#${candidate.interpreted_unit_number}` : ""]
-      .filter(Boolean).join(" · ") || "Not interpreted";
+    return (
+      [
+        candidate.interpreted_work,
+        candidate.interpreted_edition,
+        candidate.interpreted_unit_number ? `#${candidate.interpreted_unit_number}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Not interpreted"
+    );
   }
 
   function candidateMatches(candidate) {
@@ -224,20 +279,29 @@
   }
 
   function selectOptions(values, selected, emptyLabel) {
-    return [`<option value="">${escapeHtml(emptyLabel)}</option>`, ...values.map((value) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(humanize(value))}</option>`)].join("");
+    return [
+      `<option value="">${escapeHtml(emptyLabel)}</option>`,
+      ...values.map(
+        (value) =>
+          `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(humanize(value))}</option>`,
+      ),
+    ].join("");
   }
 
   function providerProgressHtml() {
     if (!state.run && !state.attempts.length) return '<p class="manual-search-muted">Search has not started.</p>';
-    if (!state.attempts.length) return `<p class="manual-search-muted">${escapeHtml(statusLabel(state.run?.state))}</p>`;
-    return state.attempts.map((attempt) => {
-      const guidance = attemptGuidance(attempt);
-      return `
+    if (!state.attempts.length)
+      return `<p class="manual-search-muted">${escapeHtml(statusLabel(state.run?.state))}</p>`;
+    return state.attempts
+      .map((attempt) => {
+        const guidance = attemptGuidance(attempt);
+        return `
       <label class="manual-search-provider">
         <input type="checkbox" data-provider-select value="${escapeHtml(attempt.provider_id || "")}" checked>
         <span><strong>${escapeHtml(attemptLabel(attempt))}</strong><small>${escapeHtml(attemptState(attempt))}</small>${guidance ? `<small class="manual-search-provider-guidance">${escapeHtml(guidance)}</small>` : ""}</span>
       </label>`;
-    }).join("");
+      })
+      .join("");
   }
 
   function resultDetails(candidate) {
@@ -248,38 +312,66 @@
       ["Work", candidate.interpreted_work],
       ["Edition", candidate.interpreted_edition],
       ["Unit", candidate.interpreted_unit_number],
-      ["Publisher / year", [candidate.interpreted_publisher || candidate.publisher, candidate.interpreted_year].filter(Boolean).join(" · ")],
+      [
+        "Publisher / year",
+        [candidate.interpreted_publisher || candidate.publisher, candidate.interpreted_year]
+          .filter(Boolean)
+          .join(" · "),
+      ],
       ["Source health", candidate.source_health_snapshot?.status || candidate.health_snapshot?.status],
       ["Acquisition", candidate.acquisition_capability],
     ].filter(([, value]) => value !== undefined && value !== null && value !== "");
-    const factHtml = facts.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
-    const positive = proof.positive.length ? `<section><h4>Accepted evidence</h4><ul>${proof.positive.map((item) => `<li>${escapeHtml(humanize(item))}</li>`).join("")}</ul></section>` : "";
-    const negative = proof.negative.length ? `<section><h4>Rejection / warning evidence</h4><ul>${proof.negative.map((item) => `<li>${escapeHtml(humanize(item))}</li>`).join("")}</ul></section>` : "";
+    const factHtml = facts
+      .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+      .join("");
+    const positive = proof.positive.length
+      ? `<section><h4>Accepted evidence</h4><ul>${proof.positive.map((item) => `<li>${escapeHtml(humanize(item))}</li>`).join("")}</ul></section>`
+      : "";
+    const negative = proof.negative.length
+      ? `<section><h4>Rejection / warning evidence</h4><ul>${proof.negative.map((item) => `<li>${escapeHtml(humanize(item))}</li>`).join("")}</ul></section>`
+      : "";
     return `<div class="manual-search-evidence"><dl>${factHtml}</dl>${positive}${negative}${proof.explanation ? `<p>${escapeHtml(proof.explanation)}</p>` : ""}</div>`;
   }
 
   function grabAllowed(candidate) {
-    return Boolean(candidate.accepted && candidate.acquisition_capability !== "assisted" && !candidate.assisted_only && !candidate.already_downloading && !candidate.already_imported);
+    return Boolean(
+      candidate.accepted &&
+      candidate.acquisition_capability !== "assisted" &&
+      !candidate.assisted_only &&
+      !candidate.already_downloading &&
+      !candidate.already_imported,
+    );
   }
 
   function forceGrabAllowed(candidate) {
-    return Boolean(!candidate.accepted && candidate.force_grab?.eligible && !candidate.already_downloading && !candidate.already_imported);
+    return Boolean(
+      !candidate.accepted &&
+      candidate.force_grab?.eligible &&
+      !candidate.already_downloading &&
+      !candidate.already_imported,
+    );
   }
 
   function resultRow(candidate) {
     const itemDecision = decision(candidate);
     const candidateId = text(candidate.candidate_id);
     const assisted = itemDecision.label === "Assisted";
-    const availability = candidate.seeders !== undefined && candidate.seeders !== null
-      ? `${candidate.seeders} seeds`
-      : candidate.remote_availability || candidate.remote_queue_state || "Unavailable";
-    const pack = candidate.pack_candidate ? `${humanize(candidate.pack_type || "Pack")}${candidate.likely_wanted_coverage ? ` · ${candidate.likely_wanted_coverage} wanted` : ""}` : "Single";
+    const availability =
+      candidate.seeders !== undefined && candidate.seeders !== null
+        ? `${candidate.seeders} seeds`
+        : candidate.remote_availability || candidate.remote_queue_state || "Unavailable";
+    const pack = candidate.pack_candidate
+      ? `${humanize(candidate.pack_type || "Pack")}${candidate.likely_wanted_coverage ? ` · ${candidate.likely_wanted_coverage} wanted` : ""}`
+      : "Single";
     let action = "";
     if (state.grabbed.has(candidateId)) action = '<span class="manual-search-chip good">Sent to queue</span>';
-    else if (grabAllowed(candidate)) action = `<button type="button" class="manual-search-button primary" data-grab="${escapeHtml(candidateId)}">Grab</button>`;
-    else if (forceGrabAllowed(candidate)) action = `<button type="button" class="manual-search-button danger" data-force-grab="${escapeHtml(candidateId)}">Force grab…</button>`;
+    else if (grabAllowed(candidate))
+      action = `<button type="button" class="manual-search-button primary" data-grab="${escapeHtml(candidateId)}">Grab</button>`;
+    else if (forceGrabAllowed(candidate))
+      action = `<button type="button" class="manual-search-button danger" data-force-grab="${escapeHtml(candidateId)}">Force grab…</button>`;
     else if (assisted) action = '<span class="manual-search-assisted">Manual retrieval required</span>';
-    else action = `<button type="button" class="manual-search-button" disabled title="${escapeHtml(candidate.force_grab?.reason || "Core rejected this candidate. Open Details to review the policy evidence.")}">Grab blocked by policy</button>`;
+    else
+      action = `<button type="button" class="manual-search-button" disabled title="${escapeHtml(candidate.force_grab?.reason || "Core rejected this candidate. Open Details to review the policy evidence.")}">Grab blocked by policy</button>`;
     return `
       <article class="manual-search-result" data-candidate-id="${escapeHtml(candidateId)}">
         <div class="manual-search-result-grid" role="group" aria-label="Search result">
@@ -304,11 +396,19 @@
     const results = sortedResults();
     const allRejected = state.results.length > 0 && !state.results.some((item) => item.accepted);
     let resultBody = "";
-    if (!state.run) resultBody = '<div class="manual-search-state"><h3>Search not started</h3><p>Select Search to query the configured providers for this unit.</p></div>';
-    else if (isRunning && !state.results.length) resultBody = '<div class="manual-search-state loading"><h3>Searching providers</h3><p>Results will appear as each bounded provider attempt completes.</p></div>';
-    else if (!state.results.length) resultBody = `<div class="manual-search-state"><h3>${runState === "cancelled" ? "Search cancelled" : "No results returned"}</h3><p>${runState === "cancelled" ? "Start another search when ready." : "Configured providers returned no candidates for this unit."}</p></div>`;
-    else if (!results.length) resultBody = '<div class="manual-search-state"><h3>No results match these filters</h3><p>Clear filters or turn on Show rejected results.</p></div>';
-    else resultBody = `${allRejected ? '<div class="manual-search-inline-notice">Results were returned, but Core rejected every candidate. Expand a row to review the evidence.</div>' : ""}${results.map(resultRow).join("")}`;
+    if (!state.run)
+      resultBody =
+        '<div class="manual-search-state"><h3>Search not started</h3><p>Select Search to query the configured providers for this unit.</p></div>';
+    else if (isRunning && !state.results.length)
+      resultBody =
+        '<div class="manual-search-state loading"><h3>Searching providers</h3><p>Results will appear as each bounded provider attempt completes.</p></div>';
+    else if (!state.results.length)
+      resultBody = `<div class="manual-search-state"><h3>${runState === "cancelled" ? "Search cancelled" : "No results returned"}</h3><p>${runState === "cancelled" ? "Start another search when ready." : "Configured providers returned no candidates for this unit."}</p></div>`;
+    else if (!results.length)
+      resultBody =
+        '<div class="manual-search-state"><h3>No results match these filters</h3><p>Clear filters or turn on Show rejected results.</p></div>';
+    else
+      resultBody = `${allRejected ? '<div class="manual-search-inline-notice">Results were returned, but Core rejected every candidate. Expand a row to review the evidence.</div>' : ""}${results.map(resultRow).join("")}`;
 
     element.innerHTML = `
       <div class="manual-search-backdrop" data-close-manual-search></div>
@@ -372,7 +472,11 @@
   async function loadResults() {
     if (!state.run?.id && !state.run?.run_id) return;
     const runId = state.run.id || state.run.run_id;
-    const query = new URLSearchParams({ include_rejected: state.includeRejected ? "1" : "0", limit: "500", offset: "0" });
+    const query = new URLSearchParams({
+      include_rejected: state.includeRejected ? "1" : "0",
+      limit: "500",
+      offset: "0",
+    });
     const data = await api().request(`/api/manual-search/runs/${encodeURIComponent(runId)}/results?${query}`);
     state.results = Array.isArray(data.results) ? data.results : [];
   }
@@ -383,10 +487,19 @@
     try {
       const [runData, diagnosticData] = await Promise.all([
         api().request(`/api/manual-search/runs/${encodeURIComponent(runId)}`),
-        api().request(`/api/manual-search/runs/${encodeURIComponent(runId)}/diagnostics`).catch(() => ({ provider_attempts: [], queries: [] })),
+        api()
+          .request(`/api/manual-search/runs/${encodeURIComponent(runId)}/diagnostics`)
+          .catch(() => ({ provider_attempts: [], queries: [] })),
       ]);
-      state.run = { ...(runData.run || {}), run_id: runId, candidate_counts: runData.candidate_counts || {}, source_profile: state.run.source_profile };
-      const diagnosticAttempts = Array.isArray(diagnosticData.provider_attempts) ? diagnosticData.provider_attempts : [];
+      state.run = {
+        ...(runData.run || {}),
+        run_id: runId,
+        candidate_counts: runData.candidate_counts || {},
+        source_profile: state.run.source_profile,
+      };
+      const diagnosticAttempts = Array.isArray(diagnosticData.provider_attempts)
+        ? diagnosticData.provider_attempts
+        : [];
       if (diagnosticAttempts.length || !Array.isArray(state.attempts)) state.attempts = diagnosticAttempts;
       state.queries = diagnosticData.queries || [];
       await loadResults();
@@ -424,9 +537,17 @@
         pack_allowed: context.pack_allowed !== false,
       };
       const data = await api().request("/api/manual-search/runs", { method: "POST", body });
-      state.run = { ...(data.context || {}), ...(data.run || {}), run_id: data.run_id, state: data.state || "queued", source_profile: data.source_profile || {} };
+      state.run = {
+        ...(data.context || {}),
+        ...(data.run || {}),
+        run_id: data.run_id,
+        state: data.state || "queued",
+        source_profile: data.source_profile || {},
+      };
       state.results = [];
-      state.attempts = (data.providers || []).map((provider) => typeof provider === "string" ? { provider_id: provider, state: "planned" } : provider);
+      state.attempts = (data.providers || []).map((provider) =>
+        typeof provider === "string" ? { provider_id: provider, state: "planned" } : provider,
+      );
       state.grabbed.clear();
       state.pendingGrabs.clear();
       await refreshRun();
@@ -462,16 +583,28 @@
     if (!candidate || state.busy || (forceRejected ? !forceGrabAllowed(candidate) : !grabAllowed(candidate))) return;
     const proof = evidence(candidate);
     if (forceRejected) {
-      const reasons = proof.negative.length ? proof.negative.map(humanize).join("; ") : "Core could not safely match this result";
+      const reasons = proof.negative.length
+        ? proof.negative.map(humanize).join("; ")
+        : "Core could not safely match this result";
       const acknowledged = window.confirm(
-        `Core rejected this candidate for: ${reasons}. Force-grabbing can download the wrong work, edition, language, unit, or pack and consume bandwidth and storage. Automatic Search policy is unchanged. Continue anyway?`
+        `Core rejected this candidate for: ${reasons}. Force-grabbing can download the wrong work, edition, language, unit, or pack and consume bandwidth and storage. Automatic Search policy is unchanged. Continue anyway?`,
       );
       if (!acknowledged) return;
     }
-    const warning = candidate.pack_candidate || proof.negative.includes("pack_size_warning") || ["possible", "possible_match"].includes(text(candidate.decision?.decision).toLowerCase());
+    const warning =
+      candidate.pack_candidate ||
+      proof.negative.includes("pack_size_warning") ||
+      ["possible", "possible_match"].includes(text(candidate.decision?.decision).toLowerCase());
     if (warning && !forceRejected) {
-      const coverage = candidate.likely_wanted_coverage ? ` InkDrop estimates ${candidate.likely_wanted_coverage} wanted items may be included.` : "";
-      if (!window.confirm(`${candidate.pack_candidate ? `Large pack: ${formatBytes(candidate.size_bytes)}.` : "This candidate carries a warning."}${coverage} Continue with this explicit grab?`)) return;
+      const coverage = candidate.likely_wanted_coverage
+        ? ` InkDrop estimates ${candidate.likely_wanted_coverage} wanted items may be included.`
+        : "";
+      if (
+        !window.confirm(
+          `${candidate.pack_candidate ? `Large pack: ${formatBytes(candidate.size_bytes)}.` : "This candidate carries a warning."}${coverage} Continue with this explicit grab?`,
+        )
+      )
+        return;
     }
     if (state.pendingGrabs.has(text(candidateId))) return;
     state.pendingGrabs.add(text(candidateId));
@@ -485,9 +618,16 @@
         force_rejected: forceRejected,
         confirm_rejected_risk: forceRejected,
       };
-      const data = await api().request(`/api/manual-search/candidates/${encodeURIComponent(candidateId)}/grab`, { method: "POST", body });
+      const data = await api().request(`/api/manual-search/candidates/${encodeURIComponent(candidateId)}/grab`, {
+        method: "POST",
+        body,
+      });
       state.grabbed.add(text(candidateId));
-      const successMessage = data.idempotent_reuse ? "This candidate was already sent to the acquisition queue." : forceRejected ? "Rejected candidate force-grab sent to InkDrop’s acquisition queue." : "Candidate sent to InkDrop’s acquisition queue.";
+      const successMessage = data.idempotent_reuse
+        ? "This candidate was already sent to the acquisition queue."
+        : forceRejected
+          ? "Rejected candidate force-grab sent to InkDrop’s acquisition queue."
+          : "Candidate sent to InkDrop’s acquisition queue.";
       state.feedback = { message: successMessage, code: "" };
       render();
       const box = root()?.querySelector("[data-error]");
@@ -506,10 +646,14 @@
   }
 
   function bind(element) {
-    element.querySelectorAll("[data-close-manual-search]").forEach((button) => button.addEventListener("click", () => close()));
+    element
+      .querySelectorAll("[data-close-manual-search]")
+      .forEach((button) => button.addEventListener("click", () => close()));
     element.querySelector("[data-start-search]")?.addEventListener("click", () => startSearch([]));
     element.querySelector("[data-search-selected]")?.addEventListener("click", () => {
-      const providers = Array.from(element.querySelectorAll("[data-provider-select]:checked")).map((input) => input.value);
+      const providers = Array.from(element.querySelectorAll("[data-provider-select]:checked")).map(
+        (input) => input.value,
+      );
       if (providers.length) startSearch(providers);
     });
     element.querySelector("[data-refresh-run]")?.addEventListener("click", () => refreshRun());
@@ -521,44 +665,80 @@
       }
       render();
     });
-    element.querySelectorAll("[data-filter]").forEach((control) => control.addEventListener("change", (event) => {
-      state[event.target.dataset.filter] = event.target.value;
-      render();
-    }));
+    element.querySelectorAll("[data-filter]").forEach((control) =>
+      control.addEventListener("change", (event) => {
+        state[event.target.dataset.filter] = event.target.value;
+        render();
+      }),
+    );
     element.querySelector("[data-sort]")?.addEventListener("change", (event) => {
       state.sort = event.target.value;
       render();
     });
     element.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
-      Object.assign(state, { filter: "all", provider: "", protocol: "", language: "", format: "", pack: "all", assisted: "all", minimumScore: "" });
+      Object.assign(state, {
+        filter: "all",
+        provider: "",
+        protocol: "",
+        language: "",
+        format: "",
+        pack: "all",
+        assisted: "all",
+        minimumScore: "",
+      });
       render();
     });
-    element.querySelectorAll("[data-toggle-details]").forEach((button) => button.addEventListener("click", () => {
-      const article = button.closest(".manual-search-result");
-      const details = article?.querySelector(".manual-search-result-details");
-      if (!details) return;
-      const expanded = button.getAttribute("aria-expanded") === "true";
-      button.setAttribute("aria-expanded", String(!expanded));
-      button.textContent = expanded ? "Details" : "Hide details";
-      details.hidden = expanded;
-    }));
-    element.querySelectorAll("[data-grab]").forEach((button) => button.addEventListener("click", () => grab(button.dataset.grab)));
-    element.querySelectorAll("[data-force-grab]").forEach((button) => button.addEventListener("click", () => grab(button.dataset.forceGrab, { forceRejected: true })));
+    element.querySelectorAll("[data-toggle-details]").forEach((button) =>
+      button.addEventListener("click", () => {
+        const article = button.closest(".manual-search-result");
+        const details = article?.querySelector(".manual-search-result-details");
+        if (!details) return;
+        const expanded = button.getAttribute("aria-expanded") === "true";
+        button.setAttribute("aria-expanded", String(!expanded));
+        button.textContent = expanded ? "Details" : "Hide details";
+        details.hidden = expanded;
+      }),
+    );
+    element
+      .querySelectorAll("[data-grab]")
+      .forEach((button) => button.addEventListener("click", () => grab(button.dataset.grab)));
+    element
+      .querySelectorAll("[data-force-grab]")
+      .forEach((button) =>
+        button.addEventListener("click", () => grab(button.dataset.forceGrab, { forceRejected: true })),
+      );
   }
 
   function reset(nextContext) {
     stopPolling();
     Object.assign(state, {
-      context: nextContext || {}, run: null, results: [], attempts: [], queries: [], includeRejected: true,
-      filter: "all", provider: "", protocol: "", language: "", format: "", pack: "all", assisted: "all",
-      minimumScore: "", sort: "decision", direction: "desc", busy: false, grabbed: new Set(),
+      context: nextContext || {},
+      run: null,
+      results: [],
+      attempts: [],
+      queries: [],
+      includeRejected: true,
+      filter: "all",
+      provider: "",
+      protocol: "",
+      language: "",
+      format: "",
+      pack: "all",
+      assisted: "all",
+      minimumScore: "",
+      sort: "decision",
+      direction: "desc",
+      busy: false,
+      grabbed: new Set(),
       feedback: null,
     });
   }
 
   function open(context = {}) {
     if (!(context.issue_id || context.unit_id)) {
-      window.dispatchEvent(new CustomEvent("inkdrop:manual-search-unavailable", { detail: { reason: "canonical_unit_id_required" } }));
+      window.dispatchEvent(
+        new CustomEvent("inkdrop:manual-search-unavailable", { detail: { reason: "canonical_unit_id_required" } }),
+      );
       return false;
     }
     state.returnFocus = document.activeElement;
