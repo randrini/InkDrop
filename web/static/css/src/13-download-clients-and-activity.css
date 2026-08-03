@@ -58,3 +58,15 @@
 .download-client-instance-actions button { padding: 4px 8px; font-size: var(--font-sm); min-height: 28px; }
 .download-client-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
 .download-client-delete-warning { padding: 10px 12px; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: var(--radius-md); background: rgba(239, 68, 68, 0.08); color: var(--bad); font-size: var(--font-sm); }
+
+/* ===== Download client JS-generated classes ===== */
+.download-client-operational-fact { font-size: var(--font-sm); color: var(--muted); display: grid; gap: 2px; }
+.download-client-operational-fact dt { font-size: 11px; color: var(--text-muted); }
+.download-client-operational-fact dd { font-size: 13px; color: var(--text); margin: 0; }
+.download-client-operational-summary { display: grid; gap: 6px; padding: 8px 0; }
+.download-client-torrent-status { font-size: 11px; padding: 1px 6px; border-radius: 999px; }
+.download-client-cleanup-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.download-client-cleanup-policy { font-size: var(--font-sm); color: var(--muted); }
+.download-client-health { font-size: 11px; padding: 1px 6px; border-radius: 999px; }
+.download-client-add-mapping { border: none; background: none; color: var(--accent); font-size: var(--font-sm); cursor: pointer; padding: 4px 8px; min-height: auto; }
+.download-client-add-mapping:hover { text-decoration: underline; }

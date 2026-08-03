@@ -344,6 +344,35 @@ section.card[hidden], aside.card[hidden] { display: none; }
 .inkdrop-one-time-key { padding: 12px; border: 1px solid var(--accent-dim); border-radius: var(--radius-md); background: var(--accent-glow); }
 .inkdrop-one-time-key output { display: block; font-family: monospace; font-size: 14px; color: var(--accent); word-break: break-all; }
 
+/* ===== Generic utility classes ===== */
+.title { font-size: var(--font-lg); font-weight: 600; color: var(--text); }
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stack { display: flex; flex-direction: column; gap: 4px; }
+.advanced {  }
+.secondary { padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-2); color: var(--muted); font-size: 13px; cursor: pointer; transition: all var(--transition); }
+.secondary:hover { background: var(--surface-3); color: var(--text); border-color: var(--accent-dim); }
+.muted { color: var(--text-muted); }
+.searching { opacity: 0.6; pointer-events: none; }
+.page-title { font-size: var(--font-2xl); font-family: 'DM Serif Display', Georgia, serif; color: var(--text); }
+.closed-label { display: inline; }
+.open-label { display: none; }
+details[open] .closed-label { display: none; }
+details[open] .open-label { display: inline; }
+
+/* ===== InkDrop Auth secondary ===== */
+.inkdrop-auth-secondary { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.inkdrop-auth-secondary p { font-size: var(--font-sm); color: var(--text-muted); }
+.inkdrop-auth-secondary a { color: var(--accent); }
+
+/* ===== InkDrop Activity states ===== */
+.inkdrop-activity-loading { display: grid; place-items: center; padding: 24px; color: var(--text-muted); font-size: var(--font-sm); }
+.inkdrop-activity-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
+.inkdrop-activity-error { padding: 12px; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: var(--radius-md); background: rgba(239, 68, 68, 0.08); color: var(--bad); font-size: var(--font-sm); }
+
+/* ===== InkDrop Completion / Stage ===== */
+.inkdrop-completion { display: grid; gap: 8px; }
+.inkdrop-stage { font-size: var(--font-sm); color: var(--text-muted); }
+
 /* ===== Responsive ===== */
 @media (max-width: 1024px) {
   .inkdrop-sidebar { width: 200px; }

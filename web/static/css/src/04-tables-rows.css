@@ -122,3 +122,49 @@
 .arr-table-hide-thumbnails .cover-thumb { display: none; }
 .arr-table-hide-state .core-state { display: none; }
 .arr-table-hide-detail .section-table-context { display: none; }
+
+/* ===== Review / Manual review (JS-generated) ===== */
+.review-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.review-meta { font-size: var(--font-sm); color: var(--text-muted); }
+.review-count { font-size: var(--font-sm); color: var(--muted); }
+.review-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
+.review-group-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); }
+.unmatched-title-wrap { display: grid; gap: 2px; min-width: 0; }
+.unmatched-select { display: flex; align-items: center; gap: 6px; font-size: var(--font-sm); color: var(--muted); cursor: pointer; }
+.unmatched-select input { accent-color: var(--accent); }
+
+/* ===== Queue progress & drawer (JS-generated) ===== */
+.queue-toggle { cursor: pointer; font-size: var(--font-sm); color: var(--accent); }
+.queue-count { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--surface-3); color: var(--text-muted); }
+.queue-summary-right { display: flex; align-items: center; gap: 8px; }
+
+/* ===== Arr table footer / controlbar / pager (JS-generated) ===== */
+.arr-table-controlbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; flex-wrap: wrap; }
+.arr-table-controlbar-left { display: flex; align-items: center; gap: 8px; }
+.arr-table-controlbar-right { display: flex; align-items: center; gap: 8px; }
+.arr-table-footer { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; font-size: var(--font-sm); color: var(--text-muted); }
+.arr-table-footer-compact { font-size: var(--font-sm); color: var(--text-muted); }
+.arr-table-pager { display: flex; align-items: center; gap: 6px; }
+.arr-table-pager button { padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-alt); color: var(--text-muted); font-size: var(--font-sm); cursor: pointer; min-height: auto; }
+.arr-table-pager button:hover { border-color: var(--accent-dim); color: var(--text); }
+.arr-table-pager button:disabled { opacity: 0.4; cursor: default; }
+.arr-table-record-count { font-size: var(--font-sm); color: var(--text-muted); }
+.arr-table-selection-count { font-size: var(--font-sm); color: var(--accent); }
+.arr-table-sort-state { font-size: 11px; color: var(--text-muted); }
+.arr-table-tool-label { font-size: var(--font-sm); color: var(--text-muted); }
+.arr-table-icon-button { border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 4px; min-height: auto; border-radius: var(--radius-sm); transition: color var(--transition), background var(--transition); }
+.arr-table-icon-button:hover { color: var(--text); background: var(--surface-2); }
+.arr-table-menu { position: relative; }
+.arr-table-menu-panel { position: absolute; right: 0; top: 100%; z-index: 50; min-width: 180px; padding: 8px; border: 1px solid var(--line-light); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-md); }
+.arr-table-menu-panel-portal { position: fixed; z-index: 1000; }
+.arr-table-menu-item-label { font-size: 13px; color: var(--text); }
+.arr-table-menu-item-detail { font-size: 11px; color: var(--text-muted); }
+.arr-table-menu-item-count { font-size: 11px; color: var(--accent); }
+.arr-table-menu-item-copy { display: grid; gap: 2px; }
+.arr-table-view-strip { display: flex; gap: 4px; }
+.arr-table-view-label { font-size: var(--font-sm); color: var(--text-muted); }
+.arr-table-view-count { font-size: 11px; color: var(--accent); }
+.arr-table-view-chip { padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-alt); color: var(--text-muted); font-size: var(--font-sm); cursor: pointer; transition: all var(--transition); }
+.arr-table-view-chip:hover { color: var(--text); border-color: var(--accent-dim); }
+.arr-table-view-chip.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+.arr-table-expanded-details { padding: 8px 12px; background: var(--bg-alt); border-radius: var(--radius-md); }

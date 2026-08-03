@@ -40,5 +40,10 @@
 .manual-search-error { padding: 8px 12px; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: var(--radius-md); background: rgba(239, 68, 68, 0.08); color: var(--bad); font-size: var(--font-sm); }
 .manual-search-inline-notice { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-alt); color: var(--muted); font-size: var(--font-sm); }
 
-/* Auth backdrop */
+/* ===== Manual search JS-generated classes ===== */
+.manual-search-assisted { border: 1px solid rgba(245, 158, 11, 0.3); border-radius: var(--radius-md); background: rgba(245, 158, 11, 0.05); }
+.manual-search-state { font-size: var(--font-sm); color: var(--muted); }
+.manual-search-provider-guidance { font-size: 11px; color: var(--text-muted); padding: 4px 0; }
+
+/* ===== Auth backdrop ===== */
 .inkdrop-auth-backdrop { position: fixed; inset: 0; z-index: 999; background: var(--bg); }
