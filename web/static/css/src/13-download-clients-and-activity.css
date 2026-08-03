@@ -1,72 +1,387 @@
 /* ===== Download Clients ===== */
-.download-client-manager { display: grid; gap: 12px; }
-.download-client-manager-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-.download-client-manager-head h3 { font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--text); }
-.download-client-manager-head p { font-size: var(--font-sm); color: var(--muted); margin: 4px 0 0; }
-.download-client-manager-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.download-client-manager-live { font-size: var(--font-sm); color: var(--text-muted); }
-.download-client-instance-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.download-client-dialog { position: fixed; inset: 0; z-index: 950; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,0.65); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: modalFadeIn 0.2s ease; }
-.download-client-dialog[hidden] { display: none; }
-.download-client-dialog-shell { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); max-width: 600px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow-lg), 0 0 40px rgba(201, 162, 39, 0.06); animation: modalSlideIn 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
-.download-client-dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
-.download-client-dialog-head h2 { font-size: var(--font-lg); font-family: 'DM Serif Display', Georgia, serif; }
-.download-client-dialog-close { border: none; background: none; color: var(--text-muted); font-size: 20px; cursor: pointer; min-height: auto; border-radius: var(--radius-sm); transition: color var(--transition), background var(--transition); }
-.download-client-dialog-close:hover { color: var(--text); background: var(--surface-2); }
-.download-client-dialog-copy { padding: 0 20px 12px; font-size: var(--font-sm); color: var(--muted); }
-.download-client-chooser { padding: 0 20px 20px; display: grid; gap: 12px; }
-.download-client-choice-group { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; }
-.download-client-choice-group legend { font-size: 13px; font-weight: 600; color: var(--text); padding: 0 6px; }
-.download-client-choice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
-.download-client-choice { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-sm); color: var(--muted); transition: all var(--transition); }
-.download-client-choice:hover { border-color: var(--accent-dim); background: var(--accent-warm); }
-.download-client-choice input { margin: 0; }
-.download-client-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
-.download-client-editor { padding: 0 20px 20px; display: grid; gap: 12px; }
-.download-client-inline-error { padding: 8px 12px; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: var(--radius-md); background: rgba(239, 68, 68, 0.08); color: var(--bad); font-size: var(--font-sm); }
-.download-client-inline-note { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-alt); color: var(--muted); font-size: var(--font-sm); }
-.download-client-field { display: grid; gap: 4px; }
-.download-client-field.wide { grid-column: 1 / -1; }
-.download-client-field label { font-size: 13px; color: var(--muted); }
-.download-client-field input, .download-client-field textarea { width: 100%; }
-.download-client-field-help { font-size: 11px; color: var(--text-muted); }
-.download-client-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
-.download-client-mappings { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; display: grid; gap: 8px; }
-.download-client-mapping-rows { display: grid; gap: 6px; }
-.download-client-mapping-row { display: flex; gap: 6px; align-items: center; }
-.download-client-routing { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; display: grid; gap: 8px; }
-.download-client-advanced { border: 1px solid var(--line); border-radius: var(--radius-md); }
-.download-client-advanced summary { padding: 10px 12px; cursor: pointer; font-size: var(--font-sm); color: var(--accent); transition: color var(--transition); }
-.download-client-advanced summary:hover { color: var(--accent-hover); }
-.download-client-advanced-grid { padding: 0 12px 12px; display: grid; gap: 8px; }
-.download-client-instance-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); display: grid; gap: 8px; transition: border-color var(--transition), box-shadow var(--transition); }
-.download-client-instance-card:hover { border-color: var(--line-light); box-shadow: var(--shadow-warm-sm); }
-.download-client-instance-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-.download-client-instance-head h3 { font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--text); }
-.download-client-instance-head p { font-size: var(--font-sm); color: var(--text-muted); margin: 2px 0 0; }
-.download-client-instance-state { font-size: 11px; padding: 2px 7px; border-radius: 999px; }
-.download-client-instance-state.good { background: rgba(74, 222, 128, 0.12); color: var(--good); }
-.download-client-instance-state.warn { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
-.download-client-instance-state.bad { background: rgba(239, 68, 68, 0.12); color: var(--bad); }
-.download-client-instance-facts { display: grid; gap: 4px; margin: 0; }
-.download-client-instance-facts dt { font-size: 11px; color: var(--text-muted); }
-.download-client-instance-facts dd { font-size: 13px; color: var(--text); margin: 0 0 4px; }
-.download-client-instance-note { font-size: var(--font-sm); padding: 6px 8px; border-radius: var(--radius-sm); }
-.download-client-instance-note.good { background: rgba(74, 222, 128, 0.08); color: var(--good); }
-.download-client-instance-note.warn { background: rgba(245, 158, 11, 0.08); color: var(--warn); }
-.download-client-instance-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.download-client-instance-actions button { padding: 4px 8px; font-size: var(--font-sm); min-height: 28px; }
-.download-client-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
-.download-client-delete-warning { padding: 10px 12px; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: var(--radius-md); background: rgba(239, 68, 68, 0.08); color: var(--bad); font-size: var(--font-sm); }
+.download-client-manager {
+  display: grid;
+  gap: 12px;
+}
+.download-client-manager-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.download-client-manager-head h3 {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.download-client-manager-head p {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+.download-client-manager-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.download-client-manager-live {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+.download-client-instance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.download-client-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: modalFadeIn 0.2s ease;
+}
+.download-client-dialog[hidden] {
+  display: none;
+}
+.download-client-dialog-shell {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  max-width: 600px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow:
+    var(--shadow-lg),
+    0 0 40px rgba(201, 162, 39, 0.06);
+  animation: modalSlideIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.download-client-dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.download-client-dialog-head h2 {
+  font-size: var(--font-lg);
+  font-family: "DM Serif Display", Georgia, serif;
+}
+.download-client-dialog-close {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  cursor: pointer;
+  min-height: auto;
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--transition),
+    background var(--transition);
+}
+.download-client-dialog-close:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.download-client-dialog-copy {
+  padding: 0 20px 12px;
+  font-size: var(--font-sm);
+  color: var(--muted);
+}
+.download-client-chooser {
+  padding: 0 20px 20px;
+  display: grid;
+  gap: 12px;
+}
+.download-client-choice-group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+.download-client-choice-group legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 0 6px;
+}
+.download-client-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+.download-client-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  color: var(--muted);
+  transition: all var(--transition);
+}
+.download-client-choice:hover {
+  border-color: var(--accent-dim);
+  background: var(--accent-warm);
+}
+.download-client-choice input {
+  margin: 0;
+}
+.download-client-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+.download-client-editor {
+  padding: 0 20px 20px;
+  display: grid;
+  gap: 12px;
+}
+.download-client-inline-error {
+  padding: 8px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: var(--radius-md);
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--bad);
+  font-size: var(--font-sm);
+}
+.download-client-inline-note {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  color: var(--muted);
+  font-size: var(--font-sm);
+}
+.download-client-field {
+  display: grid;
+  gap: 4px;
+}
+.download-client-field.wide {
+  grid-column: 1 / -1;
+}
+.download-client-field label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.download-client-field input,
+.download-client-field textarea {
+  width: 100%;
+}
+.download-client-field-help {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.download-client-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.download-client-mappings {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.download-client-mapping-rows {
+  display: grid;
+  gap: 6px;
+}
+.download-client-mapping-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.download-client-routing {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.download-client-advanced {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.download-client-advanced summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: var(--font-sm);
+  color: var(--accent);
+  transition: color var(--transition);
+}
+.download-client-advanced summary:hover {
+  color: var(--accent-hover);
+}
+.download-client-advanced-grid {
+  padding: 0 12px 12px;
+  display: grid;
+  gap: 8px;
+}
+.download-client-instance-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  display: grid;
+  gap: 8px;
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+.download-client-instance-card:hover {
+  border-color: var(--line-light);
+  box-shadow: var(--shadow-warm-sm);
+}
+.download-client-instance-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.download-client-instance-head h3 {
+  font-family: "DM Sans", system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.download-client-instance-head p {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+.download-client-instance-state {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.download-client-instance-state.good {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--good);
+}
+.download-client-instance-state.warn {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warn);
+}
+.download-client-instance-state.bad {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--bad);
+}
+.download-client-instance-facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+.download-client-instance-facts dt {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.download-client-instance-facts dd {
+  font-size: 13px;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+.download-client-instance-note {
+  font-size: var(--font-sm);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+.download-client-instance-note.good {
+  background: rgba(74, 222, 128, 0.08);
+  color: var(--good);
+}
+.download-client-instance-note.warn {
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--warn);
+}
+.download-client-instance-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.download-client-instance-actions button {
+  padding: 4px 8px;
+  font-size: var(--font-sm);
+  min-height: 28px;
+}
+.download-client-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+.download-client-delete-warning {
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: var(--radius-md);
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--bad);
+  font-size: var(--font-sm);
+}
 
 /* ===== Download client JS-generated classes ===== */
-.download-client-operational-fact { font-size: var(--font-sm); color: var(--muted); display: grid; gap: 2px; }
-.download-client-operational-fact dt { font-size: 11px; color: var(--text-muted); }
-.download-client-operational-fact dd { font-size: 13px; color: var(--text); margin: 0; }
-.download-client-operational-summary { display: grid; gap: 6px; padding: 8px 0; }
-.download-client-torrent-status { font-size: 11px; padding: 1px 6px; border-radius: 999px; }
-.download-client-cleanup-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.download-client-cleanup-policy { font-size: var(--font-sm); color: var(--muted); }
-.download-client-health { font-size: 11px; padding: 1px 6px; border-radius: 999px; }
-.download-client-add-mapping { border: none; background: none; color: var(--accent); font-size: var(--font-sm); cursor: pointer; padding: 4px 8px; min-height: auto; }
-.download-client-add-mapping:hover { text-decoration: underline; }
+.download-client-operational-fact {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  display: grid;
+  gap: 2px;
+}
+.download-client-operational-fact dt {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.download-client-operational-fact dd {
+  font-size: 13px;
+  color: var(--text);
+  margin: 0;
+}
+.download-client-operational-summary {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+}
+.download-client-torrent-status {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.download-client-cleanup-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.download-client-cleanup-policy {
+  font-size: var(--font-sm);
+  color: var(--muted);
+}
+.download-client-health {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.download-client-add-mapping {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  padding: 4px 8px;
+  min-height: auto;
+}
+.download-client-add-mapping:hover {
+  text-decoration: underline;
+}

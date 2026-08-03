@@ -44,9 +44,9 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        curl \
-        p7zip-full \
-        unrar-free \
+        curl=0.* \
+        p7zip-full=16.* \
+        unrar-free=1.* \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -170,6 +170,6 @@ RUN chmod +x /app/inkdrop-*.sh
 EXPOSE 8796
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -B inkdrop_container_healthcheck.py --timeout 5
+    CMD ["python", "-B", "inkdrop_container_healthcheck.py", "--timeout", "5"]
 
 CMD ["python", "-B", "inkdrop_container_start.py"]
