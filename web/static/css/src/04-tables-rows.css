@@ -90,7 +90,7 @@
 .queue-row-progress.bad .queue-row-progress-fill { background: var(--bad); }
 .queue-row-progress-head { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); }
 .queue-row-progress-track { height: 4px; background: var(--bg-alt); border-radius: 999px; overflow: hidden; }
-.queue-row-progress-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.3s ease; }
+.queue-row-progress-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.4s ease; }
 .queue-row-progress-meta { font-size: 11px; color: var(--text-muted); }
 @keyframes indeterminate { 0% { width: 0; } 50% { width: 60%; } 100% { width: 100%; } }
 

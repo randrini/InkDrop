@@ -732,25 +732,25 @@ HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#181c21">
+  <meta name="theme-color" content="#0a0c10">
   <link rel="icon" type="image/png" href="/inkdrop-logo-mark.png?v=20260728-opaque-logo">
   <link rel="apple-touch-icon" href="/inkdrop-logo-mark.png?v=20260728-opaque-logo">
-  <title>InkDrop</title>
+  <title>InkDrop — Comics &amp; Manga Library Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
   <style id="inkdrop-critical-fallback">
-    :root { color-scheme: dark; font-family: 'DM Sans', system-ui, sans-serif; background: #0f1117; color: #e8edf5; }
+    :root { color-scheme: dark; font-family: 'DM Sans', system-ui, sans-serif; background: #0a0c10; color: #e6ecf4; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #0f1117; color: #e8edf5; min-height: 100vh; }
+    body { margin: 0; background: #0a0c10; color: #e6ecf4; min-height: 100vh; background-image: radial-gradient(ellipse 80% 60% at 50% -15%, rgba(201,162,39,0.05), transparent 70%); }
     .inkdrop-app-layout { display: flex; min-height: 100vh; }
-    .inkdrop-sidebar { width: 240px; flex-shrink: 0; background: #13161e; border-right: 1px solid #2a3040; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow: hidden; transition: width 0.2s ease; }
+    .inkdrop-sidebar { width: 240px; flex-shrink: 0; background: linear-gradient(180deg, #11141c 0%, #0c0e14 100%); border-right: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow: hidden; transition: width 0.25s ease; box-shadow: 2px 0 20px rgba(0,0,0,0.3); }
     .inkdrop-sidebar.collapsed { width: 60px; }
     .inkdrop-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
-    .inkdrop-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid #2a3040; background: #13161e; position: sticky; top: 0; z-index: 100; }
-    .inkdrop-page-area { flex: 1; padding: 24px; max-width: 1400px; width: 100%; margin: 0 auto; }
-    .arr-nav, .arr-settings-subnav, .arr-activity-subnav { display: flex; flex-direction: column; gap: 2px; }
-    button, input, select { min-height: 34px; border: 1px solid #2a3040; background: #1a1e2a; color: inherit; padding: 6px 9px; border-radius: 6px; }
+    .inkdrop-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(15,17,24,0.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); position: sticky; top: 0; z-index: 100; }
+    .inkdrop-page-area { flex: 1; padding: 24px 28px; max-width: 1400px; width: 100%; margin: 0 auto; }
+    .arr-nav, .arr-settings-subnav, .arr-activity-subnav { display: flex; flex-direction: column; gap: 1px; }
+    button, input, select { min-height: 34px; border: 1px solid rgba(255,255,255,0.06); background: #141820; color: inherit; padding: 6px 9px; border-radius: 6px; }
     [hidden] { display: none !important; }
   </style>
   <link rel="stylesheet" href="/static/css/inkdrop.css?v=__INKDROP_UI_CSS_VERSION__" onload="document.getElementById('inkdrop-critical-fallback')?.remove()">
@@ -846,7 +846,7 @@ HTML = r"""<!doctype html>
 
         <div class="inkdrop-page-area">
           <div class="arr-content-shell">
-            <p class="inkdrop-page-description" id="inkdropPageDescription">Track your comic and manga library. InkDrop finds missing issues, searches your sources, and imports safely.</p>
+            <p class="inkdrop-page-description" id="inkdropPageDescription">Your comics and manga library, tracked and filled automatically.</p>
             <div class="arr-page-stats" id="inkdropPageStats"></div>
 
             <section class="notice" id="packReviewBanner" hidden></section>
@@ -876,7 +876,7 @@ HTML = r"""<!doctype html>
               <div class="section-title core-shell-title" hidden aria-hidden="true">
                 <div>
                   <h2>InkDrop Core</h2>
-                  <p class="mini">Standalone state owned by InkDrop: wanted items, queue movement, source attempts, imports, and history.</p>
+                  <p class="mini">Wanted items, queue movement, source attempts, imports, and history.</p>
                 </div>
                 <div class="workflow-actions">
                   <button id="inkdropCoreSyncBtn" type="button" data-arr-control-label="Sync State" aria-label="Sync State">Sync State</button>
@@ -972,7 +972,7 @@ HTML = r"""<!doctype html>
               <div class="system-page-head">
                 <div>
                   <h2>System</h2>
-                  <p class="mini">InkDrop health, current tasks, logs, and installed version.</p>
+                  <p class="mini">Health, tasks, logs, and installed version.</p>
                 </div>
                 <div class="workflow-actions">
                   <button id="inkdropSystemRefreshBtn" type="button" data-arr-control-label="Refresh" aria-label="Refresh system">Refresh</button>
@@ -1012,7 +1012,7 @@ HTML = r"""<!doctype html>
                 <div class="section-title">
                   <div>
                     <h2>Support tools</h2>
-                    <p class="mini">Secondary inboxes and diagnostics. Normal Manual Review work stays in the decision table above.</p>
+                    <p class="mini">Secondary inboxes and diagnostics. Normal review work stays in the decision table above.</p>
                   </div>
                 </div>
                 <span class="queue-toggle"><span class="closed-label">Open support tools</span><span class="open-label">Close support tools</span></span>

@@ -8,7 +8,7 @@
 #inkdropSettingsAdvancedBtn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-dim); }
 
 /* Settings dirty state */
-#inkdropSettingsDirtyState { color: var(--warn); border-color: rgba(224, 172, 69, 0.4); }
+#inkdropSettingsDirtyState { color: var(--warn); border-color: rgba(245, 158, 11, 0.4); }
 
 /* Manual intake grid */
 .manual-intake-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }

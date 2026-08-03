@@ -23,7 +23,7 @@
 .download-client-choice input { margin: 0; }
 .download-client-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
 .download-client-editor { padding: 0 20px 20px; display: grid; gap: 12px; }
-.download-client-inline-error { padding: 8px 12px; border: 1px solid rgba(224, 95, 101, 0.4); border-radius: var(--radius-md); background: rgba(224, 95, 101, 0.08); color: var(--bad); font-size: var(--font-sm); }
+.download-client-inline-error { padding: 8px 12px; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: var(--radius-md); background: rgba(239, 68, 68, 0.08); color: var(--bad); font-size: var(--font-sm); }
 .download-client-inline-note { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-alt); color: var(--muted); font-size: var(--font-sm); }
 .download-client-field { display: grid; gap: 4px; }
 .download-client-field.wide { grid-column: 1 / -1; }
@@ -43,16 +43,16 @@
 .download-client-instance-head h3 { font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--text); }
 .download-client-instance-head p { font-size: var(--font-sm); color: var(--text-muted); margin: 2px 0 0; }
 .download-client-instance-state { font-size: 11px; padding: 2px 7px; border-radius: 999px; }
-.download-client-instance-state.good { background: rgba(85, 200, 120, 0.12); color: var(--good); }
-.download-client-instance-state.warn { background: rgba(224, 172, 69, 0.12); color: var(--warn); }
-.download-client-instance-state.bad { background: rgba(224, 95, 101, 0.12); color: var(--bad); }
+.download-client-instance-state.good { background: rgba(74, 222, 128, 0.12); color: var(--good); }
+.download-client-instance-state.warn { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.download-client-instance-state.bad { background: rgba(239, 68, 68, 0.12); color: var(--bad); }
 .download-client-instance-facts { display: grid; gap: 4px; margin: 0; }
 .download-client-instance-facts dt { font-size: 11px; color: var(--text-muted); }
 .download-client-instance-facts dd { font-size: 13px; color: var(--text); margin: 0 0 4px; }
 .download-client-instance-note { font-size: var(--font-sm); padding: 6px 8px; border-radius: var(--radius-sm); }
-.download-client-instance-note.good { background: rgba(85, 200, 120, 0.08); color: var(--good); }
-.download-client-instance-note.warn { background: rgba(224, 172, 69, 0.08); color: var(--warn); }
+.download-client-instance-note.good { background: rgba(74, 222, 128, 0.08); color: var(--good); }
+.download-client-instance-note.warn { background: rgba(245, 158, 11, 0.08); color: var(--warn); }
 .download-client-instance-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .download-client-instance-actions button { padding: 4px 8px; font-size: var(--font-sm); min-height: 28px; }
 .download-client-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
-.download-client-delete-warning { padding: 10px 12px; border: 1px solid rgba(224, 95, 101, 0.4); border-radius: var(--radius-md); background: rgba(224, 95, 101, 0.08); color: var(--bad); font-size: var(--font-sm); }
+.download-client-delete-warning { padding: 10px 12px; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: var(--radius-md); background: rgba(239, 68, 68, 0.08); color: var(--bad); font-size: var(--font-sm); }

@@ -39,9 +39,9 @@
 .activity-item { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); align-items: center; }
 .activity-item:hover { border-color: var(--line-light); }
 .activity-item-icon { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; }
-.activity-item-icon.good { background: rgba(85, 200, 120, 0.12); color: var(--good); }
-.activity-item-icon.warn { background: rgba(224, 172, 69, 0.12); color: var(--warn); }
-.activity-item-icon.bad { background: rgba(224, 95, 101, 0.12); color: var(--bad); }
+.activity-item-icon.good { background: rgba(74, 222, 128, 0.12); color: var(--good); }
+.activity-item-icon.warn { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.activity-item-icon.bad { background: rgba(239, 68, 68, 0.12); color: var(--bad); }
 .activity-item-icon.neutral { background: var(--surface-3); color: var(--text-muted); }
 .activity-item-body { display: grid; gap: 2px; min-width: 0; }
 .activity-item-body strong { color: var(--text); font-size: 13px; }

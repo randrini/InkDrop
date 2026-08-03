@@ -18,9 +18,9 @@
 .issue-row .issue-number { font-weight: 600; color: var(--text); min-width: 40px; }
 .issue-row .issue-title { color: var(--muted); flex: 1; }
 .issue-row .issue-status { font-size: 11px; padding: 1px 6px; border-radius: 999px; }
-.issue-row .issue-status.have { background: rgba(85, 200, 120, 0.12); color: var(--good); }
-.issue-row .issue-status.missing { background: rgba(224, 172, 69, 0.12); color: var(--warn); }
-.issue-row .issue-status.wanted { background: rgba(224, 95, 101, 0.12); color: var(--bad); }
+.issue-row .issue-status.have { background: rgba(74, 222, 128, 0.12); color: var(--good); }
+.issue-row .issue-status.missing { background: rgba(245, 158, 11, 0.12); color: var(--warn); }
+.issue-row .issue-status.wanted { background: rgba(239, 68, 68, 0.12); color: var(--bad); }
 .series-add-top-slot { margin-bottom: 8px; }
 .series-add-top-slot[hidden] { display: none; }
 .series-art-coverage-strip { display: flex; gap: 6px; padding: 8px 0; overflow-x: auto; }
