@@ -62,7 +62,7 @@ jobs:
 
       - name: Check Python syntax
         run: |
-          find . -maxdepth 1 -name '*.py' -print0 | xargs -0 -n1 python -B -c "import ast; ast.parse(open('{}').read())"
+          find . -maxdepth 1 -name '*.py' -print0 | xargs -0 -n1 python -B -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" --
           python3 -B scripts/check_python_syntax.py
 
       - name: Validate operational JavaScript syntax
