@@ -1,0 +1,304 @@
+name: inkdrop-ci
+
+on:
+  push:
+    branches:
+      - main
+      - qa
+    paths:
+      - ".github/workflows/inkdrop-ci.yml"
+      - ".dockerignore"
+      - ".prettierrc.json"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "requirements.txt"
+      - "README.md"
+      - "inkdrop-logo-mark.png"
+      - "inkdrop*.py"
+      - "inkdrop_*.py"
+      - "web/static/**"
+      - "web/tests/**"
+      - "docs/**"
+      - "tools/**"
+      - "scripts/**"
+  pull_request:
+    paths:
+      - "inkdrop*.py"
+      - "inkdrop_*.py"
+      - "web/static/**"
+      - "Dockerfile"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: inkdrop-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/inkdrop
+
+jobs:
+  lint:
+    name: Lint and format check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        timeout-minutes: 3
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Check Python syntax
+        run: |
+          find . -maxdepth 1 -name '*.py' -print0 | xargs -0 -n1 python -B -c "import ast; ast.parse(open('{}').read())"
+          python3 -B scripts/check_python_syntax.py
+
+      - name: Validate operational JavaScript syntax
+        run: find web/static/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check Prettier formatting
+        run: |
+          npx prettier@3 --check \
+            "web/static/js/*.js" \
+            "web/static/css/src/*.css" \
+            "*.json" \
+            "*.yml" \
+            "*.yaml" \
+            "*.md" \
+            --ignore-unknown \
+            --no-error-on-unmatched-pattern 2>&1 | tail -20
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+
+      - name: Validate Docker Compose config
+        run: docker compose config --quiet
+
+  build_amd64:
+    name: Build amd64 native
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      digest_amd64: ${{ steps.build.outputs.digest }}
+      short_sha: ${{ steps.build_meta.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare build metadata
+        id: build_meta
+        run: |
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push amd64 image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64-sha-${{ steps.build_meta.outputs.short_sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64-${{ github.ref_name }}-${{ steps.build_meta.outputs.short_sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64-${{ github.ref_name }}
+          build-args: |
+            INKDROP_VERSION=${{ github.ref_name }}
+            INKDROP_COMMIT_SHA=${{ github.sha }}
+            INKDROP_BUILD_DATE=${{ steps.build_meta.outputs.created }}
+            INKDROP_RELEASE_CHANNEL=${{ github.ref_name }}
+            INKDROP_QA_BUILD_NUMBER=${{ github.run_number }}
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+      - name: Verify image architecture
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          docker pull "$image"
+          arch="$(docker inspect "$image" --format '{{.Architecture}}')"
+          if [ "$arch" != "amd64" ]; then
+            echo "ERROR: expected amd64, got $arch"
+            exit 1
+          fi
+          echo "Verified: $arch"
+
+      - name: Run container preflight on amd64
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          docker run --rm --entrypoint python \
+            -e INKDROP_CONFIG_DIR=/tmp/inkdrop/config \
+            -e INKDROP_STATE_DIR=/tmp/inkdrop/state \
+            -e INKDROP_LOCK_DIR=/tmp/inkdrop/state/locks \
+            -e INKDROP_LOG_DIR=/tmp/inkdrop/state/logs \
+            -e INKDROP_CACHE_DIR=/tmp/inkdrop/state/cache \
+            -e INKDROP_BACKUP_DIR=/tmp/inkdrop/state/backups \
+            -e INKDROP_STAGING_DIR=/tmp/inkdrop/staging \
+            -e INKDROP_MANUAL_INBOX_DIR=/tmp/inkdrop/manual-inbox \
+            -e INKDROP_QUARANTINE_DIR=/tmp/inkdrop/state/quarantine \
+            "$image" -B inkdrop_preflight.py --create --quiet --strict-dependencies --strict-runtime-tools
+
+  build_arm64:
+    name: Build arm64 native
+    needs: [lint]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    outputs:
+      digest_arm64: ${{ steps.build.outputs.digest }}
+      short_sha: ${{ steps.build_meta.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare build metadata
+        id: build_meta
+        run: |
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push arm64 image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64-sha-${{ steps.build_meta.outputs.short_sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64-${{ github.ref_name }}-${{ steps.build_meta.outputs.short_sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64-${{ github.ref_name }}
+          build-args: |
+            INKDROP_VERSION=${{ github.ref_name }}
+            INKDROP_COMMIT_SHA=${{ github.sha }}
+            INKDROP_BUILD_DATE=${{ steps.build_meta.outputs.created }}
+            INKDROP_RELEASE_CHANNEL=${{ github.ref_name }}
+            INKDROP_QA_BUILD_NUMBER=${{ github.run_number }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+      - name: Verify image architecture
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          docker pull "$image"
+          arch="$(docker inspect "$image" --format '{{.Architecture}}')"
+          if [ "$arch" != "arm64" ]; then
+            echo "ERROR: expected arm64, got $arch"
+            exit 1
+          fi
+          echo "Verified: $arch"
+
+      - name: Run container preflight on arm64
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          docker run --rm --entrypoint python \
+            -e INKDROP_CONFIG_DIR=/tmp/inkdrop/config \
+            -e INKDROP_STATE_DIR=/tmp/inkdrop/state \
+            -e INKDROP_LOCK_DIR=/tmp/inkdrop/state/locks \
+            -e INKDROP_LOG_DIR=/tmp/inkdrop/state/logs \
+            -e INKDROP_CACHE_DIR=/tmp/inkdrop/state/cache \
+            -e INKDROP_BACKUP_DIR=/tmp/inkdrop/state/backups \
+            -e INKDROP_STAGING_DIR=/tmp/inkdrop/staging \
+            -e INKDROP_MANUAL_INBOX_DIR=/tmp/inkdrop/manual-inbox \
+            -e INKDROP_QUARANTINE_DIR=/tmp/inkdrop/state/quarantine \
+            "$image" -B inkdrop_preflight.py --create --quiet --strict-dependencies --strict-runtime-tools
+
+  merge_manifest:
+    name: Create multi-arch manifest
+    if: github.event_name != 'pull_request'
+    needs: [build_amd64, build_arm64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create and push multi-arch manifest
+        id: manifest
+        run: |
+          SHORT_SHA="${{ needs.build_amd64.outputs.short_sha }}"
+          REF_NAME="${{ github.ref_name }}"
+
+          # Create manifest list from the two arch-specific images
+          docker buildx imagetools create \
+            --tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" \
+            --tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${REF_NAME}-${SHORT_SHA}" \
+            --tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${REF_NAME}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build_amd64.outputs.digest_amd64 }}" \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build_arm64.outputs.digest_arm64 }}"
+
+          # Verify the manifest
+          MANIFEST_DIGEST=$(docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" --format '{{json .}}' | python3 -B scripts/check_manifest_platforms.py)
+          echo "$MANIFEST_DIGEST"
+          echo "manifest_digest=$(docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" --format '{{.manifest.digest}}')" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize multi-arch build
+        run: |
+          {
+            echo "## Multi-arch Docker image"
+            echo
+            echo "| Platform | Build | Digest |"
+            echo "|----------|-------|--------|"
+            echo "| \`linux/amd64\` | \`ubuntu-latest\` (native) | \`${{ needs.build_amd64.outputs.digest_amd64 }}\` |"
+            echo "| \`linux/arm64\` | \`ubuntu-24.04-arm\` (native, no QEMU) | \`${{ needs.build_arm64.outputs.digest_arm64 }}\` |"
+            echo
+            echo "### Manifest tags"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ needs.build_amd64.outputs.short_sha }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-${{ needs.build_amd64.outputs.short_sha }}\`"
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\`"
+            echo
+            echo "### Preflight checks"
+            echo "- amd64: passed"
+            echo "- arm64: passed"
+            echo
+            echo "### Lint checks"
+            echo "- Python syntax: passed"
+            echo "- JavaScript syntax: passed"
+            echo "- Prettier formatting: checked"
+            echo "- Dockerfile lint: passed"
+            echo "- Docker Compose config: valid"
+          } >> "$GITHUB_STEP_SUMMARY"
