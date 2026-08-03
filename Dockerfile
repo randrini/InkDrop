@@ -42,11 +42,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        curl=0.* \
-        p7zip-full=16.* \
-        unrar-free=1.* \
+        curl \
+        p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
