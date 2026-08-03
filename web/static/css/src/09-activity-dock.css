@@ -1,82 +1,19 @@
-    /* Activity dock */
-    .activity-dock {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      overflow: hidden;
-    }
-    .activity-dock[hidden] { display: none; }
-    .activity-dock-legacy {
-      display: grid;
-      gap: 4px;
-      padding: 8px;
-    }
-    .activity-dock-legacy[hidden] { display: none; }
-    .activity-dock-legacy span {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    .activity-dock-legacy button {
-      padding: 4px 8px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      background: var(--bg-alt);
-      color: var(--text-secondary);
-      font-size: 11px;
-      cursor: pointer;
-    }
-    .activity-dock-legacy button:hover { border-color: var(--accent-dim); }
-
-    /* Activity summary */
-    #activitySummary {
-      font-size: 12px;
-      color: var(--text-muted);
-      padding: 4px 0;
-    }
-    #activitySummary[hidden] { display: none; }
-
-    /* Activity operator board */
-    #activityOperatorBoard {
-      display: grid;
-      gap: 4px;
-      padding: 4px 0;
-    }
-    #activityOperatorBoard[hidden] { display: none; }
-
-    /* Activity dock now rail */
-    #activityDockNowRail {
-      display: flex;
-      gap: 4px;
-      flex-wrap: wrap;
-      padding: 4px 0;
-    }
-    #activityDockNowRail[hidden] { display: none; }
-
-    /* Activity dock lane strip */
-    #activityDockLaneStrip {
-      display: flex;
-      gap: 4px;
-      flex-wrap: wrap;
-    }
-    #activityDockLaneStrip[hidden] { display: none; }
-
-    /* Activity route strip */
-    #activityRouteStrip {
-      display: flex;
-      gap: 4px;
-      flex-wrap: wrap;
-    }
-    #activityRouteStrip[hidden] { display: none; }
-
-    /* Activity list in dock */
-    #activityList {
-      display: grid;
-      gap: 3px;
-    }
-    #activityList[hidden] { display: none; }
-
-    /* Activity dock title */
-    #activityDockTitle {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
+/* ===== Activity Dock (in sidebar) ===== */
+#activitySummary { font-size: var(--font-sm); color: var(--text-muted); padding: 4px 0; }
+#activitySummary[hidden] { display: none; }
+#activityOperatorBoard { display: grid; gap: 4px; padding: 4px 0; }
+#activityOperatorBoard[hidden] { display: none; }
+#activityDockNowRail { display: flex; gap: 4px; flex-wrap: wrap; padding: 4px 0; }
+#activityDockNowRail[hidden] { display: none; }
+#activityDockLaneStrip { display: flex; gap: 4px; flex-wrap: wrap; }
+#activityDockLaneStrip[hidden] { display: none; }
+#activityRouteStrip { display: flex; gap: 4px; flex-wrap: wrap; }
+#activityRouteStrip[hidden] { display: none; }
+#activityList { display: grid; gap: 3px; }
+#activityList[hidden] { display: none; }
+#activityDockTitle { font-size: var(--font-sm); color: var(--text-muted); }
+#activityDockSummary { font-size: var(--font-sm); color: var(--text-muted); }
+#activityCount { font-size: var(--font-sm); color: var(--text-muted); }
+#activityDockDestination[hidden], #activityDockCompactTarget[hidden] { display: none; }
+#activityDockPrimaryAction, #activityDockToggle { padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-alt); color: var(--muted); font-size: 11px; cursor: pointer; min-height: auto; }
+#activityDockPrimaryAction:hover, #activityDockToggle:hover { border-color: var(--accent-dim); }

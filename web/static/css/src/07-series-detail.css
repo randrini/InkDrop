@@ -1,127 +1,28 @@
-    /* Series detail / focus drawer */
-    .series-detail {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-    }
-    .series-detail-head {
-      display: flex;
-      gap: 16px;
-      padding: 16px;
-      background: var(--bg-alt);
-      border-bottom: 1px solid var(--border);
-    }
-    .series-detail-cover {
-      width: 120px;
-      height: 160px;
-      object-fit: cover;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    .series-detail-info {
-      display: grid;
-      gap: 4px;
-      min-width: 0;
-    }
-    .series-detail-info h2 {
-      font-size: var(--font-2xl);
-      color: var(--text);
-      margin: 0;
-    }
-    .series-detail-info .meta {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    .series-detail-info .description {
-      font-size: 13px;
-      color: var(--text-secondary);
-      line-height: 1.5;
-      margin-top: 4px;
-    }
-    .series-detail-stats {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 8px;
-    }
-    .series-detail-stat {
-      font-size: 12px;
-      color: var(--text-secondary);
-      padding: 3px 8px;
-      background: var(--surface-2);
-      border-radius: var(--radius-sm);
-    }
-    .series-detail-stat strong { color: var(--text); }
-
-    /* Series detail body */
-    .series-detail-body {
-      padding: 16px;
-    }
-    .series-detail-section {
-      margin-bottom: 16px;
-    }
-    .series-detail-section h3 {
-      font-family: 'DM Sans', system-ui, sans-serif;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 8px;
-      padding-bottom: 4px;
-      border-bottom: 1px solid var(--border-light);
-    }
-
-    /* Issue/volume list in detail */
-    .issue-list {
-      display: grid;
-      gap: 4px;
-    }
-    .issue-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 6px 10px;
-      border-radius: var(--radius-sm);
-      font-size: 13px;
-    }
-    .issue-row:hover { background: var(--surface-2); }
-    .issue-row .issue-number {
-      font-weight: 600;
-      color: var(--text);
-      min-width: 40px;
-    }
-    .issue-row .issue-title {
-      color: var(--text-secondary);
-      flex: 1;
-    }
-    .issue-row .issue-status {
-      font-size: 11px;
-      padding: 1px 6px;
-      border-radius: 999px;
-    }
-    .issue-row .issue-status.have { background: rgba(85, 200, 120, 0.12); color: var(--good); }
-    .issue-row .issue-status.missing { background: rgba(224, 172, 69, 0.12); color: var(--warn); }
-    .issue-row .issue-status.wanted { background: rgba(224, 95, 101, 0.12); color: var(--bad); }
-
-    /* Series add top slot */
-    .series-add-top-slot {
-      margin-bottom: 8px;
-    }
-    .series-add-top-slot[hidden] { display: none; }
-
-    /* Series art coverage */
-    .series-art-coverage-strip {
-      display: flex;
-      gap: 6px;
-      padding: 8px 0;
-      overflow-x: auto;
-    }
-    .series-art-coverage-strip[hidden] { display: none; }
-    .series-art-coverage-strip img {
-      width: 50px;
-      height: 70px;
-      object-fit: cover;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-    }
+/* ===== Series Detail ===== */
+.series-detail { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+.series-detail-head { display: flex; gap: 16px; padding: 16px; background: var(--bg-alt); border-bottom: 1px solid var(--line); }
+.series-detail-cover { width: 120px; height: 160px; object-fit: cover; border-radius: var(--radius-md); border: 1px solid var(--border); flex-shrink: 0; }
+.series-detail-info { display: grid; gap: 4px; min-width: 0; }
+.series-detail-info h2 { font-size: var(--font-2xl); color: var(--text); }
+.series-detail-info .meta { font-size: var(--font-sm); color: var(--text-muted); }
+.series-detail-info .description { font-size: 13px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
+.series-detail-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.series-detail-stat { font-size: var(--font-sm); color: var(--muted); padding: 3px 8px; background: var(--surface-2); border-radius: var(--radius-sm); }
+.series-detail-stat strong { color: var(--text); }
+.series-detail-body { padding: 16px; }
+.series-detail-section { margin-bottom: 16px; }
+.series-detail-section h3 { font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line-soft); }
+.issue-list { display: grid; gap: 4px; }
+.issue-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 13px; }
+.issue-row:hover { background: var(--surface-2); }
+.issue-row .issue-number { font-weight: 600; color: var(--text); min-width: 40px; }
+.issue-row .issue-title { color: var(--muted); flex: 1; }
+.issue-row .issue-status { font-size: 11px; padding: 1px 6px; border-radius: 999px; }
+.issue-row .issue-status.have { background: rgba(85, 200, 120, 0.12); color: var(--good); }
+.issue-row .issue-status.missing { background: rgba(224, 172, 69, 0.12); color: var(--warn); }
+.issue-row .issue-status.wanted { background: rgba(224, 95, 101, 0.12); color: var(--bad); }
+.series-add-top-slot { margin-bottom: 8px; }
+.series-add-top-slot[hidden] { display: none; }
+.series-art-coverage-strip { display: flex; gap: 6px; padding: 8px 0; overflow-x: auto; }
+.series-art-coverage-strip[hidden] { display: none; }
+.series-art-coverage-strip img { width: 50px; height: 70px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line); }

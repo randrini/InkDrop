@@ -1,45 +1,20 @@
-    /* Responsive tables */
-    @media (max-width: 768px) {
-      table.responsive thead { display: none; }
-      table.responsive tbody tr {
-        display: grid;
-        gap: 4px;
-        padding: 10px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        margin-bottom: 8px;
-        background: var(--surface);
-      }
-      table.responsive tbody td {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 6px;
-        padding: 3px 0;
-        border: none;
-        font-size: 12px;
-      }
-      table.responsive tbody td::before {
-        content: attr(data-label);
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-      }
-      table.responsive tbody td:empty { display: none; }
-      table.responsive tbody td .row-actions { justify-content: flex-start; }
-    }
-
-    /* Responsive cover grid */
-    @media (max-width: 600px) {
-      .core-list.inkdrop-cover-grid {
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-        gap: 10px;
-      }
-    }
-    @media (max-width: 400px) {
-      .core-list.inkdrop-cover-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
-      }
-    }
+/* ===== Responsive Tables ===== */
+@media (max-width: 768px) {
+  table.responsive thead { display: none; }
+  table.responsive tbody tr { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-md); margin-bottom: 8px; background: var(--surface); }
+  table.responsive tbody td { display: grid; grid-template-columns: auto 1fr; gap: 6px; padding: 3px 0; border: none; font-size: var(--font-sm); color: var(--muted); }
+  table.responsive tbody td::before { content: attr(data-label); font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  table.responsive tbody td:empty { display: none; }
+  .section-table-head { display: none; }
+  .section-table-row { flex-direction: column; gap: 4px; }
+  .section-table-item { width: 100%; }
+}
+@media (max-width: 600px) {
+  .series-poster-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .core-columns { grid-template-columns: 1fr; }
+  .settings-provider-form-row { grid-template-columns: 1fr; }
+  .settings-provider-form-label { padding-top: 0; }
+}
+@media (max-width: 400px) {
+  .series-poster-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+}

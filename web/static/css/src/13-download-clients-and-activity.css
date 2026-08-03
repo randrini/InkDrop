@@ -1,78 +1,58 @@
-    /* Download clients */
-    .download-client-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 14px 16px;
-      display: grid;
-      gap: 8px;
-    }
-    .download-client-card:hover { border-color: var(--border-light); }
-    .download-client-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-    }
-    .download-client-header strong { color: var(--text); font-size: 14px; }
-    .download-client-header span { color: var(--text-muted); font-size: 12px; }
-    .download-client-status {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-    }
-    .download-client-status .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-    }
-    .download-client-status .dot.good { background: var(--good); }
-    .download-client-status .dot.warn { background: var(--warn); }
-    .download-client-status .dot.bad { background: var(--bad); }
-    .download-client-status .dot.neutral { background: var(--text-muted); }
-    .download-client-body {
-      display: grid;
-      gap: 6px;
-    }
-    .download-client-body label {
-      display: grid;
-      gap: 3px;
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-    .download-client-body input,
-    .download-client-body select {
-      padding: 6px 9px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      background: var(--bg-alt);
-      color: var(--text);
-      font-size: 13px;
-    }
-    .download-client-body input:focus,
-    .download-client-body select:focus { border-color: var(--accent); outline: none; }
-    .download-client-inline-error {
-      font-size: 12px;
-      color: var(--bad);
-      padding: 4px 8px;
-      background: rgba(224, 95, 101, 0.08);
-      border-radius: var(--radius-sm);
-    }
-
-    /* Activity detail box */
-    .inkdrop-activity-detail-box {
-      background: var(--bg-alt);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 10px 12px;
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-    .inkdrop-activity-detail-box strong { color: var(--text); }
-
-    /* Activity dashboard */
-    .inkdrop-activity-dashboard {
-      display: grid;
-      gap: 12px;
-    }
+/* ===== Download Clients ===== */
+.download-client-manager { display: grid; gap: 12px; }
+.download-client-manager-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.download-client-manager-head h3 { font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--text); }
+.download-client-manager-head p { font-size: var(--font-sm); color: var(--muted); margin: 4px 0 0; }
+.download-client-manager-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.download-client-manager-live { font-size: var(--font-sm); color: var(--text-muted); }
+.download-client-instance-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.download-client-dialog { position: fixed; inset: 0; z-index: 950; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+.download-client-dialog[hidden] { display: none; }
+.download-client-dialog-shell { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); max-width: 600px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+.download-client-dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.download-client-dialog-head h2 { font-size: var(--font-lg); }
+.download-client-dialog-close { border: none; background: none; color: var(--text-muted); font-size: 20px; cursor: pointer; min-height: auto; }
+.download-client-dialog-close:hover { color: var(--text); }
+.download-client-dialog-copy { padding: 0 20px 12px; font-size: var(--font-sm); color: var(--muted); }
+.download-client-chooser { padding: 0 20px 20px; display: grid; gap: 12px; }
+.download-client-choice-group { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; }
+.download-client-choice-group legend { font-size: 13px; font-weight: 600; color: var(--text); padding: 0 6px; }
+.download-client-choice-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+.download-client-choice { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); cursor: pointer; font-size: var(--font-sm); color: var(--muted); }
+.download-client-choice:hover { border-color: var(--accent-dim); }
+.download-client-choice input { margin: 0; }
+.download-client-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+.download-client-editor { padding: 0 20px 20px; display: grid; gap: 12px; }
+.download-client-inline-error { padding: 8px 12px; border: 1px solid rgba(224, 95, 101, 0.4); border-radius: var(--radius-md); background: rgba(224, 95, 101, 0.08); color: var(--bad); font-size: var(--font-sm); }
+.download-client-inline-note { padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-alt); color: var(--muted); font-size: var(--font-sm); }
+.download-client-field { display: grid; gap: 4px; }
+.download-client-field.wide { grid-column: 1 / -1; }
+.download-client-field label { font-size: 13px; color: var(--muted); }
+.download-client-field input, .download-client-field textarea { width: 100%; }
+.download-client-field-help { font-size: 11px; color: var(--text-muted); }
+.download-client-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+.download-client-mappings { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; display: grid; gap: 8px; }
+.download-client-mapping-rows { display: grid; gap: 6px; }
+.download-client-mapping-row { display: flex; gap: 6px; align-items: center; }
+.download-client-routing { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px; display: grid; gap: 8px; }
+.download-client-advanced { border: 1px solid var(--line); border-radius: var(--radius-md); }
+.download-client-advanced summary { padding: 10px 12px; cursor: pointer; font-size: var(--font-sm); color: var(--accent); }
+.download-client-advanced-grid { padding: 0 12px 12px; display: grid; gap: 8px; }
+.download-client-instance-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); display: grid; gap: 8px; }
+.download-client-instance-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.download-client-instance-head h3 { font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--text); }
+.download-client-instance-head p { font-size: var(--font-sm); color: var(--text-muted); margin: 2px 0 0; }
+.download-client-instance-state { font-size: 11px; padding: 2px 7px; border-radius: 999px; }
+.download-client-instance-state.good { background: rgba(85, 200, 120, 0.12); color: var(--good); }
+.download-client-instance-state.warn { background: rgba(224, 172, 69, 0.12); color: var(--warn); }
+.download-client-instance-state.bad { background: rgba(224, 95, 101, 0.12); color: var(--bad); }
+.download-client-instance-facts { display: grid; gap: 4px; margin: 0; }
+.download-client-instance-facts dt { font-size: 11px; color: var(--text-muted); }
+.download-client-instance-facts dd { font-size: 13px; color: var(--text); margin: 0 0 4px; }
+.download-client-instance-note { font-size: var(--font-sm); padding: 6px 8px; border-radius: var(--radius-sm); }
+.download-client-instance-note.good { background: rgba(85, 200, 120, 0.08); color: var(--good); }
+.download-client-instance-note.warn { background: rgba(224, 172, 69, 0.08); color: var(--warn); }
+.download-client-instance-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.download-client-instance-actions button { padding: 4px 8px; font-size: var(--font-sm); min-height: 28px; }
+.download-client-empty { padding: 24px; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
+.download-client-delete-warning { padding: 10px 12px; border: 1px solid rgba(224, 95, 101, 0.4); border-radius: var(--radius-md); background: rgba(224, 95, 101, 0.08); color: var(--bad); font-size: var(--font-sm); }
