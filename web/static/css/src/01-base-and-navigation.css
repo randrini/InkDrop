@@ -1,43 +1,46 @@
-/* ===== InkDrop Base + Navigation ===== */
+/* ===== InkDrop Base + Navigation — "Library Vault" aesthetic ===== */
 :root {
   color-scheme: dark;
-  --bg: #0f1117;
-  --bg-alt: #13161e;
-  --surface: #181c24;
-  --surface-2: #1e2330;
-  --surface-3: #252b3a;
-  --panel: #1a1f28;
-  --panel-2: #1e2330;
-  --panel-3: #252b3a;
-  --line: #2a3040;
-  --line-soft: #232838;
-  --line-light: #353d50;
+  --bg: #0c0e13;
+  --bg-alt: #11141c;
+  --surface: #161a23;
+  --surface-2: #1c212c;
+  --surface-3: #232936;
+  --panel: #161a23;
+  --panel-2: #1c212c;
+  --panel-3: #232936;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-soft: rgba(255, 255, 255, 0.04);
+  --line-light: rgba(255, 255, 255, 0.12);
   --text: #e8edf5;
   --muted: #9aa7b4;
   --text-muted: #6b7a8a;
-  --accent: #D4A843;
+  --accent: #C9A227;
   --accent-hover: #E8C56A;
-  --accent-dim: #A07D30;
-  --accent-glow: rgba(212, 168, 67, 0.15);
+  --accent-dim: #8a6e1c;
+  --accent-glow: rgba(201, 162, 39, 0.12);
+  --accent-warm: rgba(201, 162, 39, 0.06);
+  --secondary: #3a7a8c;
   --good: #55c878;
   --warn: #e0ac45;
   --bad: #e05f65;
   --inkdrop-logo-url: url("/inkdrop-logo-mark.png?v=20260728-opaque-logo");
   --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
-  --transition: 0.15s ease;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --shadow-warm: 0 8px 24px rgba(201, 162, 39, 0.08);
+  --transition: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
   --font-xs: 11px;
   --font-sm: 12px;
   --font-md: 14px;
   --font-lg: 16px;
   --font-xl: 18px;
   --font-2xl: 22px;
-  --font-3xl: 26px;
+  --font-3xl: 28px;
 }
 * { box-sizing: border-box; }
 summary { list-style: none; }
@@ -46,12 +49,14 @@ summary::-webkit-details-marker { display: none; }
 
 body {
   margin: 0;
-  font: 14px/1.5 'DM Sans', system-ui, -apple-system, sans-serif;
+  font: 14px/1.55 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-feature-settings: "ss01", "cv01";
   color: var(--text);
   background: var(--bg);
+  background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(201, 162, 39, 0.04), transparent);
   min-height: 100vh;
 }
-h1, h2, h3, h4 { font-family: 'DM Serif Display', Georgia, serif; font-weight: 400; letter-spacing: -0.01em; margin: 0; line-height: 1.2; }
+h1, h2, h3, h4 { font-family: 'DM Serif Display', Georgia, serif; font-weight: 400; letter-spacing: -0.015em; margin: 0; line-height: 1.2; text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
 h1 { font-size: var(--font-3xl); }
 h2 { font-size: var(--font-2xl); }
 h3 { font-size: var(--font-xl); }
@@ -66,9 +71,9 @@ a:hover { color: var(--accent-hover); }
 /* ===== Sidebar Layout ===== */
 .inkdrop-app-layout { display: flex; min-height: 100vh; }
 .inkdrop-sidebar {
-  width: 240px; flex-shrink: 0; background: var(--bg-alt); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; transition: width 0.2s ease; overflow: hidden;
-  position: sticky; top: 0; height: 100vh;
+  width: 240px; flex-shrink: 0; background: linear-gradient(180deg, #11141c 0%, #0e1015 100%); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1); overflow: hidden;
+  position: sticky; top: 0; height: 100vh; box-shadow: 1px 0 12px rgba(0,0,0,0.2);
 }
 .inkdrop-sidebar.collapsed { width: 60px; }
 .inkdrop-sidebar.collapsed .inkdrop-sidebar-title,
@@ -83,7 +88,7 @@ a:hover { color: var(--accent-hover); }
 .inkdrop-sidebar-toggle:hover { color: var(--text); background: var(--surface-2); }
 .inkdrop-sidebar.collapsed .inkdrop-sidebar-toggle { transform: rotate(180deg); }
 .inkdrop-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
-.inkdrop-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--bg-alt); position: sticky; top: 0; z-index: 100; }
+.inkdrop-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: rgba(17, 20, 28, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 100; }
 .inkdrop-topbar-brand { display: flex; flex-direction: column; gap: 2px; }
 .inkdrop-topbar-title { font-size: var(--font-2xl); margin: 0; }
 .inkdrop-topbar-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); font-weight: 600; }
@@ -96,9 +101,9 @@ a:hover { color: var(--accent-hover); }
 .arr-nav-search { margin: 8px 8px 4px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); color: var(--text); font-size: 13px; outline: none; min-height: 34px; }
 .arr-nav-search:focus { border-color: var(--accent); }
 .arr-nav { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px; flex: 1; overflow-y: auto; }
-.arr-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; border-radius: var(--radius-md); background: transparent; color: var(--muted); font-size: 13px; font-family: 'DM Sans', system-ui, sans-serif; cursor: pointer; text-align: left; white-space: nowrap; transition: background var(--transition), color var(--transition); min-height: 34px; }
-.arr-nav button:hover { background: var(--surface-2); color: var(--text); }
-.arr-nav button.active { background: var(--accent-glow); color: var(--accent); }
+.arr-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; border-left: 2px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--muted); font-size: 13px; font-family: 'DM Sans', system-ui, sans-serif; cursor: pointer; text-align: left; white-space: nowrap; transition: background var(--transition), color var(--transition), border-color var(--transition); min-height: 36px; }
+.arr-nav button:hover { background: rgba(255, 255, 255, 0.03); color: var(--text); }
+.arr-nav button.active { background: var(--accent-glow); color: var(--accent); border-left-color: var(--accent); }
 .arr-nav-group-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); padding: 12px 10px 4px; white-space: nowrap; transition: opacity 0.2s ease; }
 .arr-nav-label { overflow: hidden; transition: opacity 0.2s ease; }
 .arr-nav-count { margin-left: auto; font-size: 11px; background: var(--surface-3); padding: 1px 6px; border-radius: 999px; color: var(--text-muted); transition: opacity 0.2s ease; }
@@ -115,7 +120,7 @@ a:hover { color: var(--accent-hover); }
 main { width: min(1280px, calc(100vw - 32px)); margin: 0 auto; padding: 16px 0 40px; }
 header { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); }
 .inkdrop-header-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.inkdrop-logo-mark { flex: 0 0 auto; display: inline-grid; place-items: center; width: 42px; height: 42px; border: 0; background: transparent var(--inkdrop-logo-url) center / contain no-repeat; filter: drop-shadow(0 0 10px var(--accent-glow)); overflow: visible; }
+.inkdrop-logo-mark { flex: 0 0 auto; display: inline-grid; place-items: center; width: 42px; height: 42px; border: 0; background: transparent var(--inkdrop-logo-url) center / contain no-repeat; filter: drop-shadow(0 0 12px rgba(201, 162, 39, 0.2)); overflow: visible; }
 .inkdrop-logo-img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .lede { margin: 3px 0 0; color: var(--muted); max-width: 600px; font-size: var(--font-sm); line-height: 1.4; }
 
@@ -165,7 +170,7 @@ header { display: flex; justify-content: space-between; gap: 20px; align-items: 
 .toast-message { display: block; }
 .toast-action { display: block; margin-top: 4px; color: var(--accent); font-weight: 600; font-size: var(--font-sm); }
 .toast-destination { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-@keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes toastIn { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
 /* ===== Page Masthead ===== */
 .arr-page-masthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
@@ -193,7 +198,8 @@ header { display: flex; justify-content: space-between; gap: 20px; align-items: 
 .arr-nav-mark { width: 32px; height: 32px; }
 
 /* ===== Cards / Panels ===== */
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; transition: border-color var(--transition), box-shadow var(--transition); }
+.card:hover { border-color: var(--line-light); }
 .source-health { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
 .section-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .section-title h2 { font-size: var(--font-xl); }
@@ -266,7 +272,7 @@ section.card[hidden], aside.card[hidden] { display: none; }
 /* ===== Auth ===== */
 .inkdrop-auth-root { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: var(--bg); }
 .inkdrop-auth-pending .inkdrop-app-layout { visibility: hidden; }
-.inkdrop-auth-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); padding: 32px; max-width: 420px; width: 100%; box-shadow: var(--shadow-lg); }
+.inkdrop-auth-card { background: var(--surface); border: 1px solid var(--line-light); border-radius: var(--radius-xl); padding: 32px; max-width: 420px; width: 100%; box-shadow: var(--shadow-lg), 0 0 60px rgba(201, 162, 39, 0.08); }
 .inkdrop-auth-logo { display: block; margin: 0 auto 16px; width: 48px; height: 48px; }
 .inkdrop-auth-form { display: grid; gap: 12px; margin-top: 16px; }
 .inkdrop-auth-field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }

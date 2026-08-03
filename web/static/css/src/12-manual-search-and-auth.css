@@ -2,7 +2,7 @@
 .manual-search-open { overflow: hidden; }
 .manual-search-root { position: fixed; inset: 0; z-index: 950; display: grid; place-items: center; padding: 20px; }
 .manual-search-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
-.manual-search-panel { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); max-width: 800px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+.manual-search-panel { position: relative; background: var(--surface); border: 1px solid var(--line-light); border-radius: var(--radius-xl); max-width: 800px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: var(--shadow-lg), 0 0 40px rgba(201, 162, 39, 0.06); }
 .manual-search-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .manual-search-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); font-weight: 600; }
 .manual-search-header h2 { font-size: var(--font-lg); }
