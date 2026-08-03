@@ -47,6 +47,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         p7zip-full \
+        unrar-free \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
