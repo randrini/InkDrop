@@ -590,7 +590,7 @@ export class SeriesDetailPage extends Component {
         throw new Error(data.error || "Failed to load issues");
       }
 
-      const issues = data.issues || data.results || [];
+      const issues = data.rows || data.issues || data.results || [];
       this.setState({
         issuesLoading: false,
         issues: Array.isArray(issues) ? issues : [],
@@ -606,7 +606,7 @@ export class SeriesDetailPage extends Component {
 
   /* ── Actions ─────────────────────────────────────────────────────── */
   async _handleRunSearch() {
-    const id = this.state.series?.id;
+    const id = this.state.series?.series_id || this.state.series?.id;
     if (!id || this.state.runningSearch) return;
 
     this.setState({ runningSearch: true });
@@ -632,7 +632,7 @@ export class SeriesDetailPage extends Component {
   }
 
   async _handleRefreshMetadata() {
-    const id = this.state.series?.id;
+    const id = this.state.series?.series_id || this.state.series?.id;
     if (!id || this.state.refreshingCovers) return;
 
     this.setState({ refreshingCovers: true });
@@ -659,7 +659,7 @@ export class SeriesDetailPage extends Component {
 
   async _handleToggleMonitored() {
     const { series } = this.state;
-    const id = series?.id;
+    const id = series?.series_id || series?.id;
     if (!id) return;
 
     const newValue = !series.monitored;
@@ -685,13 +685,13 @@ export class SeriesDetailPage extends Component {
   }
 
   _handleNavigateWanted() {
-    const id = this.state.series?.id;
+    const id = this.state.series?.series_id || this.state.series?.id;
     if (!id) return;
     router.navigate("wanted", { focus: id });
   }
 
   _handleNavigateQueue() {
-    const id = this.state.series?.id;
+    const id = this.state.series?.series_id || this.state.series?.id;
     if (!id) return;
     router.navigate("queue", { focus: id });
   }
@@ -711,7 +711,7 @@ export class SeriesDetailPage extends Component {
   }
 
   async _handleSaveEdit() {
-    const id = this.state.series?.id;
+    const id = this.state.series?.series_id || this.state.series?.id;
     if (!id || this.state.editSaving) return;
 
     this.setState({ editSaving: true });
@@ -747,7 +747,7 @@ export class SeriesDetailPage extends Component {
   }
 
   async _handleDelete() {
-    const id = this.state.series?.id;
+    const id = this.state.series?.series_id || this.state.series?.id;
     if (!id || this.state.deleting) return;
 
     const confirmed = window.confirm(
@@ -808,7 +808,7 @@ export class SeriesDetailPage extends Component {
   }
 
   async _handleIssueSearch(issue) {
-    const seriesId = this.state.series?.id;
+    const seriesId = this.state.series?.series_id || this.state.series?.id;
     if (!seriesId || this.state.searchingIssue === issue.id) return;
 
     this.setState({ searchingIssue: issue.id });
@@ -863,10 +863,10 @@ export class SeriesDetailPage extends Component {
     const { series } = this.state;
     if (!series) return null;
 
-    const coverUrl = series.image ? api.cover.url(series.image) : null;
+    const coverUrl = series.cover_url ? api.cover.url(series.cover_url) : null;
 
     // Description: strip HTML, read from multiple possible fields, truncate to 600 chars
-    const rawDesc = series.description || series.deck || series.metadata?.description || "";
+    const rawDesc = series.metadata?.description || series.description || "";
     const cleanDesc = truncate(stripHtml(rawDesc), 600);
 
     return (
@@ -900,31 +900,37 @@ export class SeriesDetailPage extends Component {
           )}
 
           <div class="series-detail-meta-row">
-            {series.publisher && <span class="ink-pill ink-pill-muted">{series.publisher}</span>}
-            {series.source && <span class="ink-pill ink-pill-info">{series.source}</span>}
-            {series.metadata_provider && <span class="ink-pill ink-pill-muted">{series.metadata_provider}</span>}
+            {series.metadata?.publisher && <span class="ink-pill ink-pill-muted">{series.metadata.publisher}</span>}
+            {series.metadata?.source && <span class="ink-pill ink-pill-info">{series.metadata.source}</span>}
+            {series.metadata?.provider_id && <span class="ink-pill ink-pill-muted">{series.metadata.provider_id}</span>}
             <span class={`series-ownership ${ownershipClass(series.ownership)}`}>
               {ownershipLabel(series.ownership)}
             </span>
           </div>
 
           <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">
-            {(series.start_year || series.year) && <span>Started {series.start_year || series.year}</span>}
-            {(series.issue_count > 0 || series.count_of_issues > 0) && (
+            {(series.metadata?.year || series.start_year || series.year) && (
+              <span>Started {series.metadata?.year || series.start_year || series.year}</span>
+            )}
+            {(series.counts?.issues > 0 || series.issue_count > 0 || series.count_of_issues > 0) && (
               <span>
-                {series.start_year || series.year ? " · " : ""}
-                {series.issue_count || series.count_of_issues} issues
+                {series.metadata?.year || series.start_year || series.year ? " · " : ""}
+                {series.counts?.issues || series.issue_count || series.count_of_issues} issues
               </span>
             )}
           </div>
 
           <div class="series-detail-stats-row">
-            {series.wanted_count > 0 && <span class="ink-pill ink-pill-warning">{series.wanted_count} Wanted</span>}
-            {series.active_queue_count > 0 && (
-              <span class="ink-pill ink-pill-info">{series.active_queue_count} In Queue</span>
+            {(series.counts?.wanted || series.wanted_count) > 0 && (
+              <span class="ink-pill ink-pill-warning">{series.counts?.wanted || series.wanted_count} Wanted</span>
             )}
-            {series.needs_you_count > 0 && (
-              <span class="ink-pill ink-pill-danger">{series.needs_you_count} Needs You</span>
+            {(series.counts?.queue || series.active_queue_count) > 0 && (
+              <span class="ink-pill ink-pill-info">{series.counts?.queue || series.active_queue_count} In Queue</span>
+            )}
+            {(series.counts?.needs_you || series.needs_you_count) > 0 && (
+              <span class="ink-pill ink-pill-danger">
+                {series.counts?.needs_you || series.needs_you_count} Needs You
+              </span>
             )}
           </div>
         </div>
@@ -1094,18 +1100,18 @@ export class SeriesDetailPage extends Component {
 
         {/* Stats Strip */}
         <div class="series-detail-stats-strip">
-          {series.wanted_count > 0 ? (
-            <span class="ink-pill ink-pill-warning">{series.wanted_count} Wanted</span>
+          {(series.counts?.wanted || series.wanted_count) > 0 ? (
+            <span class="ink-pill ink-pill-warning">{series.counts?.wanted || series.wanted_count} Wanted</span>
           ) : (
             <span class="ink-pill ink-pill-muted">0 Wanted</span>
           )}
-          {series.active_queue_count > 0 ? (
-            <span class="ink-pill ink-pill-warning">{series.active_queue_count} In Queue</span>
+          {(series.counts?.queue || series.active_queue_count) > 0 ? (
+            <span class="ink-pill ink-pill-warning">{series.counts?.queue || series.active_queue_count} In Queue</span>
           ) : (
             <span class="ink-pill ink-pill-muted">0 In Queue</span>
           )}
-          {series.needs_you_count > 0 ? (
-            <span class="ink-pill ink-pill-danger">{series.needs_you_count} Needs You</span>
+          {(series.counts?.needs_you || series.needs_you_count) > 0 ? (
+            <span class="ink-pill ink-pill-danger">{series.counts?.needs_you || series.needs_you_count} Needs You</span>
           ) : (
             <span class="ink-pill ink-pill-muted">0 Needs You</span>
           )}
