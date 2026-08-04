@@ -35270,6 +35270,9 @@ def inkdrop_auth_is_public_path(path, method="GET", auth_status=None):
         return True
     if path.startswith("/static/"):
         return True
+    # Vite build assets (CSS, JS, fonts) must load before auth completes
+    if path.startswith("/assets/"):
+        return True
     if path in {"/api/inkdrop-auth/bootstrap", "/api/auth/bootstrap"} and method == "POST":
         status = auth_status or inkdrop_state.auth_status(INKDROP_STATE_DB)
         # bootstrap_required alone only says "the built-in user table is
@@ -35300,6 +35303,9 @@ def inkdrop_auth_public_without_status_lookup(path, method="GET"):
     if path in INKDROP_AUTH_SETUP_SAFE_PATHS:
         return True
     if path.startswith("/static/"):
+        return True
+    # Vite build assets (CSS, JS, fonts) must load before auth completes
+    if path.startswith("/assets/"):
         return True
     return False
 
