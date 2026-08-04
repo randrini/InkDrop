@@ -1272,12 +1272,14 @@ class SettingsPage extends Component {
     this.setState({ dcLoading: true });
     try {
       const [dcListRes, dcRegistryRes, dcStatusRes] = await Promise.all([
-        api.downloadClients.list(),
-        api.downloadClients.registry(),
-        api.downloadClients.status(),
+        api.downloadClients.list().catch(() => null),
+        api.downloadClients.registry().catch(() => null),
+        api.downloadClients.status().catch(() => null),
       ]);
       const dcList = Array.isArray(dcListRes) ? dcListRes : dcListRes?.instances || [];
-      const dcRegistry = dcRegistryRes?.clients || dcRegistryRes?.download_clients || [];
+      // Registry API returns {ok, clients: [...], implemented: [...], addable: [...]}
+      // dcRegistryRes IS the full object; .clients is the array of type definitions
+      const dcRegistry = dcRegistryRes || {};
       const dcStatus = dcStatusRes || null;
       this.setState({ dcList, dcRegistry, dcStatus, dcLoading: false });
     } catch (err) {
@@ -1326,14 +1328,33 @@ class SettingsPage extends Component {
 
   async _handleDcSave() {
     const { dcEditing, dcFormData } = this.state;
+
+    // Validation
+    if (!dcFormData.name?.trim()) {
+      toast("Name is required", "error");
+      return;
+    }
+    if (!dcFormData.client_type) {
+      toast("Client type is required", "error");
+      return;
+    }
+    if (dcFormData.enabled && !dcFormData.base_url?.trim()) {
+      toast("Base URL is required when enabled", "error");
+      return;
+    }
+
     const { password, api_key, ...topLevel } = dcFormData;
     const payload = {
       ...topLevel,
+      name: dcFormData.name.trim(),
+      base_url: dcFormData.base_url?.trim() || undefined,
       secrets: {},
     };
     if (password) payload.secrets.password = password;
     if (api_key) payload.secrets.api_key = api_key;
     if (Object.keys(payload.secrets).length === 0) delete payload.secrets;
+    // Remove undefined values
+    Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
     try {
       if (dcEditing) {
@@ -1408,7 +1429,12 @@ class SettingsPage extends Component {
     }
 
     // Client type registry for form dropdown
-    const types = dcRegistry?.clients?.filter((c) => c.addable) || [];
+    // dcRegistry is the full registry object: { schema, clients: [...], implemented: [...], addable: [...] }
+    const addableTypes = (dcRegistry?.clients || []).filter((c) => c.addable !== false);
+    const selectedType = (dcRegistry?.clients || []).find((c) => c.client_type === dcFormData.client_type);
+    // Determine which credential fields this type needs
+    const typeNeedsPassword = selectedType?.fields?.password != null;
+    const typeNeedsApiKey = selectedType?.fields?.api_key != null;
 
     return (
       <div>
@@ -1513,9 +1539,9 @@ class SettingsPage extends Component {
                     onChange={(e) => this._handleDcFormChange("client_type", e.target.value)}
                   >
                     <option value="">Select type...</option>
-                    {types.map((t) => (
-                      <option key={t.client_id} value={t.client_type}>
-                        {t.display_name}
+                    {addableTypes.map((t) => (
+                      <option key={t.client_id || t.client_type} value={t.client_type}>
+                        {t.display_name || t.client_type}
                       </option>
                     ))}
                   </select>
@@ -1577,30 +1603,44 @@ class SettingsPage extends Component {
                   />
                 </div>
                 <div style="border-top:1px solid var(--ink-border-subtle);padding-top:var(--ink-space-md);margin-top:var(--ink-space-md);">
-                  <label class="ink-field-label">Credentials (write-only)</label>
-                  <span class="ink-settings-field-hint" style="display:block;margin-bottom:var(--ink-space-sm);">
-                    Secrets are never returned by the API. Leave blank to keep existing values on update.
-                  </span>
-                  <div class="ink-field">
-                    <label class="ink-field-label">API Key</label>
-                    <input
-                      type="password"
-                      value={dcFormData.api_key}
-                      onInput={(e) => this._handleDcFormChange("api_key", e.target.value)}
-                      placeholder="Optional"
-                      autocomplete="off"
-                    />
-                  </div>
-                  <div class="ink-field">
-                    <label class="ink-field-label">Password</label>
-                    <input
-                      type="password"
-                      value={dcFormData.password}
-                      onInput={(e) => this._handleDcFormChange("password", e.target.value)}
-                      placeholder="Optional"
-                      autocomplete="off"
-                    />
-                  </div>
+                  <label class="ink-field-label">Credentials</label>
+                  {dcEditing && (
+                    <span class="ink-settings-field-hint" style="display:block;margin-bottom:var(--ink-space-sm);">
+                      Leave blank to keep existing values. Secrets are never returned by the API.
+                    </span>
+                  )}
+                  {typeNeedsApiKey && (
+                    <div class="ink-field">
+                      <label class="ink-field-label">API Key</label>
+                      <input
+                        type="password"
+                        value={dcFormData.api_key}
+                        onInput={(e) => this._handleDcFormChange("api_key", e.target.value)}
+                        placeholder={dcEditing ? "Leave blank to keep current" : "Required when enabled"}
+                        autocomplete="off"
+                      />
+                    </div>
+                  )}
+                  {typeNeedsPassword && (
+                    <div class="ink-field">
+                      <label class="ink-field-label">Password</label>
+                      <input
+                        type="password"
+                        value={dcFormData.password}
+                        onInput={(e) => this._handleDcFormChange("password", e.target.value)}
+                        placeholder={dcEditing ? "Leave blank to keep current" : "Optional"}
+                        autocomplete="off"
+                      />
+                    </div>
+                  )}
+                  {!typeNeedsApiKey && !typeNeedsPassword && !dcFormData.client_type && (
+                    <span class="ink-settings-field-hint">Select a type to see credential fields.</span>
+                  )}
+                  {!typeNeedsApiKey && !typeNeedsPassword && dcFormData.client_type && (
+                    <span class="ink-settings-field-hint">
+                      This client type does not require credentials beyond the base URL.
+                    </span>
+                  )}
                 </div>
               </div>
               <div class="ink-dialog-footer">
