@@ -305,6 +305,9 @@
   border-radius: var(--radius-lg);
   padding: 12px;
   margin: 8px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
 }
 .section-workbench[hidden] {
   display: none;
@@ -316,8 +319,9 @@
   font-size: var(--font-sm);
 }
 .core-section-summary {
-  font-size: var(--font-sm);
-  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   padding: 6px 0;
   line-height: 1.5;
 }
@@ -349,7 +353,8 @@
 }
 .section-lane-board {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
   margin: 8px 0;
 }
 .section-lane-board[hidden] {
@@ -1045,12 +1050,14 @@
 /* ===== Section lanes / filters / triage (JS-generated) ===== */
 .section-lane-card {
   display: grid;
-  gap: 4px;
-  padding: 8px 12px;
+  gap: 2px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-alt);
   cursor: pointer;
+  text-align: left;
+  font-size: var(--font-sm);
   transition:
     border-color var(--transition),
     background var(--transition),
@@ -1091,14 +1098,21 @@
   color: var(--text-muted);
 }
 .section-lane-card-value {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text);
+  line-height: 1.2;
 }
 .section-lane-card-detail {
-  font-size: var(--font-sm);
+  font-size: 11px;
   color: var(--text-muted);
   font-style: normal;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .section-operator-now-actions {
   display: flex;
@@ -1251,10 +1265,60 @@
   padding: 10px 0;
 }
 .section-workbench-card {
-  padding: 8px 12px;
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--bg-alt);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--font-sm);
+  transition:
+    border-color var(--transition),
+    background var(--transition),
+    box-shadow var(--transition);
+}
+.section-workbench-card:hover {
+  border-color: var(--accent-dim);
+  background: var(--accent-warm);
+}
+.section-workbench-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.section-workbench-card span {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.section-workbench-card strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+.section-workbench-card.good {
+  border-left: 3px solid var(--good);
+  background: rgba(74, 222, 128, 0.04);
+}
+.section-workbench-card.good strong {
+  color: var(--good);
+}
+.section-workbench-card.bad {
+  border-left: 3px solid var(--bad);
+  background: rgba(239, 68, 68, 0.04);
+}
+.section-workbench-card.bad strong {
+  color: var(--bad);
+}
+.section-workbench-card.warn {
+  border-left: 3px solid var(--warn);
+  background: rgba(245, 158, 11, 0.04);
+}
+.section-workbench-card.warn strong {
+  color: var(--warn);
 }
 .section-policy-actions {
   display: flex;

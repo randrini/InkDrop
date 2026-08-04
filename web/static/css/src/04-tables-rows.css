@@ -35,6 +35,12 @@
 .section-table-row:last-child {
   border-bottom: none;
 }
+.section-table-row.actionability-warn {
+  border-left: 2px solid var(--warn);
+}
+.section-table-row.actionability-bad {
+  border-left: 2px solid var(--bad);
+}
 .section-table-item {
   flex: 1;
   min-width: 0;
@@ -859,6 +865,43 @@
   gap: 2px;
   align-items: flex-end;
   min-width: 0;
+}
+
+/* ===== Section table art button and column alignment ===== */
+.section-table-title-with-art {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.section-table-art-button {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 0;
+  transition: opacity var(--transition);
+}
+.section-table-art-button:hover {
+  opacity: 0.85;
+}
+.section-table-art-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.section-table-col-item {
+  flex: 1;
+  min-width: 0;
+}
+.section-table-col-state {
+  flex-shrink: 0;
+  min-width: 100px;
+  padding-top: 2px;
+}
+.section-table-col-actions {
+  flex-shrink: 0;
 }
 .section-table-workbench-card {
   display: grid;
