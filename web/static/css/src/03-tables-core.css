@@ -264,16 +264,26 @@
 .section-policy-strip {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  padding: 4px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  margin: 4px 0;
 }
 .section-policy-strip[hidden] {
   display: none;
 }
 .section-triage-strip {
   display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  margin: 4px 0;
 }
 .section-triage-strip[hidden] {
   display: none;
@@ -297,7 +307,8 @@
 .core-section-summary {
   font-size: var(--font-sm);
   color: var(--text-muted);
-  padding: 4px 0;
+  padding: 6px 0;
+  line-height: 1.5;
 }
 .core-section-summary[hidden] {
   display: none;
@@ -1071,19 +1082,42 @@
 .section-operator-now-actions {
   display: flex;
   gap: 6px;
+  margin-top: 4px;
+}
+.section-operator-now-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    color var(--transition),
+    background var(--transition);
+}
+.section-operator-now-actions button:hover {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+  background: var(--accent-warm);
 }
 .section-operator-now-detail {
   font-size: var(--font-sm);
   color: var(--muted);
+  line-height: 1.4;
 }
 .section-operator-now-main {
   display: grid;
-  gap: 2px;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
 }
 .section-operator-now-stats {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 4px;
 }
 .section-operator-now-summary-chip {
   font-size: 11px;
@@ -1092,24 +1126,49 @@
   background: var(--surface-3);
   color: var(--text-muted);
 }
+.section-operator-now-summary-chip.warn {
+  color: var(--warn);
+  background: rgba(245, 158, 11, 0.1);
+}
+.section-operator-now-summary-chip.bad {
+  color: var(--bad);
+  background: rgba(239, 68, 68, 0.1);
+}
+.section-operator-now-summary-chip.good {
+  color: var(--good);
+  background: rgba(74, 222, 128, 0.1);
+}
 .section-operator-now-title {
   display: grid;
   gap: 2px;
 }
+.section-operator-now-title strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.section-operator-now-title span {
+  font-size: var(--font-sm);
+  color: var(--muted);
+}
 .section-filter-lane {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
   padding: 6px 0;
 }
 .section-filter-lane-title {
   font-size: 11px;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
+  font-weight: 600;
 }
 .section-filter-lane-actions {
   display: flex;
   gap: 4px;
+  margin-left: auto;
 }
 .section-filter-view-label {
   font-size: var(--font-sm);
@@ -1141,16 +1200,19 @@
 .section-triage-detail {
   font-size: var(--font-sm);
   color: var(--muted);
+  line-height: 1.4;
 }
 .section-triage-item {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: var(--font-sm);
+  color: var(--muted);
 }
 .section-triage-label {
   font-weight: 600;
   color: var(--text);
+  font-size: var(--font-sm);
 }
 .section-triage-strip .section-triage-item + .section-triage-item::before {
   content: "·";
@@ -1163,9 +1225,9 @@
   background: var(--surface);
 }
 .section-workbench-drawer-body {
-  padding: 0 16px 16px;
   display: grid;
   gap: 8px;
+  padding: 10px 0;
 }
 .section-workbench-card {
   padding: 8px 12px;
@@ -1176,6 +1238,7 @@
 .section-policy-actions {
   display: flex;
   gap: 6px;
+  margin-top: 2px;
 }
 .section-policy-card {
   padding: 8px 12px;
@@ -1189,8 +1252,11 @@
 }
 .section-policy-chip {
   font-size: 11px;
-  padding: 2px 6px;
+  padding: 2px 8px;
   border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 .section-policy-detail {
   font-size: var(--font-sm);
