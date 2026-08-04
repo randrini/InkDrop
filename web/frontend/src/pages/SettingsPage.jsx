@@ -556,7 +556,18 @@ class SettingsPage extends Component {
       dcStatus: null,
       dcShowForm: false,
       dcEditing: null,
-      dcFormData: { name: "", type: "", url: "", api_key: "", username: "", password: "", category: "" },
+      dcFormData: {
+        name: "",
+        client_type: "",
+        base_url: "",
+        username: "",
+        password: "",
+        api_key: "",
+        category: "",
+        download_path: "",
+        enabled: true,
+        priority: 100,
+      },
       dcTesting: false,
       dcTestResult: null,
       dcTestAllResult: null,
@@ -1265,9 +1276,9 @@ class SettingsPage extends Component {
         api.downloadClients.registry(),
         api.downloadClients.status(),
       ]);
-      const dcList = Array.isArray(dcListRes) ? dcListRes : dcListRes?.instances || dcListRes?.download_clients || [];
-      const dcRegistry = dcRegistryRes?.download_clients || dcRegistryRes || [];
-      const dcStatus = dcStatusRes?.clients ? dcStatusRes : dcStatusRes || null;
+      const dcList = Array.isArray(dcListRes) ? dcListRes : dcListRes?.instances || [];
+      const dcRegistry = dcRegistryRes?.clients || dcRegistryRes?.download_clients || [];
+      const dcStatus = dcStatusRes || null;
       this.setState({ dcList, dcRegistry, dcStatus, dcLoading: false });
     } catch (err) {
       this.setState({ dcLoading: false });
@@ -1279,7 +1290,18 @@ class SettingsPage extends Component {
     this.setState({
       dcShowForm: true,
       dcEditing: null,
-      dcFormData: { name: "", type: "", url: "", api_key: "", username: "", password: "", category: "" },
+      dcFormData: {
+        name: "",
+        client_type: "",
+        base_url: "",
+        username: "",
+        password: "",
+        api_key: "",
+        category: "",
+        download_path: "",
+        enabled: true,
+        priority: 100,
+      },
     });
   }
 
@@ -1289,24 +1311,37 @@ class SettingsPage extends Component {
       dcEditing: client,
       dcFormData: {
         name: client.name || "",
-        type: client.type || "",
-        url: client.url || "",
-        api_key: client.api_key || "",
+        client_type: client.client_type || "",
+        base_url: client.base_url || "",
         username: client.username || "",
-        password: client.password || "",
+        password: "", // never pre-fill secrets
+        api_key: "", // never pre-fill secrets
         category: client.category || "",
+        download_path: client.download_path || "",
+        enabled: client.enabled !== false,
+        priority: client.priority || 100,
       },
     });
   }
 
   async _handleDcSave() {
     const { dcEditing, dcFormData } = this.state;
+    const { password, api_key, ...topLevel } = dcFormData;
+    const payload = {
+      ...topLevel,
+      secrets: {},
+    };
+    if (password) payload.secrets.password = password;
+    if (api_key) payload.secrets.api_key = api_key;
+    if (Object.keys(payload.secrets).length === 0) delete payload.secrets;
+
     try {
       if (dcEditing) {
-        await api.downloadClients.update(dcEditing.id, dcFormData);
+        payload.revision = dcEditing.revision;
+        await api.downloadClients.update(dcEditing.id, payload);
         toast("Download client updated", "success");
       } else {
-        await api.downloadClients.create(dcFormData);
+        await api.downloadClients.create(payload);
         toast("Download client created", "success");
       }
       this.setState({ dcShowForm: false, dcEditing: null });
@@ -1331,8 +1366,9 @@ class SettingsPage extends Component {
     this.setState({ dcTesting: true, dcTestResult: null });
     try {
       const result = await api.downloadClients.testInstance(client.id);
-      const msg = result?.message || result?.status || "Test completed";
-      toast(msg, result?.connected ? "success" : "error");
+      const ok = result?.status?.result?.ok === true;
+      const msg = result?.status?.result?.message || result?.status?.message || result?.message || "Test completed";
+      toast(msg, ok ? "success" : "error");
       this.setState({ dcTesting: false, dcTestResult: result });
     } catch (err) {
       toast(api.friendlyMessage ? api.friendlyMessage(err) : "Test failed", "error");
@@ -1344,8 +1380,7 @@ class SettingsPage extends Component {
     this.setState({ dcTesting: true, dcTestAllResult: null });
     try {
       const result = await api.downloadClients.testAll();
-      const msg = result?.message || "All clients tested";
-      toast(msg, "success");
+      toast("Tests started for all download clients", "success");
       this.setState({ dcTesting: false, dcTestAllResult: result });
     } catch (err) {
       toast(api.friendlyMessage ? api.friendlyMessage(err) : "Test all failed", "error");
@@ -1373,7 +1408,7 @@ class SettingsPage extends Component {
     }
 
     // Client type registry for form dropdown
-    const types = dcRegistry?.download_clients || dcRegistry || [];
+    const types = dcRegistry?.clients?.filter((c) => c.addable) || [];
 
     return (
       <div>
@@ -1397,12 +1432,14 @@ class SettingsPage extends Component {
                   <div style="flex:1;min-width:0;">
                     <div style="display:flex;align-items:center;gap:var(--ink-space-sm);">
                       <span style="font-weight:600;font-size:var(--ink-text-base);">{client.name}</span>
-                      <span class={`ink-pill ${isOnline ? "ink-pill-success" : "ink-pill-muted"}`}>{client.type}</span>
+                      <span class={`ink-pill ${isOnline ? "ink-pill-success" : "ink-pill-muted"}`}>
+                        {client.client_type}
+                      </span>
                       {isOnline && <span class="ink-pill ink-pill-success">Online</span>}
                       {status && !isOnline && <span class="ink-pill ink-pill-danger">Offline</span>}
                     </div>
                     <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);margin-top:2px;">
-                      {client.url || "—"}
+                      {client.base_url || "—"}
                     </div>
                     {status?.message && (
                       <div style="font-size:var(--ink-text-xs);color:var(--ink-text-muted);margin-top:2px;">
@@ -1471,31 +1508,25 @@ class SettingsPage extends Component {
                 </div>
                 <div class="ink-field">
                   <label class="ink-field-label">Type</label>
-                  <select value={dcFormData.type} onChange={(e) => this._handleDcFormChange("type", e.target.value)}>
+                  <select
+                    value={dcFormData.client_type}
+                    onChange={(e) => this._handleDcFormChange("client_type", e.target.value)}
+                  >
                     <option value="">Select type...</option>
                     {types.map((t) => (
-                      <option key={t.id || t.type || t.name} value={t.type || t.id}>
-                        {t.name || t.type}
+                      <option key={t.client_id} value={t.client_type}>
+                        {t.display_name}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div class="ink-field">
-                  <label class="ink-field-label">URL</label>
+                  <label class="ink-field-label">Base URL</label>
                   <input
                     type="url"
-                    value={dcFormData.url}
-                    onInput={(e) => this._handleDcFormChange("url", e.target.value)}
+                    value={dcFormData.base_url}
+                    onInput={(e) => this._handleDcFormChange("base_url", e.target.value)}
                     placeholder="http://localhost:8080"
-                  />
-                </div>
-                <div class="ink-field">
-                  <label class="ink-field-label">API Key</label>
-                  <input
-                    type="password"
-                    value={dcFormData.api_key}
-                    onInput={(e) => this._handleDcFormChange("api_key", e.target.value)}
-                    placeholder="Optional"
                   />
                 </div>
                 <div class="ink-field">
@@ -1508,15 +1539,6 @@ class SettingsPage extends Component {
                   />
                 </div>
                 <div class="ink-field">
-                  <label class="ink-field-label">Password</label>
-                  <input
-                    type="password"
-                    value={dcFormData.password}
-                    onInput={(e) => this._handleDcFormChange("password", e.target.value)}
-                    placeholder="Optional"
-                  />
-                </div>
-                <div class="ink-field">
                   <label class="ink-field-label">Category</label>
                   <input
                     type="text"
@@ -1524,6 +1546,61 @@ class SettingsPage extends Component {
                     onInput={(e) => this._handleDcFormChange("category", e.target.value)}
                     placeholder="Optional"
                   />
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">Download Path</label>
+                  <input
+                    type="text"
+                    value={dcFormData.download_path}
+                    onInput={(e) => this._handleDcFormChange("download_path", e.target.value)}
+                    placeholder="/downloads/"
+                  />
+                </div>
+                <div class="ink-field">
+                  <div class="ink-checkbox-wrapper">
+                    <input
+                      id="dc-enabled"
+                      type="checkbox"
+                      checked={dcFormData.enabled}
+                      onChange={(e) => this._handleDcFormChange("enabled", e.target.checked)}
+                    />
+                    <label for="dc-enabled">Enabled</label>
+                  </div>
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">Priority</label>
+                  <input
+                    type="number"
+                    value={dcFormData.priority}
+                    onInput={(e) => this._handleDcFormChange("priority", parseInt(e.target.value, 10) || 0)}
+                    placeholder="100"
+                  />
+                </div>
+                <div style="border-top:1px solid var(--ink-border-subtle);padding-top:var(--ink-space-md);margin-top:var(--ink-space-md);">
+                  <label class="ink-field-label">Credentials (write-only)</label>
+                  <span class="ink-settings-field-hint" style="display:block;margin-bottom:var(--ink-space-sm);">
+                    Secrets are never returned by the API. Leave blank to keep existing values on update.
+                  </span>
+                  <div class="ink-field">
+                    <label class="ink-field-label">API Key</label>
+                    <input
+                      type="password"
+                      value={dcFormData.api_key}
+                      onInput={(e) => this._handleDcFormChange("api_key", e.target.value)}
+                      placeholder="Optional"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="ink-field">
+                    <label class="ink-field-label">Password</label>
+                    <input
+                      type="password"
+                      value={dcFormData.password}
+                      onInput={(e) => this._handleDcFormChange("password", e.target.value)}
+                      placeholder="Optional"
+                      autocomplete="off"
+                    />
+                  </div>
                 </div>
               </div>
               <div class="ink-dialog-footer">
