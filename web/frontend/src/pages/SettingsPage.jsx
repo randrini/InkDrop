@@ -426,6 +426,67 @@ const styles = `
   font-size: var(--ink-text-sm);
 }
 
+/* ── Notification Styles ──────────────────────────────────────────── */
+.ink-notif-channel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ink-space-md);
+  padding: var(--ink-space-md);
+  background: var(--ink-bg-elevated);
+  border: 1px solid var(--ink-border-subtle);
+  border-radius: var(--ink-radius-lg);
+}
+
+.ink-notif-channel-info {
+  display: flex;
+  align-items: center;
+  gap: var(--ink-space-sm);
+  flex: 1;
+  min-width: 0;
+}
+
+.ink-notif-channel-name {
+  font-weight: 600;
+  font-size: var(--ink-text-sm);
+  color: var(--ink-text-primary);
+}
+
+.ink-notif-channel-actions {
+  display: flex;
+  gap: var(--ink-space-xs);
+  flex-shrink: 0;
+}
+
+.ink-notif-deliveries-table {
+  overflow-x: auto;
+}
+
+.ink-notif-deliveries-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ink-text-sm);
+}
+
+.ink-notif-deliveries-table th {
+  text-align: left;
+  padding: var(--ink-space-sm) var(--ink-space-md);
+  font-weight: 600;
+  color: var(--ink-text-secondary);
+  border-bottom: 1px solid var(--ink-border-subtle);
+  white-space: nowrap;
+}
+
+.ink-notif-deliveries-table td {
+  padding: var(--ink-space-sm) var(--ink-space-md);
+  border-bottom: 1px solid var(--ink-border-subtle);
+  color: var(--ink-text-primary);
+}
+
+.ink-notif-deliveries-table tr:last-child td {
+  border-bottom: none;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .ink-settings-toolbar {
@@ -571,6 +632,18 @@ class SettingsPage extends Component {
       dcTesting: false,
       dcTestResult: null,
       dcTestAllResult: null,
+      // Notifications
+      notifConfig: null,
+      notifLoading: false,
+      notifError: null,
+      notifSettingsDirty: null,
+      notifSaving: false,
+      notifShowAddChannel: false,
+      notifEditingChannel: null,
+      notifChannelForm: { name: "", type: "discord_webhook", config: "{}", enabled: true },
+      notifChannelFormError: null,
+      notifDeliveries: null,
+      notifDeliveriesLoading: false,
     };
 
     this._onHashChange = this._onHashChange.bind(this);
@@ -596,15 +669,27 @@ class SettingsPage extends Component {
     this._handleDcTest = this._handleDcTest.bind(this);
     this._handleDcTestAll = this._handleDcTestAll.bind(this);
     this._handleDcFormChange = this._handleDcFormChange.bind(this);
+    this._loadNotifConfig = this._loadNotifConfig.bind(this);
+    this._loadNotifDeliveries = this._loadNotifDeliveries.bind(this);
+    this._handleNotifSettingsChange = this._handleNotifSettingsChange.bind(this);
+    this._handleNotifSaveSettings = this._handleNotifSaveSettings.bind(this);
+    this._handleNotifAddChannel = this._handleNotifAddChannel.bind(this);
+    this._handleNotifEditChannel = this._handleNotifEditChannel.bind(this);
+    this._handleNotifChannelFormChange = this._handleNotifChannelFormChange.bind(this);
+    this._handleNotifSaveChannel = this._handleNotifSaveChannel.bind(this);
+    this._handleNotifDeleteChannel = this._handleNotifDeleteChannel.bind(this);
+    this._handleNotifCancelChannelForm = this._handleNotifCancelChannelForm.bind(this);
   }
 
   componentDidMount() {
+    this._mounted = true;
     window.addEventListener("hashchange", this._onHashChange);
     this._loadSettings();
     this._loadDownloadClients();
   }
 
   componentWillUnmount() {
+    this._mounted = false;
     window.removeEventListener("hashchange", this._onHashChange);
   }
 
@@ -636,6 +721,14 @@ class SettingsPage extends Component {
   async _loadSettings() {
     const { area } = this.state;
     this.setState({ loading: true, error: null });
+
+    // Notifications area uses its own API
+    if (area === "notifications") {
+      this.setState({ loading: false });
+      this._loadNotifConfig();
+      return;
+    }
+
     try {
       const data = await api.settings.get(area);
       if (data && data.ok) {
@@ -1658,6 +1751,580 @@ class SettingsPage extends Component {
     );
   }
 
+  /* ── Notification Methods ──────────────────────────────────────────── */
+
+  async _loadNotifConfig() {
+    if (!this._mounted) return;
+    this.setState({ notifLoading: true, notifError: null });
+    try {
+      const res = await api.notifications.config();
+      if (!this._mounted) return;
+      if (res && res.ok) {
+        this.setState({ notifConfig: res, notifLoading: false, notifSettingsDirty: null });
+      } else {
+        this.setState({
+          notifError: (res && res.error) || "Failed to load notification config",
+          notifLoading: false,
+        });
+      }
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({
+        notifError: api.friendlyMessage
+          ? api.friendlyMessage(err)
+          : err.message || "Failed to load notification config",
+        notifLoading: false,
+      });
+    }
+  }
+
+  async _loadNotifDeliveries() {
+    if (!this._mounted) return;
+    this.setState({ notifDeliveriesLoading: true });
+    try {
+      const res = await api.notifications.deliveries({ limit: 25 });
+      if (!this._mounted) return;
+      if (res && res.ok) {
+        this.setState({ notifDeliveries: res.deliveries || [], notifDeliveriesLoading: false });
+      } else {
+        this.setState({ notifDeliveries: [], notifDeliveriesLoading: false });
+      }
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({ notifDeliveries: [], notifDeliveriesLoading: false });
+    }
+  }
+
+  _handleNotifSettingsChange(field, value) {
+    this.setState((prev) => ({
+      notifSettingsDirty: { ...(prev.notifSettingsDirty || {}), [field]: value },
+    }));
+  }
+
+  _getNotifSetting(field, fallback) {
+    const { notifConfig, notifSettingsDirty } = this.state;
+    if (notifSettingsDirty && notifSettingsDirty[field] !== undefined) {
+      return notifSettingsDirty[field];
+    }
+    if (notifConfig && notifConfig.settings && notifConfig.settings[field] !== undefined) {
+      return notifConfig.settings[field];
+    }
+    return fallback !== undefined ? fallback : false;
+  }
+
+  async _handleNotifSaveSettings() {
+    const { notifSettingsDirty } = this.state;
+    if (!notifSettingsDirty || Object.keys(notifSettingsDirty).length === 0) {
+      toast("No changes to save", "info");
+      return;
+    }
+    this.setState({ notifSaving: true });
+    try {
+      const res = await api.notifications.saveSettings(notifSettingsDirty);
+      if (!this._mounted) return;
+      if (res && res.ok) {
+        toast("Notification settings saved", "success");
+        this.setState({ notifSettingsDirty: null, notifSaving: false });
+        this._loadNotifConfig();
+      } else {
+        toast((res && res.error) || "Failed to save notification settings", "error");
+        this.setState({ notifSaving: false });
+      }
+    } catch (err) {
+      if (!this._mounted) return;
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Failed to save notification settings", "error");
+      this.setState({ notifSaving: false });
+    }
+  }
+
+  _handleNotifAddChannel() {
+    this.setState({
+      notifShowAddChannel: true,
+      notifEditingChannel: null,
+      notifChannelForm: { name: "", type: "discord_webhook", config: "{}", enabled: true },
+      notifChannelFormError: null,
+    });
+  }
+
+  _handleNotifEditChannel(channel) {
+    this.setState({
+      notifShowAddChannel: true,
+      notifEditingChannel: channel,
+      notifChannelForm: {
+        name: channel.name || "",
+        type: channel.type || "discord_webhook",
+        config: JSON.stringify(channel.config || {}, null, 2),
+        enabled: channel.enabled !== false,
+      },
+      notifChannelFormError: null,
+    });
+  }
+
+  _handleNotifChannelFormChange(field, value) {
+    this.setState((prev) => ({
+      notifChannelForm: { ...prev.notifChannelForm, [field]: value },
+      notifChannelFormError: null,
+    }));
+  }
+
+  async _handleNotifSaveChannel() {
+    const { notifChannelForm, notifEditingChannel } = this.state;
+    if (!notifChannelForm.name.trim()) {
+      this.setState({ notifChannelFormError: "Name is required" });
+      return;
+    }
+    let config;
+    try {
+      config = JSON.parse(notifChannelForm.config || "{}");
+    } catch {
+      this.setState({ notifChannelFormError: "Config must be valid JSON" });
+      return;
+    }
+    const body = {
+      name: notifChannelForm.name.trim(),
+      type: notifChannelForm.type,
+      config,
+      enabled: notifChannelForm.enabled,
+    };
+    if (notifEditingChannel && notifEditingChannel.id) {
+      body.id = notifEditingChannel.id;
+    }
+    this.setState({ notifSaving: true });
+    try {
+      const res = await api.notifications.saveChannel(body);
+      if (!this._mounted) return;
+      if (res && res.ok) {
+        toast(notifEditingChannel ? "Channel updated" : "Channel added", "success");
+        this.setState({
+          notifShowAddChannel: false,
+          notifEditingChannel: null,
+          notifSaving: false,
+        });
+        this._loadNotifConfig();
+      } else {
+        this.setState({
+          notifChannelFormError: (res && res.error) || "Failed to save channel",
+          notifSaving: false,
+        });
+      }
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({
+        notifChannelFormError: api.friendlyMessage ? api.friendlyMessage(err) : err.message,
+        notifSaving: false,
+      });
+    }
+  }
+
+  async _handleNotifDeleteChannel(channel) {
+    if (!confirm(`Delete channel "${channel.name || channel.id}"?`)) return;
+    this.setState({ notifSaving: true });
+    try {
+      const res = await api.notifications.saveChannel({ id: channel.id, enabled: false, _delete: true });
+      if (!this._mounted) return;
+      if (res && res.ok) {
+        toast("Channel deleted", "success");
+        this.setState({ notifSaving: false });
+        this._loadNotifConfig();
+      } else {
+        toast((res && res.error) || "Failed to delete channel", "error");
+        this.setState({ notifSaving: false });
+      }
+    } catch (err) {
+      if (!this._mounted) return;
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Failed to delete channel", "error");
+      this.setState({ notifSaving: false });
+    }
+  }
+
+  _handleNotifCancelChannelForm() {
+    this.setState({ notifShowAddChannel: false, notifEditingChannel: null, notifChannelFormError: null });
+  }
+
+  _renderNotifications() {
+    const {
+      notifConfig,
+      notifLoading,
+      notifError,
+      notifSettingsDirty,
+      notifSaving,
+      notifShowAddChannel,
+      notifEditingChannel,
+      notifChannelForm,
+      notifChannelFormError,
+      notifDeliveries,
+      notifDeliveriesLoading,
+    } = this.state;
+
+    if (notifLoading && !notifConfig) {
+      return (
+        <div class="ink-settings-loading">
+          <div class="ink-spinner" />
+          <span>Loading notification settings…</span>
+        </div>
+      );
+    }
+
+    if (notifError) {
+      return (
+        <div class="ink-settings-error">
+          <div>{notifError}</div>
+          <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._loadNotifConfig()}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    const settings = (notifConfig && notifConfig.settings) || {};
+    const channels = (notifConfig && notifConfig.channels) || [];
+    const hasDirty = notifSettingsDirty && Object.keys(notifSettingsDirty).length > 0;
+
+    return (
+      <div>
+        {/* ── Notification Settings Section ── */}
+        <div class="ink-settings-section">
+          <div
+            class="ink-settings-section-header"
+            onClick={() => this._toggleSection("__notif_settings__")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") this._toggleSection("__notif_settings__");
+            }}
+          >
+            <div>
+              <h3>Notification Settings</h3>
+              <div class="ink-section-desc">Global notification preferences</div>
+            </div>
+            <span class={`ink-section-toggle${this.state.collapsedSections["__notif_settings__"] ? "" : " open"}`}>
+              ▼
+            </span>
+          </div>
+          {!this.state.collapsedSections["__notif_settings__"] && (
+            <div class="ink-settings-section-body">
+              <div class="ink-settings-field">
+                <div class="ink-checkbox-wrapper">
+                  <input
+                    id="notif-enabled"
+                    type="checkbox"
+                    checked={this._getNotifSetting("enabled", true)}
+                    onChange={(e) => this._handleNotifSettingsChange("enabled", e.target.checked)}
+                  />
+                  <label for="notif-enabled">Enabled</label>
+                </div>
+              </div>
+              {Object.keys(settings).filter((k) => k !== "enabled").length > 0 &&
+                Object.keys(settings)
+                  .filter((k) => k !== "enabled")
+                  .map((key) => {
+                    const val = this._getNotifSetting(key);
+                    const isBool = typeof val === "boolean";
+                    return (
+                      <div class="ink-settings-field" key={key}>
+                        {isBool ? (
+                          <div class="ink-checkbox-wrapper">
+                            <input
+                              id={`notif-${key}`}
+                              type="checkbox"
+                              checked={!!val}
+                              onChange={(e) => this._handleNotifSettingsChange(key, e.target.checked)}
+                            />
+                            <label for={`notif-${key}`}>
+                              {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                            </label>
+                          </div>
+                        ) : (
+                          <>
+                            <label class="ink-settings-field-label" for={`notif-${key}`}>
+                              {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                            </label>
+                            <input
+                              id={`notif-${key}`}
+                              type={typeof val === "number" ? "number" : "text"}
+                              value={String(val)}
+                              onInput={(e) => this._handleNotifSettingsChange(key, e.target.value)}
+                            />
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+              <div style="margin-top:var(--ink-space-md);display:flex;gap:var(--ink-space-sm);">
+                <button
+                  class="ink-btn-primary ink-btn-sm"
+                  onClick={() => this._handleNotifSaveSettings()}
+                  disabled={!hasDirty || notifSaving}
+                >
+                  {notifSaving ? "Saving…" : "Save Settings"}
+                </button>
+                {hasDirty && (
+                  <button class="ink-btn-ghost ink-btn-sm" onClick={() => this.setState({ notifSettingsDirty: null })}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Notification Channels Section ── */}
+        <div class="ink-settings-section">
+          <div
+            class="ink-settings-section-header"
+            onClick={() => this._toggleSection("__notif_channels__")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") this._toggleSection("__notif_channels__");
+            }}
+          >
+            <div>
+              <h3>Notification Channels</h3>
+              <div class="ink-section-desc">Configure where notifications are sent</div>
+            </div>
+            <span class={`ink-section-toggle${this.state.collapsedSections["__notif_channels__"] ? "" : " open"}`}>
+              ▼
+            </span>
+          </div>
+          {!this.state.collapsedSections["__notif_channels__"] && (
+            <div class="ink-settings-section-body">
+              {channels.length === 0 && !notifShowAddChannel ? (
+                <div class="ink-settings-empty">No channels configured. Add one to start receiving notifications.</div>
+              ) : (
+                <div style="display:flex;flex-direction:column;gap:var(--ink-space-sm);">
+                  {channels.map((ch) => (
+                    <div class="ink-notif-channel-row" key={ch.id || ch.name}>
+                      <div class="ink-notif-channel-info">
+                        <span class="ink-notif-channel-name">{ch.name || ch.id}</span>
+                        <span class={`ink-pill ${ch.enabled !== false ? "ink-pill-success" : "ink-pill-muted"}`}>
+                          {ch.type || "unknown"}
+                        </span>
+                        {ch.enabled !== false ? (
+                          <span class="ink-pill ink-pill-success">Enabled</span>
+                        ) : (
+                          <span class="ink-pill ink-pill-muted">Disabled</span>
+                        )}
+                      </div>
+                      <div class="ink-notif-channel-actions">
+                        <button
+                          class="ink-btn-ghost ink-btn-sm"
+                          onClick={() => this._handleNotifEditChannel(ch)}
+                          type="button"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          class="ink-btn-ghost ink-btn-sm"
+                          style="color:var(--ink-danger)"
+                          onClick={() => this._handleNotifDeleteChannel(ch)}
+                          type="button"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add Channel Form */}
+              {notifShowAddChannel && (
+                <div class="ink-settings-provider-form" style="margin-top:var(--ink-space-md);">
+                  <h4>{notifEditingChannel ? "Edit Channel" : "Add Channel"}</h4>
+                  {notifChannelFormError && (
+                    <div class="ink-settings-field-error" style="margin-bottom:var(--ink-space-md);">
+                      {notifChannelFormError}
+                    </div>
+                  )}
+                  <div class="ink-settings-field">
+                    <label class="ink-settings-field-label" for="notif-ch-name">
+                      Name
+                    </label>
+                    <input
+                      id="notif-ch-name"
+                      type="text"
+                      value={notifChannelForm.name}
+                      onInput={(e) => this._handleNotifChannelFormChange("name", e.target.value)}
+                      placeholder="My Discord Webhook"
+                    />
+                  </div>
+                  <div class="ink-settings-field">
+                    <label class="ink-settings-field-label" for="notif-ch-type">
+                      Type
+                    </label>
+                    <select
+                      id="notif-ch-type"
+                      value={notifChannelForm.type}
+                      onChange={(e) => this._handleNotifChannelFormChange("type", e.target.value)}
+                    >
+                      <option value="discord_webhook">Discord Webhook</option>
+                      <option value="slack_webhook">Slack Webhook</option>
+                      <option value="email">Email</option>
+                      <option value="webhook">Generic Webhook</option>
+                      <option value="gotify">Gotify</option>
+                      <option value="pushover">Pushover</option>
+                      <option value="telegram">Telegram</option>
+                    </select>
+                  </div>
+                  <div class="ink-settings-field">
+                    <label class="ink-settings-field-label" for="notif-ch-config">
+                      Config (JSON)
+                    </label>
+                    <textarea
+                      id="notif-ch-config"
+                      value={notifChannelForm.config}
+                      onInput={(e) => this._handleNotifChannelFormChange("config", e.target.value)}
+                      placeholder='{"url": "https://discord.com/api/webhooks/…"}'
+                    />
+                    <span class="ink-settings-field-hint">Channel-specific configuration as JSON</span>
+                  </div>
+                  <div class="ink-settings-field">
+                    <div class="ink-checkbox-wrapper">
+                      <input
+                        id="notif-ch-enabled"
+                        type="checkbox"
+                        checked={notifChannelForm.enabled}
+                        onChange={(e) => this._handleNotifChannelFormChange("enabled", e.target.checked)}
+                      />
+                      <label for="notif-ch-enabled">Enabled</label>
+                    </div>
+                  </div>
+                  <div class="ink-settings-provider-form-actions">
+                    <button
+                      class="ink-btn-primary ink-btn-sm"
+                      onClick={() => this._handleNotifSaveChannel()}
+                      disabled={notifSaving}
+                    >
+                      {notifSaving ? "Saving…" : notifEditingChannel ? "Update Channel" : "Add Channel"}
+                    </button>
+                    <button
+                      class="ink-btn-ghost ink-btn-sm"
+                      onClick={() => this._handleNotifCancelChannelForm()}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!notifShowAddChannel && (
+                <div style="margin-top:var(--ink-space-md);">
+                  <button
+                    class="ink-btn-primary ink-btn-sm"
+                    onClick={() => this._handleNotifAddChannel()}
+                    type="button"
+                  >
+                    + Add Channel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Recent Deliveries Section (collapsible) ── */}
+        <div class="ink-settings-section">
+          <div
+            class="ink-settings-section-header"
+            onClick={() => {
+              const wasCollapsed = this.state.collapsedSections["__notif_deliveries__"];
+              this._toggleSection("__notif_deliveries__");
+              if (wasCollapsed && !notifDeliveries) {
+                this._loadNotifDeliveries();
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                const wasCollapsed = this.state.collapsedSections["__notif_deliveries__"];
+                this._toggleSection("__notif_deliveries__");
+                if (wasCollapsed && !notifDeliveries) {
+                  this._loadNotifDeliveries();
+                }
+              }
+            }}
+          >
+            <div>
+              <h3>Recent Deliveries</h3>
+              <div class="ink-section-desc">Last 25 notification delivery attempts</div>
+            </div>
+            <span class={`ink-section-toggle${this.state.collapsedSections["__notif_deliveries__"] ? "" : " open"}`}>
+              ▼
+            </span>
+          </div>
+          {!this.state.collapsedSections["__notif_deliveries__"] && (
+            <div class="ink-settings-section-body">
+              <div style="display:flex;gap:var(--ink-space-sm);margin-bottom:var(--ink-space-md);">
+                <button
+                  class="ink-btn-ghost ink-btn-sm"
+                  onClick={() => this._loadNotifDeliveries()}
+                  disabled={notifDeliveriesLoading}
+                  type="button"
+                >
+                  {notifDeliveriesLoading ? "Loading…" : "↻ Refresh"}
+                </button>
+              </div>
+              {notifDeliveriesLoading && !notifDeliveries ? (
+                <div class="ink-settings-loading">
+                  <div class="ink-spinner" />
+                  <span>Loading deliveries…</span>
+                </div>
+              ) : notifDeliveries && notifDeliveries.length > 0 ? (
+                <div class="ink-notif-deliveries-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Recipient</th>
+                        <th>Channel</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {notifDeliveries.map((d, i) => (
+                        <tr key={d.id || i}>
+                          <td>{d.recipient || d.to || "—"}</td>
+                          <td>
+                            <span class={`ink-pill ${d.channel_type ? "ink-pill-info" : "ink-pill-muted"}`}>
+                              {d.channel_type || d.channel || "—"}
+                            </span>
+                          </td>
+                          <td>
+                            <span
+                              class={`ink-pill ${
+                                d.status === "success" || d.status === "sent"
+                                  ? "ink-pill-success"
+                                  : d.status === "failed" || d.status === "error"
+                                    ? "ink-pill-danger"
+                                    : "ink-pill-muted"
+                              }`}
+                            >
+                              {d.status || "unknown"}
+                            </span>
+                          </td>
+                          <td style="white-space:nowrap;font-size:var(--ink-text-xs);color:var(--ink-text-muted);">
+                            {d.created_at || d.date || d.timestamp
+                              ? new Date(d.created_at || d.date || d.timestamp).toLocaleString()
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div class="ink-settings-empty">No deliveries yet.</div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   _renderBackupSection() {
     return (
       <div class="ink-settings-section">
@@ -1740,6 +2407,7 @@ class SettingsPage extends Component {
       general: "General",
       ui: "UI",
       root_folders: "Paths",
+      notifications: "Notifications",
     };
 
     const areaLabel = areaLabels[area] || area;
@@ -1806,6 +2474,8 @@ class SettingsPage extends Component {
             {/* Download Clients — special placeholder */}
             {area === "download_clients" ? (
               this._renderDownloadClients()
+            ) : area === "notifications" ? (
+              this._renderNotifications()
             ) : (
               <>
                 {/* Provider/Indexer areas — show provider cards + form */}

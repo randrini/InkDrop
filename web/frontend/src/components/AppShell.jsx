@@ -277,6 +277,7 @@ class AppShell extends Component {
       { area: "general", label: "General" },
       { area: "ui", label: "UI" },
       { area: "root_folders", label: "Paths" },
+      { area: "notifications", label: "Notifications" },
     ];
 
     const navItems = NAV_ITEMS;

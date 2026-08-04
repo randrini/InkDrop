@@ -6,6 +6,7 @@
 import { h, Component, Fragment } from "preact";
 import api from "../api/client.jsx";
 import { toast } from "../main.jsx";
+import { appStore } from "../stores/app-store.jsx";
 
 const styles = `
 .ink-activity-page { padding-bottom: var(--ink-space-2xl); }
@@ -294,12 +295,155 @@ const styles = `
   margin-bottom: var(--ink-space-lg);
 }
 
+/* ── Workflow Snapshot ─────────────────────────── */
+.ink-workflow-snapshot {
+  margin-bottom: var(--ink-space-xl);
+  background: var(--ink-bg-surface);
+  border: 1px solid var(--ink-border-subtle);
+  border-radius: var(--ink-radius-lg);
+  padding: var(--ink-space-lg) var(--ink-space-xl);
+}
+.ink-workflow-snapshot summary {
+  font-weight: 600;
+  font-size: var(--ink-text-base);
+  cursor: pointer;
+  padding: var(--ink-space-xs) 0;
+  user-select: none;
+}
+.ink-workflow-snapshot summary::-webkit-details-marker { color: var(--ink-text-muted); }
+.ink-workflow-snapshot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--ink-space-md);
+  flex-wrap: wrap;
+  gap: var(--ink-space-sm);
+}
+.ink-workflow-snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: var(--ink-space-sm);
+}
+.ink-workflow-snapshot-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ink-space-md) var(--ink-space-sm);
+  background: var(--ink-bg-elevated);
+  border: 1px solid var(--ink-border-subtle);
+  border-radius: var(--ink-radius-md);
+  cursor: pointer;
+  transition: border-color var(--ink-transition-fast), transform var(--ink-transition-fast);
+}
+.ink-workflow-snapshot-chip:hover {
+  border-color: var(--ink-border-default);
+  transform: translateY(-1px);
+}
+.ink-workflow-snapshot-chip-value {
+  font-size: var(--ink-text-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.ink-workflow-snapshot-chip-label {
+  font-size: var(--ink-text-xs);
+  color: var(--ink-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: var(--ink-space-xs);
+  text-align: center;
+}
+.ink-workflow-snapshot-chip-active .ink-workflow-snapshot-chip-value { color: var(--ink-text-primary); }
+.ink-workflow-snapshot-chip-searching .ink-workflow-snapshot-chip-value { color: var(--ink-info); }
+.ink-workflow-snapshot-chip-client-queued .ink-workflow-snapshot-chip-value { color: var(--ink-text-secondary); }
+.ink-workflow-snapshot-chip-downloading .ink-workflow-snapshot-chip-value { color: var(--ink-info); }
+.ink-workflow-snapshot-chip-ready-to-import .ink-workflow-snapshot-chip-value { color: var(--ink-accent-gold); }
+.ink-workflow-snapshot-chip-importing .ink-workflow-snapshot-chip-value { color: var(--ink-accent-gold); }
+.ink-workflow-snapshot-chip-needs-attention .ink-workflow-snapshot-chip-value { color: var(--ink-danger); }
+.ink-workflow-snapshot-chip-retry .ink-workflow-snapshot-chip-value { color: var(--ink-warning); }
+.ink-workflow-snapshot-next {
+  margin-top: var(--ink-space-md);
+  font-size: var(--ink-text-sm);
+  color: var(--ink-text-secondary);
+  padding: var(--ink-space-sm) var(--ink-space-md);
+  background: var(--ink-bg-elevated);
+  border-radius: var(--ink-radius-md);
+}
+
+/* ── Source Health ────────────────────────────── */
+.ink-source-health {
+  margin-bottom: var(--ink-space-xl);
+  background: var(--ink-bg-surface);
+  border: 1px solid var(--ink-border-subtle);
+  border-radius: var(--ink-radius-lg);
+  padding: var(--ink-space-lg) var(--ink-space-xl);
+}
+.ink-source-health summary {
+  font-weight: 600;
+  font-size: var(--ink-text-base);
+  cursor: pointer;
+  padding: var(--ink-space-xs) 0;
+  user-select: none;
+}
+.ink-source-health summary::-webkit-details-marker { color: var(--ink-text-muted); }
+.ink-source-health-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--ink-space-md);
+  flex-wrap: wrap;
+  gap: var(--ink-space-sm);
+}
+.ink-source-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--ink-space-md);
+}
+.ink-source-health-card {
+  padding: var(--ink-space-md) var(--ink-space-lg);
+  background: var(--ink-bg-elevated);
+  border: 1px solid var(--ink-border-subtle);
+  border-radius: var(--ink-radius-md);
+}
+.ink-source-health-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ink-space-sm);
+  margin-bottom: var(--ink-space-xs);
+}
+.ink-source-health-card-name {
+  font-weight: 600;
+  font-size: var(--ink-text-sm);
+}
+.ink-source-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ink-source-health-dot-healthy { background: var(--ink-success); }
+.ink-source-health-dot-unhealthy { background: var(--ink-danger); }
+.ink-source-health-dot-unknown { background: var(--ink-text-muted); }
+.ink-source-health-card-time {
+  font-size: var(--ink-text-xs);
+  color: var(--ink-text-muted);
+  margin-bottom: var(--ink-space-xs);
+}
+.ink-source-health-card-error {
+  font-size: var(--ink-text-xs);
+  color: var(--ink-danger);
+  word-break: break-word;
+}
+
 /* ── Responsive ────────────────────────────────── */
 @media (max-width: 768px) {
   .ink-activity-chips { gap: var(--ink-space-sm); }
   .ink-activity-chip { min-width: 80px; padding: var(--ink-space-md); }
   .ink-activity-chip-value { font-size: var(--ink-text-xl); }
   .ink-activity-detail-grid { grid-template-columns: 1fr 1fr; }
+  .ink-workflow-snapshot-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  .ink-source-health-grid { grid-template-columns: 1fr; }
 }
 `;
 
@@ -315,10 +459,16 @@ class ActivityPage extends Component {
       expandedId: null,
       detailCache: {},
       detailLoading: null,
+      deferredQueueSync: null,
+      sectionsData: null,
+      snapshotRefreshing: false,
+      healthRefreshing: false,
     };
     this._pollTimer = null;
     this._load = this._load.bind(this);
     this._toggleDetail = this._toggleDetail.bind(this);
+    this._refreshSnapshot = this._refreshSnapshot.bind(this);
+    this._refreshHealth = this._refreshHealth.bind(this);
   }
 
   componentDidMount() {
@@ -335,7 +485,13 @@ class ActivityPage extends Component {
 
   async _load() {
     try {
-      const [summaryRes, currentRes] = await Promise.all([api.activity.summary(), api.activity.current({ limit: 50 })]);
+      const [summaryRes, currentRes, deferredRes] = await Promise.all([
+        api.activity.summary(),
+        api.activity.current({ limit: 50 }),
+        api.activity.deferredQueueSync(),
+      ]);
+
+      const sectionsData = appStore.get("sectionsData");
 
       this.setState({
         loading: false,
@@ -343,6 +499,8 @@ class ActivityPage extends Component {
         summary: summaryRes.ok ? summaryRes.summary : null,
         activity: currentRes.ok ? currentRes.activity : [],
         total: currentRes.ok ? currentRes.total : 0,
+        deferredQueueSync: deferredRes.ok ? deferredRes : null,
+        sectionsData: sectionsData || null,
       });
     } catch (err) {
       this.setState({
@@ -465,6 +623,176 @@ class ActivityPage extends Component {
           </div>
         ))}
       </div>
+    );
+  }
+
+  async _refreshSnapshot() {
+    if (!this._mounted) return;
+    this.setState({ snapshotRefreshing: true });
+    try {
+      const [summaryRes, deferredRes] = await Promise.all([api.activity.summary(), api.activity.deferredQueueSync()]);
+      if (!this._mounted) return;
+      this.setState({
+        summary: summaryRes.ok ? summaryRes.summary : this.state.summary,
+        deferredQueueSync: deferredRes.ok ? deferredRes : this.state.deferredQueueSync,
+        snapshotRefreshing: false,
+      });
+      toast("Workflow snapshot refreshed", "success");
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({ snapshotRefreshing: false });
+      toast(err.message || "Failed to refresh snapshot", "error");
+    }
+  }
+
+  async _refreshHealth() {
+    if (!this._mounted) return;
+    this.setState({ healthRefreshing: true });
+    try {
+      const res = await api.state.sections();
+      if (!this._mounted) return;
+      if (res.ok) {
+        appStore.set("sectionsData", res);
+        this.setState({ sectionsData: res, healthRefreshing: false });
+      } else {
+        this.setState({ healthRefreshing: false });
+        toast("Failed to refresh source health", "error");
+      }
+      toast("Source health refreshed", "success");
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({ healthRefreshing: false });
+      toast(err.message || "Failed to refresh source health", "error");
+    }
+  }
+
+  _renderWorkflowSnapshot() {
+    const { summary, deferredQueueSync, snapshotRefreshing } = this.state;
+    if (!summary) return null;
+
+    const chips = [
+      {
+        key: "active",
+        label: "Active",
+        value: summary.active ?? summary.total ?? 0,
+        cls: "ink-workflow-snapshot-chip-active",
+      },
+      {
+        key: "searching",
+        label: "Searching",
+        value: summary.searching ?? 0,
+        cls: "ink-workflow-snapshot-chip-searching",
+      },
+      {
+        key: "client_queued",
+        label: "Client Queued",
+        value: summary.client_queued ?? 0,
+        cls: "ink-workflow-snapshot-chip-client-queued",
+      },
+      {
+        key: "downloading",
+        label: "Downloading",
+        value: summary.downloading ?? 0,
+        cls: "ink-workflow-snapshot-chip-downloading",
+      },
+      {
+        key: "ready_to_import",
+        label: "Ready to Import",
+        value: summary.ready_to_import ?? 0,
+        cls: "ink-workflow-snapshot-chip-ready-to-import",
+      },
+      {
+        key: "importing",
+        label: "Importing",
+        value: summary.importing ?? 0,
+        cls: "ink-workflow-snapshot-chip-importing",
+      },
+      {
+        key: "needs_attention",
+        label: "Needs Attention",
+        value: summary.needs_attention ?? 0,
+        cls: "ink-workflow-snapshot-chip-needs-attention",
+      },
+      {
+        key: "retry_scheduled",
+        label: "Retry Scheduled",
+        value: summary.retry_scheduled ?? 0,
+        cls: "ink-workflow-snapshot-chip-retry",
+      },
+    ];
+
+    const nextAction =
+      deferredQueueSync && deferredQueueSync.next_sync
+        ? `Next scheduled action: ${new Date(deferredQueueSync.next_sync).toLocaleString()}`
+        : null;
+
+    return (
+      <details open class="ink-workflow-snapshot">
+        <summary>Workflow Snapshot</summary>
+        <div class="ink-workflow-snapshot-header">
+          <span />
+          <button class="ink-btn-ghost ink-btn-sm" onClick={this._refreshSnapshot} disabled={snapshotRefreshing}>
+            {snapshotRefreshing ? "⟳ Refreshing…" : "↻ Refresh"}
+          </button>
+        </div>
+        <div class="ink-workflow-snapshot-grid">
+          {chips.map((chip) => (
+            <div key={chip.key} class={`ink-workflow-snapshot-chip ${chip.cls}`} onClick={() => {}}>
+              <span class="ink-workflow-snapshot-chip-value">{chip.value}</span>
+              <span class="ink-workflow-snapshot-chip-label">{chip.label}</span>
+            </div>
+          ))}
+        </div>
+        {nextAction && <div class="ink-workflow-snapshot-next">{nextAction}</div>}
+      </details>
+    );
+  }
+
+  _renderSourceHealth() {
+    const { sectionsData, healthRefreshing } = this.state;
+    if (!sectionsData || !sectionsData.sections) return null;
+
+    const sections = Array.isArray(sectionsData.sections) ? sectionsData.sections : [];
+
+    return (
+      <details class="ink-source-health">
+        <summary>Source Health</summary>
+        <div class="ink-source-health-header">
+          <span />
+          <button class="ink-btn-ghost ink-btn-sm" onClick={this._refreshHealth} disabled={healthRefreshing}>
+            {healthRefreshing ? "⟳ Refreshing…" : "↻ Refresh"}
+          </button>
+        </div>
+        <div class="ink-source-health-grid">
+          {sections.map((section, idx) => {
+            const status = (section.status || "unknown").toLowerCase();
+            const dotClass =
+              status === "healthy"
+                ? "ink-source-health-dot-healthy"
+                : status === "unhealthy"
+                  ? "ink-source-health-dot-unhealthy"
+                  : "ink-source-health-dot-unknown";
+            return (
+              <div key={section.name || section.id || idx} class="ink-source-health-card">
+                <div class="ink-source-health-card-header">
+                  <span class={`ink-source-health-dot ${dotClass}`} />
+                  <span class="ink-source-health-card-name">
+                    {section.name || section.provider || section.id || "Unknown"}
+                  </span>
+                </div>
+                {section.last_check && (
+                  <div class="ink-source-health-card-time">
+                    Last check: {new Date(section.last_check).toLocaleString()}
+                  </div>
+                )}
+                {status === "unhealthy" && section.error && (
+                  <div class="ink-source-health-card-error">{section.error}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </details>
     );
   }
 
@@ -592,6 +920,8 @@ class ActivityPage extends Component {
           </div>
         ) : (
           <div>
+            {this._renderWorkflowSnapshot()}
+            {this._renderSourceHealth()}
             {this._renderSummaryChips()}
 
             <div class="ink-activity-toolbar">
