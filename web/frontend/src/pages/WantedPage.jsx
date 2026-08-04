@@ -324,8 +324,25 @@ class WantedPage extends Component {
               {running ? <span class="ink-spinner" /> : null}
               {running ? "Running..." : "Run"}
             </button>
-            <button class="ink-btn-ghost" onClick={this._loadData}>
+            <button class="ink-btn-ghost ink-btn-sm" onClick={this._loadData}>
               ↻ Refresh
+            </button>
+            <button
+              class="ink-btn-ghost ink-btn-sm"
+              onClick={() => {
+                const first = items[0];
+                window.dispatchEvent(
+                  new CustomEvent("inkdrop:open-manual-search", {
+                    detail: {
+                      series_id: first?.series_id,
+                      series_name: first?.series || first?.series_name,
+                    },
+                  }),
+                );
+              }}
+              disabled={items.length === 0}
+            >
+              🔍 Manual Search
             </button>
           </div>
         </div>
@@ -376,6 +393,22 @@ class WantedPage extends Component {
                 </div>
                 <div class="ink-wanted-source">{item.source || item.source_name || ""}</div>
                 <div class="ink-wanted-status">{this._renderStatusPill(item.status || item.issue_status)}</div>
+                <button
+                  class="issue-action-btn"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("inkdrop:open-manual-search", {
+                        detail: {
+                          series_id: item.series_id,
+                          series_name: item.series || item.series_name,
+                        },
+                      }),
+                    )
+                  }
+                  type="button"
+                >
+                  🔍 Search
+                </button>
               </div>
             ))}
           </div>

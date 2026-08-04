@@ -961,6 +961,25 @@ export class SeriesDetailPage extends Component {
 
         <button
           class="ink-btn-ghost ink-btn-sm"
+          onClick={() => {
+            const series = this.state.series;
+            if (!series) return;
+            window.dispatchEvent(
+              new CustomEvent("inkdrop:open-manual-search", {
+                detail: {
+                  series_id: series.series_id || series.id,
+                  series_name: series.title || series.name,
+                },
+              }),
+            );
+          }}
+          type="button"
+        >
+          🔍 Manual Search
+        </button>
+
+        <button
+          class="ink-btn-ghost ink-btn-sm"
           onClick={() => this._handleRefreshMetadata()}
           disabled={refreshingCovers}
           type="button"

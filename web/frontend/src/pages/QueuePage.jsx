@@ -329,6 +329,23 @@ class QueuePage extends Component {
           <span class={`ink-queue-status ${this._statusClass(item.status || item.stage)}`}>
             {item.status || item.stage || "—"}
           </span>
+          <button
+            class="issue-action-btn"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("inkdrop:open-manual-search", {
+                  detail: {
+                    series_id: item.series_id,
+                    series_name: item.series || item.series_name,
+                  },
+                }),
+              )
+            }
+            type="button"
+            style="margin-left:var(--ink-space-xs);"
+          >
+            🔍 Search
+          </button>
         </div>
 
         <div class="ink-queue-card-issue" title={item.issue || item.title}>
@@ -388,6 +405,23 @@ class QueuePage extends Component {
                 </button>
                 <button class="ink-btn-ghost ink-btn-sm" onClick={this._load}>
                   ↻ Refresh
+                </button>
+                <button
+                  class="ink-btn-ghost ink-btn-sm"
+                  onClick={() => {
+                    const first = rows[0];
+                    window.dispatchEvent(
+                      new CustomEvent("inkdrop:open-manual-search", {
+                        detail: {
+                          series_id: first?.series_id,
+                          series_name: first?.series || first?.series_name,
+                        },
+                      }),
+                    );
+                  }}
+                  disabled={rows.length === 0}
+                >
+                  🔍 Manual Search
                 </button>
               </div>
             </div>
