@@ -531,6 +531,20 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+.settings-policy-detail {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Settings card modal trigger */
+.settings-card-modal-trigger > .settings-card-head {
+  cursor: pointer;
+}
+.settings-card-modal-trigger:hover > .settings-card-head {
+  border-color: var(--line-light);
+}
 
 /* Settings order editor */
 .settings-order-editor {

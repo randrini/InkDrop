@@ -5908,6 +5908,20 @@ details[open] .open-label {
   flex-wrap: wrap;
   gap: 4px;
 }
+.settings-policy-detail {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Settings card modal trigger */
+.settings-card-modal-trigger > .settings-card-head {
+  cursor: pointer;
+}
+.settings-card-modal-trigger:hover > .settings-card-head {
+  border-color: var(--line-light);
+}
 
 /* Settings order editor */
 .settings-order-editor {
@@ -8885,10 +8899,102 @@ details[open] .open-label {
 }
 
 /* ===== Notifications (JS-generated) ===== */
+.notifications-settings-panel {
+  display: grid;
+  gap: 12px;
+}
+.notifications-settings-panel > p {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.4;
+}
+.notifications-matrix {
+  display: grid;
+  gap: 8px;
+}
+.notifications-matrix table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.notifications-matrix thead th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-alt);
+  border-bottom: 2px solid var(--line);
+}
+.notifications-matrix thead th:first-child {
+  width: 200px;
+}
+.notifications-matrix tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+}
+.notifications-matrix tbody td:first-child {
+  font-size: var(--font-sm);
+  color: var(--text);
+}
+.notifications-matrix tbody td input[type="checkbox"] {
+  accent-color: var(--accent);
+}
 .notifications-filter-channel {
-  display: flex;
-  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  display: grid;
+  gap: 8px;
+}
+.notifications-filter-channel > strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.notifications-filter-channel .settings-form-row {
+  border-bottom: none;
+  padding: 4px 0;
+}
+.notifications-series-picker {
+  display: grid;
+  gap: 8px;
+}
+.notifications-series-picker input[type="search"] {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+.notifications-series-picker input[type="search"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.notifications-series-list {
+  display: grid;
   gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.notifications-series-list label.checkline {
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition);
+}
+.notifications-series-list label.checkline:hover {
+  background: var(--surface-2);
 }
 .notifications-history-table {
   width: 100%;
@@ -8909,22 +9015,6 @@ details[open] .open-label {
   padding: 8px 10px;
   border-bottom: 1px solid var(--line-soft);
   color: var(--muted);
-}
-.notifications-matrix {
-  display: grid;
-  gap: 8px;
-}
-.notifications-series-list {
-  display: grid;
-  gap: 4px;
-}
-.notifications-series-picker {
-  display: grid;
-  gap: 8px;
-}
-.notifications-settings-panel {
-  display: grid;
-  gap: 12px;
 }
 /* ===== Activity Dock (in sidebar) ===== */
 #activitySummary {
@@ -10680,10 +10770,102 @@ details[open] .open-label {
 }
 
 /* ===== Notifications (JS-generated) ===== */
+.notifications-settings-panel {
+  display: grid;
+  gap: 12px;
+}
+.notifications-settings-panel > p {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.4;
+}
+.notifications-matrix {
+  display: grid;
+  gap: 8px;
+}
+.notifications-matrix table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.notifications-matrix thead th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-alt);
+  border-bottom: 2px solid var(--line);
+}
+.notifications-matrix thead th:first-child {
+  width: 200px;
+}
+.notifications-matrix tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+}
+.notifications-matrix tbody td:first-child {
+  font-size: var(--font-sm);
+  color: var(--text);
+}
+.notifications-matrix tbody td input[type="checkbox"] {
+  accent-color: var(--accent);
+}
 .notifications-filter-channel {
-  display: flex;
-  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  display: grid;
+  gap: 8px;
+}
+.notifications-filter-channel > strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.notifications-filter-channel .settings-form-row {
+  border-bottom: none;
+  padding: 4px 0;
+}
+.notifications-series-picker {
+  display: grid;
+  gap: 8px;
+}
+.notifications-series-picker input[type="search"] {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+.notifications-series-picker input[type="search"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.notifications-series-list {
+  display: grid;
   gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.notifications-series-list label.checkline {
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition);
+}
+.notifications-series-list label.checkline:hover {
+  background: var(--surface-2);
 }
 .notifications-history-table {
   width: 100%;
@@ -10704,22 +10886,6 @@ details[open] .open-label {
   padding: 8px 10px;
   border-bottom: 1px solid var(--line-soft);
   color: var(--muted);
-}
-.notifications-matrix {
-  display: grid;
-  gap: 8px;
-}
-.notifications-series-list {
-  display: grid;
-  gap: 4px;
-}
-.notifications-series-picker {
-  display: grid;
-  gap: 8px;
-}
-.notifications-settings-panel {
-  display: grid;
-  gap: 12px;
 }
 
 /* ===== SLSKD / Source probing (JS-generated) ===== */
