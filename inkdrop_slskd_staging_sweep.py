@@ -29,6 +29,7 @@ import time
 
 import inkdrop_runtime_config
 import inkdrop_archive_conversion
+import inkdrop_download_client_routing
 
 try:
     import inkdrop_state
@@ -59,9 +60,42 @@ def extract_issue_number(filename):
 # Resolved through inkdrop_runtime_config rather than written out, so no
 # host-specific home directory or NAS mount is baked into the source. The
 # environment variables still take precedence wherever they are set.
-SLSKD_ROOT = os.environ.get("INKDROP_SLSKD_DOWNLOAD_ROOT") or str(
+DEFAULT_SLSKD_ROOT = str(
     inkdrop_runtime_config.staging_dir() / "slskd"
 )
+
+
+def slskd_staging_root():
+    """Resolve the slskd download root from DB settings, app settings, env var, or default."""
+    # 1. Try download client instance (same source the probe uses)
+    try:
+        routed = inkdrop_download_client_routing.slskd_source_instance(STATE_DB, "comics")
+        if routed:
+            instance = routed.get("instance") or {}
+            paths = instance.get("download_paths") if isinstance(instance.get("download_paths"), dict) else {}
+            download_root = str(paths.get("comics") or instance.get("download_path") or "").strip()
+            if download_root:
+                return download_root
+    except Exception:
+        pass
+
+    # 2. Try app settings
+    try:
+        if inkdrop_state is not None:
+            setting = inkdrop_state.app_setting(STATE_DB, "path.slskd_download_root")
+            if setting and str(setting.get("value", "")).strip():
+                return str(setting["value"]).strip()
+    except Exception:
+        pass
+
+    # 3. Env var
+    env_val = os.environ.get("INKDROP_SLSKD_DOWNLOAD_ROOT")
+    if env_val and env_val.strip():
+        return env_val.strip()
+
+    # 4. Default
+    return DEFAULT_SLSKD_ROOT
+
 LEDGER_DB = os.environ.get("INKDROP_IMPORTED_FILES_DB") or str(
     inkdrop_runtime_config.imported_files_db_path()
 )
@@ -411,7 +445,7 @@ def main():
     }
     if page_directory_summary["enabled"]:
         page_directory_started = time.time()
-        eligible_directories = enumerate_page_directories(SLSKD_ROOT)
+        eligible_directories = enumerate_page_directories(slskd_staging_root())
         page_directory_summary["eligible_this_run"] = len(eligible_directories)
         random.shuffle(eligible_directories)
         conversions_done = 0
@@ -453,7 +487,7 @@ def main():
                 )
                 con.commit()
 
-    all_files = enumerate_files(SLSKD_ROOT)
+    all_files = enumerate_files(slskd_staging_root())
     now = time.time()
     to_process = []
     skipped_via_checkpoint = 0

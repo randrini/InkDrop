@@ -38,6 +38,7 @@ import inkdrop_folder_cleanup
 import inkdrop_library_frontends
 import inkdrop_artifact_acceptance
 import inkdrop_library_identity
+import inkdrop_download_client_routing
 
 
 STATE_DIR = inkdrop_runtime_config.state_dir()
@@ -88,9 +89,43 @@ MANUAL_COMIC_SOURCES = [
 SUWAYOMI_COMIC_SOURCES = [
     Path(os.environ.get("INKDROP_SUWAYOMI_STAGING_ROOT") or STAGING_DIR / "suwayomi"),
 ]
-SLSKD_COMIC_SOURCES = [
-    Path(os.environ.get("INKDROP_SLSKD_DOWNLOAD_ROOT") or STAGING_DIR / "slskd"),
-]
+def slskd_comic_sources():
+    """Resolve slskd comic source directories from DB settings, app settings, env var, or default."""
+    root = None
+    # 1. Try download client instance
+    try:
+        routed = inkdrop_download_client_routing.slskd_source_instance(INKDROP_STATE_DB, "comics")
+        if routed:
+            instance = routed.get("instance") or {}
+            paths = instance.get("download_paths") if isinstance(instance.get("download_paths"), dict) else {}
+            download_root = str(paths.get("comics") or instance.get("download_path") or "").strip()
+            if download_root:
+                root = download_root
+    except Exception:
+        pass
+
+    # 2. Try app settings
+    if not root:
+        try:
+            if inkdrop_state is not None:
+                setting = inkdrop_state.app_setting(INKDROP_STATE_DB, "path.slskd_download_root")
+                if setting and str(setting.get("value", "")).strip():
+                    root = str(setting["value"]).strip()
+        except Exception:
+            pass
+
+    # 3. Env var
+    if not root:
+        env_val = os.environ.get("INKDROP_SLSKD_DOWNLOAD_ROOT")
+        if env_val and env_val.strip():
+            root = env_val.strip()
+
+    # 4. Default
+    if not root:
+        root = str(STAGING_DIR / "slskd")
+
+    return [Path(root)]
+
 INTERNAL_IMPORT_DIR_NAMES = {
     "_failed-proof-copies",
     "_manga-library-split-quarantine",
@@ -7407,7 +7442,7 @@ def scan_sources(kind, manual_inbox=False, suwayomi_staging=False, slskd_staging
         if suwayomi_staging:
             return SUWAYOMI_COMIC_SOURCES, COMIC_DEST
         if slskd_staging:
-            return SLSKD_COMIC_SOURCES, COMIC_DEST
+            return slskd_comic_sources(), COMIC_DEST
         return (MANUAL_COMIC_SOURCES if manual_inbox else COMIC_SOURCES), COMIC_DEST
     return (MANUAL_EBOOK_SOURCES if manual_inbox else EBOOK_SOURCES), EBOOK_DEST
 
