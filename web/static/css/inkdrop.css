@@ -5743,9 +5743,146 @@ details[open] .open-label {
   color: var(--text-muted);
   margin: 0;
 }
+.settings-hidden-source-row p {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+.settings-hidden-source-row p.mini {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
 .settings-hidden-source-actions {
   display: flex;
   gap: 6px;
+}
+.settings-hidden-source-actions button {
+  padding: 4px 10px;
+  font-size: var(--font-xs);
+  min-height: auto;
+}
+
+/* Settings Prowlarr children */
+.settings-prowlarr-children {
+  padding: 0 16px 12px;
+  display: grid;
+  gap: 8px;
+}
+.settings-prowlarr-children-empty {
+  padding: 16px;
+  text-align: center;
+}
+.settings-prowlarr-children-empty strong {
+  display: block;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.settings-prowlarr-children-empty p {
+  margin: 0;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+.settings-prowlarr-child-list {
+  display: grid;
+  gap: 4px;
+}
+.settings-prowlarr-child {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  display: grid;
+  gap: 4px;
+  align-items: start;
+}
+.settings-prowlarr-child.disabled {
+  opacity: 0.65;
+}
+.settings-prowlarr-child-identity {
+  display: grid;
+  gap: 1px;
+}
+.settings-prowlarr-child-identity strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.settings-prowlarr-child-identity small {
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+}
+.settings-prowlarr-child-detail {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  line-height: 1.4;
+}
+.settings-prowlarr-legacy {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+}
+.settings-prowlarr-legacy summary {
+  padding: 8px 12px;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.settings-prowlarr-legacy .mini {
+  padding: 0 12px 8px;
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+}
+
+/* Settings indexer add menu */
+.settings-indexer-add-menu {
+  margin-top: 8px;
+}
+.settings-indexer-add-choices {
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+}
+.settings-indexer-add-choices button {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  text-align: left;
+  display: grid;
+  gap: 2px;
+  transition: all var(--transition);
+}
+.settings-indexer-add-choices button:hover {
+  border-color: var(--accent-dim);
+  background: var(--surface-2);
+}
+.settings-indexer-add-choices button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.settings-indexer-add-choices button strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.settings-indexer-add-choices button small {
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+}
+
+/* Provider footer actions */
+.actions[data-settings-provider-actions="footer"] {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 12px 0 4px;
+  justify-content: flex-end;
+}
+.actions[data-settings-provider-actions="footer"] button {
+  padding: 6px 14px;
+}
+.actions[data-settings-provider-actions="footer"] button.danger {
+  margin-left: auto;
 }
 
 /* Settings policy */
