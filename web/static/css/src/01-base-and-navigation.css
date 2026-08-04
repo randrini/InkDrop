@@ -528,7 +528,6 @@ header {
   padding: 4px 12px;
   font-size: var(--font-sm);
   color: var(--muted);
-  white-space: nowrap;
   flex-shrink: 0;
   transition: border-color var(--transition);
 }
@@ -563,6 +562,7 @@ header {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  background: var(--text-muted);
 }
 .status-dot.good {
   background: var(--good);
@@ -583,13 +583,20 @@ header {
 }
 .status-action {
   margin-top: 4px;
-  padding: 3px 8px;
+  padding: 5px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
   font-size: var(--font-sm);
   cursor: pointer;
+  transition:
+    background var(--transition),
+    border-color var(--transition);
+}
+.status-action:hover {
+  background: var(--surface-3);
+  border-color: var(--accent-dim);
 }
 .status-metrics {
   display: flex;
@@ -600,12 +607,19 @@ header {
 .status-metric {
   font-size: var(--font-sm);
   color: var(--muted);
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
 }
 .status-metric strong {
   color: var(--text);
 }
 .status-pill.activity-linked {
   cursor: pointer;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  display: grid;
+  gap: 8px;
   transition:
     border-color var(--transition),
     background var(--transition),

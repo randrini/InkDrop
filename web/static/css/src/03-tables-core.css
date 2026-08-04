@@ -62,7 +62,12 @@
   color: var(--text-muted);
   padding: 4px 8px;
   background: var(--bg-alt);
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
+}
+.section-active-filter.warn {
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--warn);
 }
 .section-refresh {
   padding: 5px 10px;
@@ -322,7 +327,7 @@
 }
 .section-lane-board {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   margin: 8px 0;
 }
 .section-lane-board[hidden] {
@@ -1007,24 +1012,61 @@
 
 /* ===== Section lanes / filters / triage (JS-generated) ===== */
 .section-lane-card {
+  display: grid;
+  gap: 4px;
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-alt);
+  cursor: pointer;
+  transition:
+    border-color var(--transition),
+    background var(--transition),
+    box-shadow var(--transition);
+}
+.section-lane-card:hover {
+  border-color: var(--accent-dim);
+  background: var(--accent-warm);
+}
+.section-lane-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.section-lane-card.warn {
+  border-left: 3px solid var(--warn);
+  background: rgba(245, 158, 11, 0.04);
+}
+.section-lane-card.bad {
+  border-left: 3px solid var(--bad);
+  background: rgba(239, 68, 68, 0.04);
+}
+.section-lane-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+.section-lane-card.warn.active {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
+}
+.section-lane-card.bad.active {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.2);
 }
 .section-lane-card-label {
   font-size: 11px;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
 }
 .section-lane-card-value {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--text);
 }
 .section-lane-card-detail {
   font-size: var(--font-sm);
-  color: var(--muted);
+  color: var(--text-muted);
+  font-style: normal;
 }
 .section-operator-now-actions {
   display: flex;
