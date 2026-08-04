@@ -1076,15 +1076,6 @@
   display: flex;
   gap: 4px;
 }
-.density-drawer {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-.density-drawer summary {
-  padding: 12px 16px;
-  cursor: pointer;
-}
 .disabled-note {
   font-size: var(--font-sm);
   color: var(--text-muted);

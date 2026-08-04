@@ -305,9 +305,6 @@
   border-radius: var(--radius-lg);
   padding: 12px;
   margin: 8px 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 6px;
 }
 .section-workbench[hidden] {
   display: none;
@@ -1262,7 +1259,8 @@
 }
 .section-workbench-drawer-body {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
   padding: 10px 0;
 }
 .section-workbench-card {
@@ -1320,6 +1318,29 @@
 }
 .section-workbench-card.warn strong {
   color: var(--warn);
+}
+.density-drawer {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-alt);
+}
+.density-drawer summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: var(--font-sm);
+  color: var(--muted);
+}
+.density-drawer summary strong {
+  color: var(--text);
+  font-size: var(--font-md);
+}
+.density-drawer summary .mini {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+.density-drawer .queue-toggle {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 .section-policy-actions {
   display: flex;
