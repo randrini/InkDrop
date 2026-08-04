@@ -870,7 +870,7 @@ HTML = r"""<!doctype html>
               </div>
             </details>
 
-            <section class="card source-health" id="inkdropCore" data-arr-page="series wanted queue activity history manual_review" hidden>
+            <section id="inkdropCore" data-arr-page="series wanted queue activity history manual_review" hidden>
               <details class="core-overview-drawer" id="inkdropCoreOverview" hidden aria-hidden="true">
                 <summary>
                   <div>
