@@ -1260,11 +1260,14 @@ class SettingsPage extends Component {
   async _loadDownloadClients() {
     this.setState({ dcLoading: true });
     try {
-      const [dcList, dcRegistry, dcStatus] = await Promise.all([
+      const [dcListRes, dcRegistryRes, dcStatusRes] = await Promise.all([
         api.downloadClients.list(),
         api.downloadClients.registry(),
         api.downloadClients.status(),
       ]);
+      const dcList = Array.isArray(dcListRes) ? dcListRes : dcListRes?.instances || dcListRes?.download_clients || [];
+      const dcRegistry = dcRegistryRes?.download_clients || dcRegistryRes || [];
+      const dcStatus = dcStatusRes?.clients ? dcStatusRes : dcStatusRes || null;
       this.setState({ dcList, dcRegistry, dcStatus, dcLoading: false });
     } catch (err) {
       this.setState({ dcLoading: false });

@@ -125,7 +125,14 @@ api.setup = {
 // ── State / Dashboard ───────────────────────────────────────────────────
 api.state = {
   sections: (params) => api.get(`/api/inkdrop-state/sections${queryStr(params)}`),
-  view: (view, params) => api.get(`/api/inkdrop-state/${view}${queryStr(params)}`),
+  view: async (view, params) => {
+    const data = await api.get(`/api/inkdrop-state/${view}${queryStr(params)}`);
+    // Backend wraps response in {ok, view: {...}} — flatten for convenience
+    if (data && data.ok && data.view && typeof data.view === "object") {
+      return { ...data.view, ok: true };
+    }
+    return data;
+  },
   full: (params) => api.get(`/api/inkdrop-state${queryStr(params)}`),
   seriesDetail: (id) => api.get(`/api/inkdrop-state/series/detail?id=${encodeURIComponent(id)}`),
   seriesLibrary: (id, params) =>
