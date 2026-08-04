@@ -752,6 +752,7 @@ HTML = r"""<!doctype html>
     .arr-nav, .arr-settings-subnav, .arr-activity-subnav { display: flex; flex-direction: column; gap: 1px; }
     button, input, select { min-height: 34px; border: 1px solid rgba(255,255,255,0.06); background: #141820; color: inherit; padding: 6px 9px; border-radius: 6px; }
     [hidden] { display: none !important; }
+    @media (max-width:768px) { .inkdrop-app-layout { flex-direction:column; } .inkdrop-sidebar { position:fixed; left:0; top:0; bottom:0; width:280px; height:100vh; transform:translateX(-100%); z-index:1000; } .inkdrop-content { min-height:100vh; } }
   </style>
   <link rel="stylesheet" href="/static/css/inkdrop.css?v=__INKDROP_UI_CSS_VERSION__" onload="document.getElementById('inkdrop-critical-fallback')?.remove()">
   <script src="/static/js/inkdrop-api.js?v=__INKDROP_UI_JS_VERSION__" defer></script>
@@ -829,9 +830,13 @@ HTML = r"""<!doctype html>
           <div class="toast" id="toast"></div>
         </div>
       </aside>
+      <div class="inkdrop-mobile-backdrop" id="inkdropMobileBackdrop" onclick="closeInkdropMobileMenu()"></div>
 
       <div class="inkdrop-content">
         <div class="inkdrop-topbar">
+          <button class="inkdrop-mobile-menu-btn" id="inkdropMobileMenuBtn" type="button" aria-label="Open menu" onclick="toggleInkdropMobileMenu()">
+            <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
           <div class="inkdrop-topbar-brand">
             <h1 class="inkdrop-topbar-title" id="inkdropPageTitle">Series</h1>
             <span class="inkdrop-topbar-eyebrow" id="inkdropPageEyebrow">InkDrop</span>
@@ -9547,6 +9552,7 @@ HTML = r"""<!doctype html>
     }
 
     async function openInkdropNavSection(section) {
+      closeInkdropMobileMenu();
       let key = String(section || "").trim().toLowerCase();
       if (key === "calendar" && !INKDROP_CALENDAR_ENABLED) key = "series";
       if (key === "activity") {
@@ -24497,6 +24503,7 @@ HTML = r"""<!doctype html>
     let inkdropSettingsAreaNavSeq = 0;
 
     async function openInkdropSettingsArea(area) {
+      closeInkdropMobileMenu();
       const groupKey = settingsGroupFromRouteArea(area);
       if (!groupKey) return;
       // This function awaits twice, and each await is a point where the person
@@ -34903,6 +34910,30 @@ HTML = r"""<!doctype html>
       try {
         if (window.localStorage?.getItem(INKDROP_SIDEBAR_KEY) === "1") sidebar.classList.add("collapsed");
       } catch (_) {}
+    })();
+    /* ===== Mobile menu ===== */
+    function toggleInkdropMobileMenu() {
+      const sidebar = document.getElementById("inkdropSidebar");
+      const backdrop = document.getElementById("inkdropMobileBackdrop");
+      if (!sidebar) return;
+      sidebar.classList.toggle("mobile-open");
+      if (backdrop) backdrop.classList.toggle("active", sidebar.classList.contains("mobile-open"));
+      document.body.style.overflow = sidebar.classList.contains("mobile-open") ? "hidden" : "";
+    }
+    function closeInkdropMobileMenu() {
+      const sidebar = document.getElementById("inkdropSidebar");
+      const backdrop = document.getElementById("inkdropMobileBackdrop");
+      if (!sidebar) return;
+      sidebar.classList.remove("mobile-open");
+      if (backdrop) backdrop.classList.remove("active");
+      document.body.style.overflow = "";
+    }
+    (function watchMobileResize() {
+      window.addEventListener("resize", function() {
+        if (window.innerWidth > 768) {
+          closeInkdropMobileMenu();
+        }
+      });
     })();
     function startInkdropApplication() {
       if (window.__inkdropApplicationStarted) return;
