@@ -672,6 +672,11 @@
   border-radius: var(--radius-lg);
   background: var(--surface);
   overflow: hidden;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.settings-provider-tile:hover {
+  border-color: var(--line-light);
+  box-shadow: var(--shadow-warm-sm);
 }
 .settings-provider-tile[open] > .settings-card-head {
   border-bottom: 1px solid var(--line);
@@ -1013,6 +1018,10 @@
 .settings-setup-deployment-details {
   margin-top: 12px;
 }
+.settings-setup-deployment-body {
+  display: grid;
+  gap: 12px;
+}
 
 /* Settings path map */
 .settings-path-map {
@@ -1054,6 +1063,29 @@
 .settings-path-map-action {
   display: flex;
   gap: 4px;
+}
+.settings-path-map-empty {
+  padding: 16px 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+.settings-path-map-empty strong {
+  color: var(--text);
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* Settings provider form container */
+.settings-provider-form {
+  display: grid;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+/* Settings advanced-only visibility */
+.settings-advanced-only:not([hidden]) {
+  display: block;
 }
 
 /* Settings form section */
@@ -1097,6 +1129,7 @@
 }
 #inkdropSettingsAdvancedBtn {
 }
+.settings-dirty-state,
 #inkdropSettingsDirtyState {
   color: var(--warn);
   border-color: rgba(245, 158, 11, 0.4);

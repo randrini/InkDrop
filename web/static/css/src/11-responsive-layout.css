@@ -1,5 +1,7 @@
 /* ===== Responsive Layout ===== */
-@media (max-width: 1024px) {
+
+/* === Tablet landscape (≤1023px) === */
+@media (max-width: 1023px) {
   .inkdrop-sidebar {
     width: 200px;
   }
@@ -15,7 +17,55 @@
   .inkdrop-page-area {
     padding: 16px 20px;
   }
+
+  /* Settings: reduce hub tile minimum */
+  .settings-hub {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+
+  /* Series detail: reduce stat grid */
+  .series-detail-stat-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+
+  /* System page: reduce advanced grid */
+  .system-advanced-grid {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+
+  /* System page subnav: allow scroll */
+  .system-page-subnav {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Download client: reduce instance grid */
+  .download-client-instance-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+
+  /* Download client choice grid */
+  .download-client-choice-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+
+  /* Activity page: reduce subview panel width */
+  .activity-page-subview-panel {
+    min-width: 280px;
+  }
+
+  /* Notifications matrix */
+  .notifications-matrix {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+
+  /* Missing recovery progress grid */
+  .missing-recovery-progress-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  }
 }
+
+/* === Tablet portrait (≤768px) === */
 @media (max-width: 768px) {
   .inkdrop-app-layout {
     flex-direction: column;
@@ -77,6 +127,8 @@
   .status-pill {
     align-self: flex-start;
   }
+
+  /* Series detail: stack hero */
   .series-detail-head {
     flex-direction: column;
     align-items: center;
@@ -86,12 +138,45 @@
     width: 100px;
     height: 133px;
   }
+
+  /* Page masthead */
   .arr-page-masthead {
     flex-direction: column;
   }
   .arr-page-side {
     align-items: flex-start;
   }
+
+  /* Settings drawer: compact */
+  .settings-drawer > summary {
+    padding: 10px 12px;
+  }
+
+  /* Settings overview: wrap badges */
+  .settings-overview {
+    flex-wrap: wrap;
+  }
+
+  /* Settings setup major sections: stack */
+  .settings-setup-major-sections {
+    grid-template-columns: 1fr;
+  }
+
+  /* Settings capabilities: stack */
+  .settings-setup-capability {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  /* Settings minimum path: compact */
+  .settings-setup-minimum-path li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  /* Dialogs: fit viewport */
   .series-remove-dialog {
     max-width: 95vw;
   }
@@ -101,7 +186,183 @@
   .download-client-dialog-shell {
     max-width: 95vw;
   }
+
+  /* Auth card: fit viewport */
+  .inkdrop-auth-card {
+    max-width: 95vw;
+    padding: 24px 16px;
+  }
+  .inkdrop-account-dialog {
+    max-width: 95vw;
+  }
+
+  /* Activity page subviews: stack */
+  .activity-page-subviews {
+    flex-direction: column;
+  }
+  .activity-page-subview-panel {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* System page head: stack */
+  .system-page-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  /* Autopilot strip: allow wrap */
+  .autopilot-strip {
+    flex-wrap: wrap;
+  }
+  .autopilot-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Download client manager head: allow wrap */
+  .download-client-manager-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .download-client-manager-actions {
+    flex-wrap: wrap;
+  }
 }
+
+/* === Large phone (≤599px) === */
+@media (max-width: 599px) {
+  /* Settings form rows: stack */
+  .settings-form-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-form-row-readonly {
+    grid-template-columns: 1fr;
+  }
+  .settings-form-label {
+    padding-top: 0;
+    padding-bottom: 2px;
+    font-weight: 600;
+  }
+
+  /* Settings provider form rows: stack */
+  .settings-provider-form-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-provider-form-label {
+    padding-top: 0;
+    padding-bottom: 2px;
+    font-weight: 600;
+  }
+
+  /* Settings first-run/setup: single column */
+  .settings-first-run-group-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-setup-area-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Settings hub: single column tiles */
+  .settings-hub {
+    grid-template-columns: 1fr;
+  }
+
+  /* Settings group body: compact padding */
+  .settings-group-body {
+    padding: 0 12px 12px;
+  }
+
+  /* Settings card head: compact */
+  .settings-card-head {
+    padding: 10px 12px;
+  }
+
+  /* Settings path map: single column */
+  .settings-path-map-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Settings setup checkpoint */
+  .settings-setup-checkpoint {
+    padding: 12px;
+  }
+
+  /* Manual intake grid */
+  .manual-intake-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Download client instance grid */
+  .download-client-instance-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Download client advanced grid */
+  .download-client-advanced-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Download client choice grid */
+  .download-client-choice-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Series detail: stack info */
+  .series-detail-hero {
+    flex-direction: column;
+    align-items: center;
+  }
+  .series-detail-info {
+    text-align: center;
+  }
+  .series-detail-stats {
+    justify-content: center;
+  }
+  .series-detail-stat-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+
+  /* Series detail toolbar: stack */
+  .series-detail-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .series-detail-toolbar-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Series detail issue groups: compact */
+  .series-detail-issue-group {
+    padding: 12px;
+  }
+
+  /* Activity page section: compact */
+  .activity-page-section {
+    padding: 12px;
+  }
+
+  /* Manual search: stack result grid */
+  .manual-search-result-grid {
+    grid-template-columns: 1fr;
+  }
+  .manual-search-providers {
+    grid-template-columns: 1fr;
+  }
+
+  /* Notifications: single column */
+  .notifications-matrix {
+    grid-template-columns: 1fr;
+  }
+
+  /* Missing recovery categories */
+  .missing-recovery-categories {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* === Small phone (≤480px) === */
 @media (max-width: 480px) {
   .inkdrop-content {
     padding: 8px;
@@ -114,27 +375,171 @@
     padding: 6px 8px;
     min-width: 60px;
   }
+
+  /* Settings actions: stack */
   .settings-actions {
     flex-direction: column;
   }
   .settings-search {
     min-width: 100%;
   }
+
+  /* Topbar: compact */
   .inkdrop-topbar {
     padding: 8px 12px;
   }
   .inkdrop-topbar-title {
     font-size: var(--font-xl);
   }
+
+  /* Series poster grid: 2 columns */
   .series-poster-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 10px;
   }
+
+  /* Section commandbar: stack */
   .section-commandbar {
     flex-direction: column;
     align-items: flex-start;
   }
   .section-command-actions {
     width: 100%;
+  }
+
+  /* Series detail cover: smaller */
+  .series-detail-cover {
+    width: 80px;
+    height: 106px;
+  }
+
+  /* System page: compact */
+  .system-section {
+    padding: 12px;
+  }
+
+  /* Download client dialog: full width */
+  .download-client-dialog-shell {
+    max-width: 100vw;
+    border-radius: var(--radius-lg);
+    margin: 8px;
+  }
+
+  /* Download client manager: compact */
+  .download-client-manager-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .download-client-manager-actions {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  /* Download client instance card: compact */
+  .download-client-instance-card {
+    padding: 10px 12px;
+  }
+  .download-client-instance-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Download client instance actions: wrap */
+  .download-client-instance-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Activity page actions: stack */
+  .activity-page-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .activity-page-actions button {
+    width: 100%;
+  }
+
+  /* Missing recovery heading: stack */
+  .missing-recovery-heading {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  /* Settings deployment details: compact */
+  .settings-setup-deployment-body {
+    padding: 0;
+  }
+
+  /* Settings cleanup policy: compact */
+  .download-client-cleanup-policy {
+    padding: 12px;
+  }
+}
+
+/* === Tiny (≤400px) === */
+@media (max-width: 400px) {
+  .series-poster-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .series-poster-body {
+    padding: 8px 10px;
+  }
+  .series-poster-actions {
+    padding: 0 10px 8px;
+  }
+  .series-poster-footer {
+    padding: 0 10px 8px;
+  }
+
+  /* Settings setup minimum path: no numbers */
+  .settings-setup-minimum-path {
+    padding: 0;
+  }
+  .settings-setup-minimum-path li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  /* System advanced tools: full width */
+  .system-advanced-tool {
+    padding: 10px;
+  }
+
+  /* Autopilot strip: stack */
+  .autopilot-strip {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .autopilot-actions {
+    width: 100%;
+  }
+
+  /* Auth form: compact */
+  .inkdrop-auth-form {
+    padding: 0;
+  }
+  .inkdrop-auth-card {
+    padding: 16px 12px;
+  }
+
+  /* Activity subnav: compact */
+  .activity-subnav {
+    gap: 2px;
+  }
+  .activity-subnav button {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  /* Manual search: compact */
+  .manual-search-header {
+    padding: 8px 10px;
+  }
+  .manual-search-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

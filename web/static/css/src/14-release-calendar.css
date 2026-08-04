@@ -302,6 +302,16 @@
   background: var(--bg-alt);
   display: grid;
   gap: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.system-advanced-tool:hover {
+  border-color: var(--accent-dim);
+  background: var(--surface-2);
+}
+.system-advanced-tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .system-copy-button {
   padding: 2px 8px;

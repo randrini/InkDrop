@@ -1,5 +1,66 @@
-/* ===== Responsive Tables ===== */
+/* ===== Responsive Tables & Card Grids ===== */
+
+/* === Tablet landscape (≤1023px) === */
+@media (max-width: 1023px) {
+  /* Series library: reduce column count, hide year column */
+  .series-library-table {
+    --series-library-columns: 2.5fr minmax(60px, 1fr) minmax(70px, 1.2fr) minmax(60px, 1fr) auto;
+  }
+  .series-library-cell-year {
+    display: none;
+  }
+  .series-library-table-head [role="columnheader"]:nth-child(2) {
+    display: none;
+  }
+
+  /* Settings hub tiles: smaller minimum */
+  .settings-hub {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+
+  /* Settings first-run/setup area tables: reduce to 3 columns */
+  .settings-first-run-group-row {
+    grid-template-columns: 2fr 1fr auto;
+  }
+  .settings-first-run-group-row > :nth-child(3) {
+    display: none;
+  }
+  .settings-setup-area-row {
+    grid-template-columns: 2fr 1fr auto;
+  }
+  .settings-setup-area-row > :nth-child(3) {
+    display: none;
+  }
+
+  /* Section tables: allow wrapping on medium screens */
+  .section-table-row {
+    gap: 6px;
+  }
+
+  /* System advanced grid: smaller tiles */
+  .system-advanced-grid {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+
+  /* Download client instance grid */
+  .download-client-instance-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+
+  /* Series detail stat grid */
+  .series-detail-stat-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+
+  /* Missing recovery progress grid */
+  .missing-recovery-progress-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  }
+}
+
+/* === Tablet portrait (≤768px) === */
 @media (max-width: 768px) {
+  /* Native responsive tables */
   table.responsive thead {
     display: none;
   }
@@ -36,38 +97,435 @@
   table.responsive tbody td:empty {
     display: none;
   }
+
+  /* Section tables: stack rows into cards */
   .section-table-head {
     display: none;
   }
   .section-table-row {
     flex-direction: column;
     gap: 4px;
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-md);
+    margin-bottom: 6px;
+    background: var(--surface);
+  }
+  .section-table-row:hover {
+    background: var(--accent-warm);
   }
   .section-table-item {
     width: 100%;
   }
-}
-@media (max-width: 600px) {
-  .series-poster-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 10px;
+
+  /* Series library: simplified columns */
+  .series-library-table {
+    --series-library-columns: 1fr auto auto;
   }
-  .core-columns {
+  .series-library-cell-year,
+  .series-library-cell-monitor,
+  .series-library-cell-dates {
+    display: none;
+  }
+  .series-library-table-head [role="columnheader"]:nth-child(2),
+  .series-library-table-head [role="columnheader"]:nth-child(3),
+  .series-library-table-head [role="columnheader"]:nth-child(6) {
+    display: none;
+  }
+  .series-library-row {
+    padding: 10px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-md);
+    margin-bottom: 6px;
+  }
+
+  /* System table: card layout */
+  .system-table th {
+    display: none;
+  }
+  .system-table,
+  .system-table tbody,
+  .system-table tr {
+    display: block;
+  }
+  .system-table td {
+    display: block;
+    padding: 4px 0;
+    border-bottom: none;
+  }
+  .system-table td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 8px;
+  }
+  .system-table-row {
+    display: block;
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+  }
+
+  /* Settings first-run/setup tables: 2 columns */
+  .settings-first-run-group-row {
+    grid-template-columns: 1fr auto;
+  }
+  .settings-first-run-group-row > :nth-child(3) {
+    display: none;
+  }
+  .settings-setup-area-row {
+    grid-template-columns: 1fr auto;
+  }
+  .settings-setup-area-row > :nth-child(3) {
+    display: none;
+  }
+
+  /* Settings path map rows */
+  .settings-path-map-row {
+    grid-template-columns: 1fr 1fr auto;
+  }
+
+  /* Activity current table */
+  .activity-page-current-table {
+    display: block;
+  }
+  .activity-page-current-table thead {
+    display: none;
+  }
+  .activity-page-current-table tbody,
+  .activity-page-current-table tr {
+    display: block;
+  }
+  .activity-page-current-table td {
+    display: block;
+    padding: 3px 0;
+  }
+}
+
+/* === Large phone (≤599px) === */
+@media (max-width: 599px) {
+  /* Series library: card layout */
+  .series-library-table {
+    --series-library-columns: 1fr;
+  }
+  .series-library-table-head {
+    display: none;
+  }
+  .series-library-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 12px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+  }
+  .series-library-cell {
+    padding: 2px 0;
+  }
+  .series-library-cell-series {
+    flex-direction: row;
+  }
+  .series-library-cell-year,
+  .series-library-cell-monitor,
+  .series-library-cell-wanted,
+  .series-library-cell-queue,
+  .series-library-cell-dates {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .series-library-cell-year::before,
+  .series-library-cell-monitor::before,
+  .series-library-cell-wanted::before,
+  .series-library-cell-queue::before,
+  .series-library-cell-dates::before {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    min-width: 70px;
+  }
+  .series-library-cell-year::before { content: "Year"; }
+  .series-library-cell-monitor::before { content: "Status"; }
+  .series-library-cell-wanted::before { content: "Missing"; }
+  .series-library-cell-queue::before { content: "Queue"; }
+  .series-library-cell-dates::before { content: "Updated"; }
+
+  /* Section table rows: full card layout */
+  .section-table-row {
+    padding: 12px;
+  }
+
+  /* Settings form rows: stack vertically */
+  .settings-form-row {
     grid-template-columns: 1fr;
   }
+  .settings-form-row-readonly {
+    grid-template-columns: 1fr;
+  }
+  .settings-form-label {
+    padding-top: 0;
+    padding-bottom: 2px;
+    font-weight: 600;
+  }
+  .settings-form-actions {
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  /* Settings provider form rows */
   .settings-provider-form-row {
     grid-template-columns: 1fr;
   }
   .settings-provider-form-label {
     padding-top: 0;
+    padding-bottom: 2px;
+    font-weight: 600;
   }
+
+  /* Settings first-run/setup: single column */
+  .settings-first-run-group-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-first-run-group-row > :nth-child(2),
+  .settings-first-run-group-row > :nth-child(3) {
+    display: block;
+  }
+  .settings-first-run-row-action {
+    display: block;
+  }
+  .settings-setup-area-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-setup-area-row > :nth-child(2),
+  .settings-setup-area-row > :nth-child(3) {
+    display: block;
+  }
+
+  /* Settings hub: smaller tiles */
+  .settings-hub {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+
+  /* Settings setup major sections: stack cards */
+  .settings-setup-major-sections {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .settings-setup-major-card {
+    padding: 14px;
+  }
+
+  /* Settings capabilities: single column */
+  .settings-setup-capability {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .settings-setup-capability > span {
+    flex-direction: column;
+  }
+
+  /* Settings path map: single column */
+  .settings-path-map-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Core columns: single column */
+  .core-columns {
+    grid-template-columns: 1fr;
+  }
+
+  /* Manual intake grid */
   .manual-intake-grid {
     grid-template-columns: 1fr;
   }
+
+  /* Download client instance grid */
   .download-client-instance-grid {
     grid-template-columns: 1fr;
   }
+
+  /* Download client advanced grid */
+  .download-client-advanced-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Download client choice grid */
+  .download-client-choice-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Series poster grid */
+  .series-poster-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+
+  /* System advanced grid */
+  .system-advanced-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+
+  /* System page subnav: scroll */
+  .system-page-subnav {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+  }
+  .system-page-subnav button {
+    white-space: nowrap;
+    font-size: var(--font-sm);
+    padding: 6px 10px;
+  }
+
+  /* Activity page: stack subviews */
+  .activity-page-subviews {
+    flex-direction: column;
+  }
+  .activity-page-subview-panel {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Section tables: compact card padding */
+  .section-table-row {
+    padding: 10px;
+  }
 }
+
+/* === Small phone (≤480px) === */
+@media (max-width: 480px) {
+  /* Settings actions: stack vertically */
+  .settings-actions {
+    flex-direction: column;
+  }
+  .settings-search {
+    min-width: 100%;
+  }
+
+  /* Settings drawer summary */
+  .settings-drawer > summary {
+    padding: 10px 12px;
+  }
+  .settings-drawer > summary h2 {
+    font-size: 15px;
+  }
+
+  /* Settings body */
+  .settings-body {
+    padding: 12px;
+  }
+
+  /* Settings group title */
+  .settings-group-title {
+    padding: 10px 12px;
+  }
+
+  /* Settings card head */
+  .settings-card-head {
+    padding: 10px 12px;
+  }
+
+  /* Settings hub: compact tiles */
+  .settings-hub {
+    grid-template-columns: 1fr;
+  }
+  .settings-hub-tile {
+    padding: 10px 12px;
+  }
+
+  /* Settings overview badges wrap */
+  .settings-overview {
+    flex-wrap: wrap;
+  }
+
+  /* Settings provider tile */
+  .settings-provider-tile {
+    border-radius: var(--radius-md);
+  }
+
+  /* Section commandbar */
+  .section-commandbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .section-command-actions {
+    width: 100%;
+  }
+
+  /* Series library toolbar */
+  .series-library-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .series-library-title {
+    font-size: var(--font-md);
+  }
+
+  /* Series library progress: compact */
+  .series-library-progress {
+    font-size: 11px;
+    padding: 2px 6px;
+  }
+
+  /* System section: compact */
+  .system-section {
+    padding: 12px;
+  }
+
+  /* Download client manager head */
+  .download-client-manager-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .download-client-manager-actions {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  /* Download client instance card */
+  .download-client-instance-card {
+    padding: 10px 12px;
+  }
+  .download-client-instance-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Download client dialog */
+  .download-client-dialog-shell {
+    max-width: 100vw;
+    border-radius: var(--radius-lg);
+    margin: 8px;
+  }
+
+  /* Activity page actions */
+  .activity-page-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .activity-page-actions button {
+    width: 100%;
+  }
+
+  /* Missing recovery heading */
+  .missing-recovery-heading {
+    flex-direction: column;
+    gap: 6px;
+  }
+}
+
+/* === Tiny (≤400px) === */
 @media (max-width: 400px) {
   .series-poster-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -81,5 +539,29 @@
   }
   .series-poster-footer {
     padding: 0 10px 8px;
+  }
+
+  /* Settings setup minimum path: stack */
+  .settings-setup-minimum-path {
+    padding: 0;
+  }
+  .settings-setup-minimum-path li {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  /* System advanced tools: full width */
+  .system-advanced-tool {
+    padding: 10px;
+  }
+
+  /* Autopilot strip: stack */
+  .autopilot-strip {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .autopilot-actions {
+    width: 100%;
   }
 }
