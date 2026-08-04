@@ -16,6 +16,12 @@
 !/web/static/img/inkdrop-auth-backdrop.webp
 !/web/static/js/
 !/web/static/js/*.js
+!/web/frontend/
+!/web/frontend/package.json
+!/web/frontend/package-lock.json
+!/web/frontend/vite.config.js
+!/web/frontend/index.html
+!/web/frontend/src/
 # Browser regressions remain in Git/CI but are not production runtime inputs.
 /web/tests/
 !/inkdrop-completion-identity-audit-diff-alert.sh

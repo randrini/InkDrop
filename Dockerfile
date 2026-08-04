@@ -1,3 +1,13 @@
+# ── Stage 1: Build the Preact frontend ────────────────────────────────
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /build
+COPY web/frontend/package.json web/frontend/package-lock.json* ./
+RUN npm ci --ignore-scripts
+COPY web/frontend/ ./
+RUN npm run build
+
+# ── Stage 2: Python runtime with built frontend ──────────────────────
 FROM python:3.12-slim
 
 ARG INKDROP_VERSION=dev
@@ -54,9 +64,12 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY inkdrop-logo-mark.png ./
+# Legacy static assets (still served as fallback)
 COPY web/static/css/inkdrop.css ./web/static/css/inkdrop.css
 COPY web/static/img/inkdrop-auth-backdrop.webp ./web/static/img/inkdrop-auth-backdrop.webp
 COPY web/static/js/ ./web/static/js/
+# New Preact frontend (built in Stage 1)
+COPY --from=frontend-builder /build/dist/ ./web/frontend/dist/
 COPY \
     inkdrop_acquire_adapter.py \
     inkdrop_archive_conversion.py \

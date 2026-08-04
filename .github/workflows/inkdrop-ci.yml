@@ -17,6 +17,7 @@ on:
       - "inkdrop*.py"
       - "inkdrop_*.py"
       - "web/static/**"
+      - "web/frontend/**"
       - "web/tests/**"
       - "docs/**"
       - "tools/**"
@@ -26,6 +27,7 @@ on:
       - "inkdrop*.py"
       - "inkdrop_*.py"
       - "web/static/**"
+      - "web/frontend/**"
       - "Dockerfile"
       - "requirements.txt"
   workflow_dispatch:
@@ -66,6 +68,18 @@ jobs:
       - name: Validate operational JavaScript syntax
         run: find web/static/js -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
+      - name: Install frontend dependencies
+        working-directory: web/frontend
+        run: npm ci --ignore-scripts
+
+      - name: Build frontend
+        working-directory: web/frontend
+        run: npm run build
+
+      - name: Validate frontend JavaScript syntax
+        working-directory: web/frontend
+        run: find src -type f -name '*.jsx' -print0 | xargs -0 -n1 node --check
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -76,6 +90,7 @@ jobs:
           npx prettier@3 --check \
             "web/static/js/*.js" \
             "web/static/css/src/*.css" \
+            "web/frontend/src/**/*.{jsx,js,css}" \
             "*.json" \
             "*.yml" \
             "*.yaml" \
@@ -298,6 +313,7 @@ jobs:
             echo "### Lint checks"
             echo "- Python syntax: passed"
             echo "- JavaScript syntax: passed"
+            echo "- Frontend build: passed"
             echo "- Prettier formatting: checked"
             echo "- Dockerfile lint: passed"
             echo "- Docker Compose config: valid"

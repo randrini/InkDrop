@@ -580,6 +580,9 @@ INKDROP_LOGO_MARK_FILE = Path(__file__).resolve().with_name("inkdrop-logo-mark.p
 INKDROP_UI_CSS_FILE = Path(__file__).resolve().parent / "web" / "static" / "css" / "inkdrop.css"
 INKDROP_AUTH_BACKDROP_FILE = Path(__file__).resolve().parent / "web" / "static" / "img" / "inkdrop-auth-backdrop.webp"
 INKDROP_UI_JS_DIR = Path(__file__).resolve().parent / "web" / "static" / "js"
+INKDROP_FRONTEND_BUILD_DIR = Path(
+    env_value("INKDROP_FRONTEND_BUILD_DIR", str(Path(__file__).resolve().parent / "web" / "frontend" / "dist"))
+)
 INKDROP_UI_JS_ASSETS = frozenset(
     {
         "inkdrop-operational-preferences.js",
@@ -59508,8 +59511,37 @@ class Handler(BaseHTTPRequestHandler):
         self.send_bytes(body, "application/json; charset=utf-8", status, headers=headers)
 
     def send_html(self):
+        # Serve the new Preact frontend when available, fall back to legacy HTML
+        index_path = INKDROP_FRONTEND_BUILD_DIR / "index.html"
+        try:
+            body = index_path.read_bytes()
+            self.send_bytes(body, "text/html; charset=utf-8")
+            return
+        except OSError:
+            pass
         body = HTML.encode("utf-8")
         self.send_bytes(body, "text/html; charset=utf-8")
+
+    def send_frontend_asset(self, relative_path, content_type):
+        """Serve a file from the Vite build output directory."""
+        # Resolve relative to the build directory, prevent path traversal
+        build_root = INKDROP_FRONTEND_BUILD_DIR.resolve()
+        try:
+            asset_path = (build_root / relative_path).resolve()
+        except Exception:
+            self.send_bytes(b"", "application/octet-stream", status=400)
+            return
+        if not str(asset_path).startswith(str(build_root)):
+            self.send_bytes(b"", "application/octet-stream", status=403)
+            return
+        try:
+            body = asset_path.read_bytes()
+        except OSError:
+            self.send_bytes(b"", content_type, status=404)
+            return
+        # Immutable content-hashed assets get long cache
+        cache_headers = {"Cache-Control": "public, max-age=31536000, immutable"} if "-" in relative_path else {"Cache-Control": "public, max-age=300, must-revalidate"}
+        self.send_bytes(body, content_type, headers=cache_headers)
 
     def send_logo_mark(self):
         try:
@@ -59740,6 +59772,29 @@ class Handler(BaseHTTPRequestHandler):
             self._state_endpoint_acquired = True
         if path == "/":
             self.send_html()
+        elif path.startswith("/assets/"):
+            # New Preact frontend assets (Vite build output)
+            asset_relative = path.removeprefix("/")
+            content_type_map = {
+                ".js": "application/javascript; charset=utf-8",
+                ".mjs": "application/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+                ".html": "text/html; charset=utf-8",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".svg": "image/svg+xml",
+                ".webp": "image/webp",
+                ".ico": "image/x-icon",
+                ".woff": "font/woff",
+                ".woff2": "font/woff2",
+                ".ttf": "font/ttf",
+                ".json": "application/json; charset=utf-8",
+            }
+            ext = Path(asset_relative).suffix.lower()
+            content_type = content_type_map.get(ext, "application/octet-stream")
+            self.send_frontend_asset(asset_relative, content_type)
         elif path == "/static/css/inkdrop.css":
             self.send_ui_stylesheet()
         elif path == "/static/img/inkdrop-auth-backdrop.webp":

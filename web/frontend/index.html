@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0c10">
+  <link rel="icon" type="image/png" href="/inkdrop-logo-mark.png">
+  <link rel="apple-touch-icon" href="/inkdrop-logo-mark.png">
+  <title>InkDrop — Comics &amp; Manga Library Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+  <style id="inkdrop-critical-fallback">
+    :root { color-scheme: dark; font-family: 'DM Sans', system-ui, sans-serif; background: #0a0c10; color: #e6ecf4; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0a0c10; color: #e6ecf4; min-height: 100vh; }
+    .ink-loading { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="ink-loading"><div class="ink-spinner"></div></div>
+  </div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
