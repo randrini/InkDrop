@@ -4,9 +4,9 @@
  * Supports "Run" to trigger wanted search and Missing Recovery section.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-wanted-filters {
@@ -163,9 +163,9 @@ class WantedPage extends Component {
   async _loadData() {
     this.setState({ loading: true, error: null });
     try {
-      const data = await api.state.view('wanted', {
-        summary_mode: 'compact',
-        row_mode: 'compact_card',
+      const data = await api.state.view("wanted", {
+        summary_mode: "compact",
+        row_mode: "compact_card",
       });
       if (data.ok) {
         const stateData = data.state || data;
@@ -177,10 +177,10 @@ class WantedPage extends Component {
           loading: false,
         });
       } else {
-        this.setState({ error: data.error || 'Failed to load wanted items', loading: false });
+        this.setState({ error: data.error || "Failed to load wanted items", loading: false });
       }
     } catch (err) {
-      this.setState({ error: err.message || 'Failed to load wanted items', loading: false });
+      this.setState({ error: err.message || "Failed to load wanted items", loading: false });
     }
   }
 
@@ -200,12 +200,12 @@ class WantedPage extends Component {
     try {
       const data = await api.state.wantedRun({});
       if (data.ok) {
-        toast('Wanted search started', 'success');
+        toast("Wanted search started", "success");
       } else {
-        toast(data.error || 'Failed to start wanted search', 'error');
+        toast(data.error || "Failed to start wanted search", "error");
       }
     } catch (err) {
-      toast(err.message || 'Failed to start wanted search', 'error');
+      toast(err.message || "Failed to start wanted search", "error");
     } finally {
       this.setState({ running: false });
     }
@@ -216,13 +216,13 @@ class WantedPage extends Component {
     try {
       const data = await api.missingRecovery.run({ missingRecoveryAction: action });
       if (data.ok) {
-        toast(`Missing recovery ${action === 'start' ? 'started' : 'paused'}`, 'success');
+        toast(`Missing recovery ${action === "start" ? "started" : "paused"}`, "success");
         this._loadRecovery();
       } else {
-        toast(data.error || `Failed to ${action} recovery`, 'error');
+        toast(data.error || `Failed to ${action} recovery`, "error");
       }
     } catch (err) {
-      toast(err.message || `Failed to ${action} recovery`, 'error');
+      toast(err.message || `Failed to ${action} recovery`, "error");
     } finally {
       this.setState({ recoveryLoading: false });
     }
@@ -239,11 +239,11 @@ class WantedPage extends Component {
     this.setState({ loading: true });
     try {
       const params = {
-        summary_mode: 'compact',
-        row_mode: 'compact_card',
+        summary_mode: "compact",
+        row_mode: "compact_card",
         ...filterValues,
       };
-      const data = await api.state.view('wanted', params);
+      const data = await api.state.view("wanted", params);
       if (data.ok) {
         const stateData = data.state || data;
         this.setState({
@@ -252,26 +252,27 @@ class WantedPage extends Component {
           loading: false,
         });
       } else {
-        this.setState({ error: data.error || 'Failed to load wanted items', loading: false });
+        this.setState({ error: data.error || "Failed to load wanted items", loading: false });
       }
     } catch (err) {
-      this.setState({ error: err.message || 'Failed to load wanted items', loading: false });
+      this.setState({ error: err.message || "Failed to load wanted items", loading: false });
     }
   }
 
   _renderStatusPill(status) {
     if (!status) return null;
     const statusLower = String(status).toLowerCase();
-    let cls = 'ink-pill-muted';
-    if (statusLower === 'missing' || statusLower === 'wanted') cls = 'ink-pill-warning';
-    else if (statusLower === 'found' || statusLower === 'snatched') cls = 'ink-pill-info';
-    else if (statusLower === 'downloaded' || statusLower === 'imported') cls = 'ink-pill-success';
-    else if (statusLower === 'failed') cls = 'ink-pill-danger';
+    let cls = "ink-pill-muted";
+    if (statusLower === "missing" || statusLower === "wanted") cls = "ink-pill-warning";
+    else if (statusLower === "found" || statusLower === "snatched") cls = "ink-pill-info";
+    else if (statusLower === "downloaded" || statusLower === "imported") cls = "ink-pill-success";
+    else if (statusLower === "failed") cls = "ink-pill-danger";
     return <span class={`ink-pill ${cls}`}>{status}</span>;
   }
 
   render() {
-    const { loading, error, items, filters, filterValues, totalCount, recoveryStatus, recoveryLoading, running } = this.state;
+    const { loading, error, items, filters, filterValues, totalCount, recoveryStatus, recoveryLoading, running } =
+      this.state;
 
     return (
       <div class="ink-page">
@@ -281,11 +282,11 @@ class WantedPage extends Component {
         {filters && Object.keys(filters).length > 0 && (
           <div class="ink-wanted-filters">
             {Object.entries(filters).map(([key, config]) => {
-              if (config.type === 'select' && config.options) {
+              if (config.type === "select" && config.options) {
                 return (
                   <select
                     key={key}
-                    value={filterValues[key] || ''}
+                    value={filterValues[key] || ""}
                     onChange={(e) => this._handleFilterChange(key, e.target.value)}
                   >
                     <option value="">{config.label || key}</option>
@@ -297,13 +298,13 @@ class WantedPage extends Component {
                   </select>
                 );
               }
-              if (config.type === 'text' || config.type === 'search') {
+              if (config.type === "text" || config.type === "search") {
                 return (
                   <input
                     key={key}
                     type="text"
                     placeholder={config.label || key}
-                    value={filterValues[key] || ''}
+                    value={filterValues[key] || ""}
                     onInput={(e) => this._handleFilterChange(key, e.target.value)}
                   />
                 );
@@ -316,16 +317,12 @@ class WantedPage extends Component {
         {/* Header with actions */}
         <div class="ink-wanted-header">
           <div class="ink-wanted-count">
-            {totalCount > 0 ? `${totalCount} wanted item${totalCount !== 1 ? 's' : ''}` : 'No wanted items'}
+            {totalCount > 0 ? `${totalCount} wanted item${totalCount !== 1 ? "s" : ""}` : "No wanted items"}
           </div>
           <div class="ink-wanted-actions">
-            <button
-              class="ink-btn-primary"
-              onClick={this._handleRun}
-              disabled={running}
-            >
+            <button class="ink-btn-primary" onClick={this._handleRun} disabled={running}>
               {running ? <span class="ink-spinner" /> : null}
-              {running ? 'Running...' : 'Run'}
+              {running ? "Running..." : "Run"}
             </button>
             <button class="ink-btn-ghost" onClick={this._loadData}>
               ↻ Refresh
@@ -367,29 +364,18 @@ class WantedPage extends Component {
             {items.map((item, idx) => (
               <div class="ink-wanted-item" key={item.id || item.issue_id || idx}>
                 {item.cover_url && (
-                  <img
-                    class="ink-wanted-cover"
-                    src={api.cover.url(item.cover_url)}
-                    alt=""
-                    loading="lazy"
-                  />
+                  <img class="ink-wanted-cover" src={api.cover.url(item.cover_url)} alt="" loading="lazy" />
                 )}
                 <div class="ink-wanted-series">
-                  <div class="ink-wanted-series-name">{item.series_name || item.series || item.title || 'Unknown'}</div>
-                  {item.series_year && (
-                    <div class="ink-mini">{item.series_year}</div>
-                  )}
+                  <div class="ink-wanted-series-name">{item.series_name || item.series || item.title || "Unknown"}</div>
+                  {item.series_year && <div class="ink-mini">{item.series_year}</div>}
                 </div>
                 <div class="ink-wanted-issue">
-                  {item.issue_number || item.issue || item.number || ''}
-                  {item.issue_name ? ` — ${item.issue_name}` : ''}
+                  {item.issue_number || item.issue || item.number || ""}
+                  {item.issue_name ? ` — ${item.issue_name}` : ""}
                 </div>
-                <div class="ink-wanted-source">
-                  {item.source || item.source_name || ''}
-                </div>
-                <div class="ink-wanted-status">
-                  {this._renderStatusPill(item.status || item.issue_status)}
-                </div>
+                <div class="ink-wanted-source">{item.source || item.source_name || ""}</div>
+                <div class="ink-wanted-status">{this._renderStatusPill(item.status || item.issue_status)}</div>
               </div>
             ))}
           </div>
@@ -403,12 +389,12 @@ class WantedPage extends Component {
               <div class="ink-wanted-actions">
                 {recoveryStatus && (
                   <button
-                    class={recoveryStatus.running ? 'ink-btn-ghost' : 'ink-btn-primary'}
-                    onClick={() => this._handleRecoveryAction(recoveryStatus.running ? 'pause' : 'start')}
+                    class={recoveryStatus.running ? "ink-btn-ghost" : "ink-btn-primary"}
+                    onClick={() => this._handleRecoveryAction(recoveryStatus.running ? "pause" : "start")}
                     disabled={recoveryLoading}
                   >
                     {recoveryLoading ? <span class="ink-spinner" /> : null}
-                    {recoveryStatus.running ? 'Pause' : 'Start'}
+                    {recoveryStatus.running ? "Pause" : "Start"}
                   </button>
                 )}
                 <button class="ink-btn-ghost" onClick={this._loadRecovery}>

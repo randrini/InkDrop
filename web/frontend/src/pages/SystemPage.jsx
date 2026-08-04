@@ -3,9 +3,9 @@
  * Shows version, build, health status with sub-navigation for About, Health, Tasks, Logs.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-system-subnav {
@@ -129,13 +129,13 @@ const styles = `
 }
 `;
 
-const TABS = ['about', 'health', 'tasks', 'logs'];
+const TABS = ["about", "health", "tasks", "logs"];
 
 class SystemPage extends Component {
   constructor() {
     super();
     this.state = {
-      activeTab: 'about',
+      activeTab: "about",
       loading: true,
       error: null,
       version: null,
@@ -155,21 +155,18 @@ class SystemPage extends Component {
   async _loadData() {
     this.setState({ loading: true, error: null });
     try {
-      const [versionData, healthData] = await Promise.all([
-        api.system.version(),
-        api.system.health(),
-      ]);
+      const [versionData, healthData] = await Promise.all([api.system.version(), api.system.health()]);
 
       this.setState({
-        version: versionData.ok ? (versionData.state || versionData) : null,
-        health: healthData.ok ? (healthData.state || healthData) : null,
+        version: versionData.ok ? versionData.state || versionData : null,
+        health: healthData.ok ? healthData.state || healthData : null,
         loading: false,
       });
 
       // Load update status in background
       this._loadUpdateStatus();
     } catch (err) {
-      this.setState({ error: err.message || 'Failed to load system info', loading: false });
+      this.setState({ error: err.message || "Failed to load system info", loading: false });
     }
   }
 
@@ -192,14 +189,28 @@ class SystemPage extends Component {
     this.setState({ logsDownloading: true });
     try {
       const data = await api.system.logs();
-      if (data && data.ok) {
-        toast('Logs downloaded', 'success');
+      if (data && data.ok && data.content_base64) {
+        // Decode base64 and trigger browser download
+        const binaryStr = atob(data.content_base64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "application/gzip" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = data.filename || "inkdrop-logs.tar.gz";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast("Logs downloaded", "success");
+      } else if (data && !data.ok) {
+        toast(data.error || "Failed to download logs", "error");
       } else {
-        // If it returns a blob/URL, trigger download
-        toast('Logs download initiated', 'info');
+        toast("Logs download returned unexpected format", "warning");
       }
     } catch (err) {
-      toast(err.message || 'Failed to download logs', 'error');
+      toast(err.message || "Failed to download logs", "error");
     } finally {
       this.setState({ logsDownloading: false });
     }
@@ -208,9 +219,10 @@ class SystemPage extends Component {
   _renderHealthStatus(status) {
     if (!status) return <span class="ink-pill ink-pill-muted">unknown</span>;
     const s = String(status).toLowerCase();
-    if (s === 'ok' || s === 'healthy' || s === 'pass') return <span class="ink-pill ink-pill-success">OK</span>;
-    if (s === 'warn' || s === 'warning' || s === 'degraded') return <span class="ink-pill ink-pill-warning">Warning</span>;
-    if (s === 'error' || s === 'fail' || s === 'critical') return <span class="ink-pill ink-pill-danger">Error</span>;
+    if (s === "ok" || s === "healthy" || s === "pass") return <span class="ink-pill ink-pill-success">OK</span>;
+    if (s === "warn" || s === "warning" || s === "degraded")
+      return <span class="ink-pill ink-pill-warning">Warning</span>;
+    if (s === "error" || s === "fail" || s === "critical") return <span class="ink-pill ink-pill-danger">Error</span>;
     return <span class="ink-pill ink-pill-muted">{status}</span>;
   }
 
@@ -226,7 +238,7 @@ class SystemPage extends Component {
           {TABS.map((tab) => (
             <button
               key={tab}
-              class={activeTab === tab ? 'ink-system-subnav-active' : ''}
+              class={activeTab === tab ? "ink-system-subnav-active" : ""}
               onClick={() => this._handleTabChange(tab)}
             >
               {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -255,7 +267,7 @@ class SystemPage extends Component {
         )}
 
         {/* ── About Tab ─────────────────────────────────────────────── */}
-        {!loading && activeTab === 'about' && (
+        {!loading && activeTab === "about" && (
           <div>
             <div class="ink-system-grid">
               {version && (
@@ -275,31 +287,41 @@ class SystemPage extends Component {
                   {version.build_date != null && (
                     <div class="ink-system-stat">
                       <div class="ink-system-stat-label">Build Date</div>
-                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">{version.build_date}</div>
+                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">
+                        {version.build_date}
+                      </div>
                     </div>
                   )}
                   {version.commit != null && (
                     <div class="ink-system-stat">
                       <div class="ink-system-stat-label">Commit</div>
-                      <div class="ink-system-stat-value ink-system-version" style="font-size: var(--ink-text-xs);">{version.commit}</div>
+                      <div class="ink-system-stat-value ink-system-version" style="font-size: var(--ink-text-xs);">
+                        {version.commit}
+                      </div>
                     </div>
                   )}
                   {version.branch != null && (
                     <div class="ink-system-stat">
                       <div class="ink-system-stat-label">Branch</div>
-                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">{version.branch}</div>
+                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">
+                        {version.branch}
+                      </div>
                     </div>
                   )}
                   {version.platform != null && (
                     <div class="ink-system-stat">
                       <div class="ink-system-stat-label">Platform</div>
-                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">{version.platform}</div>
+                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">
+                        {version.platform}
+                      </div>
                     </div>
                   )}
                   {version.python_version != null && (
                     <div class="ink-system-stat">
                       <div class="ink-system-stat-label">Python</div>
-                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">{version.python_version}</div>
+                      <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">
+                        {version.python_version}
+                      </div>
                     </div>
                   )}
                 </>
@@ -307,7 +329,9 @@ class SystemPage extends Component {
               {!version && (
                 <div class="ink-system-stat">
                   <div class="ink-system-stat-label">Version</div>
-                  <div class="ink-system-stat-value" style="color: var(--ink-text-muted);">Unavailable</div>
+                  <div class="ink-system-stat-value" style="color: var(--ink-text-muted);">
+                    Unavailable
+                  </div>
                 </div>
               )}
             </div>
@@ -340,9 +364,11 @@ class SystemPage extends Component {
                         <div class="ink-system-stat">
                           <div class="ink-system-stat-label">Status</div>
                           <div class="ink-system-stat-value">
-                            {updateStatus.update_available
-                              ? <span class="ink-pill ink-pill-warning">Update Available</span>
-                              : <span class="ink-pill ink-pill-success">Up to Date</span>}
+                            {updateStatus.update_available ? (
+                              <span class="ink-pill ink-pill-warning">Update Available</span>
+                            ) : (
+                              <span class="ink-pill ink-pill-success">Up to Date</span>
+                            )}
                           </div>
                         </div>
                       )}
@@ -360,26 +386,28 @@ class SystemPage extends Component {
         )}
 
         {/* ── Health Tab ───────────────────────────────────────────── */}
-        {!loading && activeTab === 'health' && (
+        {!loading && activeTab === "health" && (
           <div>
             {health ? (
               <div class="ink-section">
                 <div class="ink-section-head">
                   <h3>System Health</h3>
-                  {health.overall_status != null && (
-                    this._renderHealthStatus(health.overall_status)
-                  )}
+                  {health.overall_status != null && this._renderHealthStatus(health.overall_status)}
                 </div>
                 <div class="ink-section-body">
                   {health.checks && health.checks.length > 0 ? (
                     <div class="ink-system-health-list">
                       {health.checks.map((check, idx) => (
                         <div class="ink-system-health-item" key={check.name || check.id || idx}>
-                          <span class="ink-system-health-name">{check.name || check.component || check.label || 'Check'}</span>
+                          <span class="ink-system-health-name">
+                            {check.name || check.component || check.label || "Check"}
+                          </span>
                           <div>
                             {this._renderHealthStatus(check.status || check.result)}
                             {check.message && (
-                              <span class="ink-mini" style="margin-left: var(--ink-space-sm);">{check.message}</span>
+                              <span class="ink-mini" style="margin-left: var(--ink-space-sm);">
+                                {check.message}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -388,13 +416,13 @@ class SystemPage extends Component {
                   ) : (
                     <div class="ink-system-grid">
                       {Object.entries(health).map(([key, value]) => {
-                        if (key === 'overall_status' || key === 'checks' || key.startsWith('_')) return null;
+                        if (key === "overall_status" || key === "checks" || key.startsWith("_")) return null;
                         return (
                           <div class="ink-system-stat" key={key}>
-                            <div class="ink-system-stat-label">{key.replace(/_/g, ' ')}</div>
+                            <div class="ink-system-stat-label">{key.replace(/_/g, " ")}</div>
                             <div class="ink-system-stat-value" style="font-size: var(--ink-text-sm);">
-                              {typeof value === 'boolean'
-                                ? this._renderHealthStatus(value ? 'ok' : 'error')
+                              {typeof value === "boolean"
+                                ? this._renderHealthStatus(value ? "ok" : "error")
                                 : String(value)}
                             </div>
                           </div>
@@ -420,7 +448,7 @@ class SystemPage extends Component {
         )}
 
         {/* ── Tasks Tab ────────────────────────────────────────────── */}
-        {!loading && activeTab === 'tasks' && (
+        {!loading && activeTab === "tasks" && (
           <div>
             {health && health.tasks && health.tasks.length > 0 ? (
               <div class="ink-section">
@@ -433,9 +461,7 @@ class SystemPage extends Component {
                       <div class="ink-system-task" key={task.id || task.name || idx}>
                         <div>
                           <div class="ink-system-task-name">{task.name || task.title || `Task #${idx + 1}`}</div>
-                          {task.description && (
-                            <div class="ink-mini">{task.description}</div>
-                          )}
+                          {task.description && <div class="ink-mini">{task.description}</div>}
                         </div>
                         <div style="display: flex; align-items: center; gap: var(--ink-space-sm);">
                           {task.progress != null && (
@@ -443,8 +469,10 @@ class SystemPage extends Component {
                               {task.progress}%
                             </span>
                           )}
-                          <span class={`ink-pill ${task.status === 'running' ? 'ink-pill-info' : task.status === 'completed' ? 'ink-pill-success' : task.status === 'failed' ? 'ink-pill-danger' : task.status === 'pending' ? 'ink-pill-warning' : 'ink-pill-muted'}`}>
-                            {task.status || 'unknown'}
+                          <span
+                            class={`ink-pill ${task.status === "running" ? "ink-pill-info" : task.status === "completed" ? "ink-pill-success" : task.status === "failed" ? "ink-pill-danger" : task.status === "pending" ? "ink-pill-warning" : "ink-pill-muted"}`}
+                          >
+                            {task.status || "unknown"}
                           </span>
                         </div>
                       </div>
@@ -463,7 +491,7 @@ class SystemPage extends Component {
         )}
 
         {/* ── Logs Tab ────────────────────────────────────────────── */}
-        {!loading && activeTab === 'logs' && (
+        {!loading && activeTab === "logs" && (
           <div>
             <div class="ink-section">
               <div class="ink-section-head">
@@ -475,13 +503,9 @@ class SystemPage extends Component {
                     Download the application logs for troubleshooting and diagnostics.
                   </p>
                   <div class="ink-system-logs-actions">
-                    <button
-                      class="ink-btn-primary"
-                      onClick={this._handleDownloadLogs}
-                      disabled={logsDownloading}
-                    >
+                    <button class="ink-btn-primary" onClick={this._handleDownloadLogs} disabled={logsDownloading}>
                       {logsDownloading ? <span class="ink-spinner" /> : null}
-                      {logsDownloading ? 'Downloading...' : 'Download Logs'}
+                      {logsDownloading ? "Downloading..." : "Download Logs"}
                     </button>
                   </div>
                 </div>

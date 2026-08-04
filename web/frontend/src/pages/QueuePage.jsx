@@ -3,9 +3,9 @@
  * Active download and processing queue with run controls.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-queue-page { padding-bottom: var(--ink-space-2xl); }
@@ -230,12 +230,12 @@ class QueuePage extends Component {
 
   async _load() {
     try {
-      const params = { summary_mode: 'compact', row_mode: 'compact_card' };
+      const params = { summary_mode: "compact", row_mode: "compact_card" };
       if (this.state.activeFilter) {
         params.filter = this.state.activeFilter;
       }
 
-      const res = await api.state.view('queue', params);
+      const res = await api.state.view("queue", params);
       if (res.ok) {
         this.setState({
           loading: false,
@@ -248,13 +248,13 @@ class QueuePage extends Component {
       } else {
         this.setState({
           loading: false,
-          error: res.error || 'Failed to load queue',
+          error: res.error || "Failed to load queue",
         });
       }
     } catch (err) {
       this.setState({
         loading: false,
-        error: err.message || 'Failed to load queue data',
+        error: err.message || "Failed to load queue data",
       });
     }
   }
@@ -264,14 +264,14 @@ class QueuePage extends Component {
     try {
       const res = await api.state.queueRun({});
       if (res.ok) {
-        toast('Queue run started', 'success');
+        toast("Queue run started", "success");
         // Refresh after a short delay to pick up new state
         setTimeout(() => this._load(), 1000);
       } else {
-        toast(res.error || 'Failed to start queue run', 'error');
+        toast(res.error || "Failed to start queue run", "error");
       }
     } catch (err) {
-      toast(err.message || 'Failed to start queue run', 'error');
+      toast(err.message || "Failed to start queue run", "error");
     } finally {
       this.setState({ runLoading: false });
     }
@@ -279,19 +279,19 @@ class QueuePage extends Component {
 
   _setFilter(filter) {
     this.setState(
-      prev => ({ activeFilter: prev.activeFilter === filter ? null : filter, loading: true }),
-      this._load
+      (prev) => ({ activeFilter: prev.activeFilter === filter ? null : filter, loading: true }),
+      this._load,
     );
   }
 
   _statusClass(status) {
-    const s = (status || '').toLowerCase();
-    if (s.includes('queue') || s.includes('wait')) return 'ink-queue-status-queued';
-    if (s.includes('run') || s.includes('active') || s.includes('progress')) return 'ink-queue-status-running';
-    if (s.includes('complete') || s.includes('done') || s.includes('success')) return 'ink-queue-status-complete';
-    if (s.includes('error') || s.includes('fail')) return 'ink-queue-status-error';
-    if (s.includes('warn')) return 'ink-queue-status-warning';
-    return 'ink-queue-status-queued';
+    const s = (status || "").toLowerCase();
+    if (s.includes("queue") || s.includes("wait")) return "ink-queue-status-queued";
+    if (s.includes("run") || s.includes("active") || s.includes("progress")) return "ink-queue-status-running";
+    if (s.includes("complete") || s.includes("done") || s.includes("success")) return "ink-queue-status-complete";
+    if (s.includes("error") || s.includes("fail")) return "ink-queue-status-error";
+    if (s.includes("warn")) return "ink-queue-status-warning";
+    return "ink-queue-status-queued";
   }
 
   _renderFilters() {
@@ -300,13 +300,13 @@ class QueuePage extends Component {
 
     return (
       <div class="ink-queue-filters">
-        {filters.map(f => {
+        {filters.map((f) => {
           const key = f.key || f.id || f;
-          const label = f.label || (typeof f === 'string' ? f : key);
+          const label = f.label || (typeof f === "string" ? f : key);
           return (
             <button
               key={key}
-              class={`ink-queue-filter-btn${activeFilter === key ? ' ink-queue-filter-active' : ''}`}
+              class={`ink-queue-filter-btn${activeFilter === key ? " ink-queue-filter-active" : ""}`}
               onClick={() => this._setFilter(key)}
             >
               {label}
@@ -324,31 +324,23 @@ class QueuePage extends Component {
       <div class="ink-queue-card" key={item.id || item._id}>
         <div class="ink-queue-card-header">
           <span class="ink-queue-card-title" title={item.series_name || item.series}>
-            {item.series_name || item.series || '—'}
+            {item.series_name || item.series || "—"}
           </span>
           <span class={`ink-queue-status ${this._statusClass(item.status || item.stage)}`}>
-            {item.status || item.stage || '—'}
+            {item.status || item.stage || "—"}
           </span>
         </div>
 
         <div class="ink-queue-card-issue" title={item.issue || item.title}>
-          {item.issue || item.title || '—'}
+          {item.issue || item.title || "—"}
         </div>
 
         <div class="ink-queue-card-meta">
-          {item.source && (
-            <span class="ink-pill ink-pill-muted">{item.source}</span>
-          )}
-          {item.type && (
-            <span class="ink-pill ink-pill-muted">{item.type}</span>
-          )}
+          {item.source && <span class="ink-pill ink-pill-muted">{item.source}</span>}
+          {item.type && <span class="ink-pill ink-pill-muted">{item.type}</span>}
         </div>
 
-        {item.source_name && (
-          <div class="ink-queue-card-source">
-            Source: {item.source_name}
-          </div>
-        )}
+        {item.source_name && <div class="ink-queue-card-source">Source: {item.source_name}</div>}
 
         {progress != null && (
           <div class="ink-queue-card-progress">
@@ -372,11 +364,7 @@ class QueuePage extends Component {
       <div class="ink-page ink-queue-page">
         <style>{styles}</style>
 
-        {error && (
-          <div class="ink-queue-error">
-            {error}
-          </div>
-        )}
+        {error && <div class="ink-queue-error">{error}</div>}
 
         {loading ? (
           <div class="ink-loading">
@@ -386,15 +374,17 @@ class QueuePage extends Component {
           <div>
             <div class="ink-queue-toolbar">
               <div class="ink-queue-toolbar-left">
-                <span>{totalCount} item{totalCount !== 1 ? 's' : ''} in queue</span>
+                <span>
+                  {totalCount} item{totalCount !== 1 ? "s" : ""} in queue
+                </span>
               </div>
               <div class="ink-queue-toolbar-right">
                 <button
-                  class={`ink-btn-primary ink-btn-sm ink-queue-run-btn${runLoading ? ' ink-queue-running' : ''}`}
+                  class={`ink-btn-primary ink-btn-sm ink-queue-run-btn${runLoading ? " ink-queue-running" : ""}`}
                   onClick={this._handleRun}
                   disabled={runLoading}
                 >
-                  {runLoading ? '⟳ Running…' : '▶ Run Queue'}
+                  {runLoading ? "⟳ Running…" : "▶ Run Queue"}
                 </button>
                 <button class="ink-btn-ghost ink-btn-sm" onClick={this._load}>
                   ↻ Refresh
@@ -411,9 +401,7 @@ class QueuePage extends Component {
                 <p>No items are currently queued for processing.</p>
               </div>
             ) : (
-              <div class="ink-queue-grid">
-                {rows.map(item => this._renderCard(item))}
-              </div>
+              <div class="ink-queue-grid">{rows.map((item) => this._renderCard(item))}</div>
             )}
           </div>
         )}

@@ -3,9 +3,9 @@
  * Past transfers, imports, and acquisitions with filters and pagination.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-history-page { padding-bottom: var(--ink-space-2xl); }
@@ -264,16 +264,16 @@ class HistoryPage extends Component {
 
   async _load() {
     try {
-      const params = { summary_mode: 'compact', limit: PAGE_SIZE, offset: this.state.page * PAGE_SIZE };
+      const params = { summary_mode: "compact", limit: PAGE_SIZE, offset: this.state.page * PAGE_SIZE };
       if (this.state.activeFilter) {
         params.filter = this.state.activeFilter;
       }
       if (this.state.sort) {
         params.sort = this.state.sort;
-        params.direction = this.state.direction || 'asc';
+        params.direction = this.state.direction || "asc";
       }
 
-      const res = await api.state.view('history', params);
+      const res = await api.state.view("history", params);
       if (res.ok) {
         this.setState({
           loading: false,
@@ -286,21 +286,21 @@ class HistoryPage extends Component {
       } else {
         this.setState({
           loading: false,
-          error: res.error || 'Failed to load history',
+          error: res.error || "Failed to load history",
         });
       }
     } catch (err) {
       this.setState({
         loading: false,
-        error: err.message || 'Failed to load history data',
+        error: err.message || "Failed to load history data",
       });
     }
   }
 
   _setFilter(filter) {
     this.setState(
-      prev => ({ activeFilter: prev.activeFilter === filter ? null : filter, page: 0, loading: true }),
-      this._load
+      (prev) => ({ activeFilter: prev.activeFilter === filter ? null : filter, page: 0, loading: true }),
+      this._load,
     );
   }
 
@@ -309,28 +309,25 @@ class HistoryPage extends Component {
   }
 
   _toggleSort(column) {
-    this.setState(
-      prev => {
-        const direction = prev.sort === column && prev.direction === 'asc' ? 'desc' : 'asc';
-        return { sort: column, direction, page: 0, loading: true };
-      },
-      this._load
-    );
+    this.setState((prev) => {
+      const direction = prev.sort === column && prev.direction === "asc" ? "desc" : "asc";
+      return { sort: column, direction, page: 0, loading: true };
+    }, this._load);
   }
 
   _statusClass(status) {
-    const s = (status || '').toLowerCase();
-    if (s.includes('success') || s.includes('complete') || s.includes('imported') || s.includes('downloaded')) {
-      return 'ink-history-status-success';
+    const s = (status || "").toLowerCase();
+    if (s.includes("success") || s.includes("complete") || s.includes("imported") || s.includes("downloaded")) {
+      return "ink-history-status-success";
     }
-    if (s.includes('error') || s.includes('fail')) return 'ink-history-status-error';
-    if (s.includes('warn')) return 'ink-history-status-warning';
-    if (s.includes('info') || s.includes('skip')) return 'ink-history-status-info';
-    return 'ink-history-status-muted';
+    if (s.includes("error") || s.includes("fail")) return "ink-history-status-error";
+    if (s.includes("warn")) return "ink-history-status-warning";
+    if (s.includes("info") || s.includes("skip")) return "ink-history-status-info";
+    return "ink-history-status-muted";
   }
 
   _formatDate(dateStr) {
-    if (!dateStr) return '—';
+    if (!dateStr) return "—";
     try {
       const d = new Date(dateStr);
       if (isNaN(d.getTime())) return dateStr;
@@ -340,15 +337,15 @@ class HistoryPage extends Component {
       const diffHr = Math.floor(diffMs / 3600000);
       const diffDay = Math.floor(diffMs / 86400000);
 
-      if (diffMin < 1) return 'Just now';
+      if (diffMin < 1) return "Just now";
       if (diffMin < 60) return `${diffMin}m ago`;
       if (diffHr < 24) return `${diffHr}h ago`;
       if (diffDay < 7) return `${diffDay}d ago`;
 
       return d.toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+        month: "short",
+        day: "numeric",
+        year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
       });
     } catch {
       return dateStr;
@@ -361,13 +358,13 @@ class HistoryPage extends Component {
 
     return (
       <div class="ink-history-filters">
-        {filters.map(f => {
+        {filters.map((f) => {
           const key = f.key || f.id || f;
-          const label = f.label || (typeof f === 'string' ? f : key);
+          const label = f.label || (typeof f === "string" ? f : key);
           return (
             <button
               key={key}
-              class={`ink-history-filter-btn${activeFilter === key ? ' ink-history-filter-active' : ''}`}
+              class={`ink-history-filter-btn${activeFilter === key ? " ink-history-filter-active" : ""}`}
               onClick={() => this._setFilter(key)}
             >
               {label}
@@ -414,14 +411,12 @@ class HistoryPage extends Component {
           ‹
         </button>
 
-        {start > 0 && (
-          <span class="ink-history-page-info">…</span>
-        )}
+        {start > 0 && <span class="ink-history-page-info">…</span>}
 
-        {pages.map(p => (
+        {pages.map((p) => (
           <button
             key={p}
-            class={`ink-history-page-btn${p === page ? ' ink-history-page-active' : ''}`}
+            class={`ink-history-page-btn${p === page ? " ink-history-page-active" : ""}`}
             onClick={() => this._goToPage(p)}
             disabled={loading}
           >
@@ -429,9 +424,7 @@ class HistoryPage extends Component {
           </button>
         ))}
 
-        {end < totalPages && (
-          <span class="ink-history-page-info">…</span>
-        )}
+        {end < totalPages && <span class="ink-history-page-info">…</span>}
 
         <button
           class="ink-history-page-btn"
@@ -460,7 +453,7 @@ class HistoryPage extends Component {
   _renderSortIndicator(column) {
     const { sort, direction } = this.state;
     if (sort !== column) return null;
-    return <span style="margin-left: 4px; font-size: 10px;">{direction === 'asc' ? '▲' : '▼'}</span>;
+    return <span style="margin-left: 4px; font-size: 10px;">{direction === "asc" ? "▲" : "▼"}</span>;
   }
 
   render() {
@@ -470,11 +463,7 @@ class HistoryPage extends Component {
       <div class="ink-page ink-history-page">
         <style>{styles}</style>
 
-        {error && (
-          <div class="ink-history-error">
-            {error}
-          </div>
-        )}
+        {error && <div class="ink-history-error">{error}</div>}
 
         {loading ? (
           <div class="ink-loading">
@@ -484,7 +473,9 @@ class HistoryPage extends Component {
           <div>
             <div class="ink-history-toolbar">
               <div class="ink-history-toolbar-left">
-                <span>{totalCount} item{totalCount !== 1 ? 's' : ''} total</span>
+                <span>
+                  {totalCount} item{totalCount !== 1 ? "s" : ""} total
+                </span>
               </div>
               <div class="ink-history-toolbar-right">
                 <button class="ink-btn-ghost ink-btn-sm" onClick={this._load}>
@@ -507,41 +498,39 @@ class HistoryPage extends Component {
                   <table class="ink-history-table">
                     <thead>
                       <tr>
-                        <th onClick={() => this._toggleSort('series')} style="cursor: pointer;">
-                          Series{this._renderSortIndicator('series')}
+                        <th onClick={() => this._toggleSort("series")} style="cursor: pointer;">
+                          Series{this._renderSortIndicator("series")}
                         </th>
-                        <th onClick={() => this._toggleSort('issue')} style="cursor: pointer;">
-                          Issue{this._renderSortIndicator('issue')}
+                        <th onClick={() => this._toggleSort("issue")} style="cursor: pointer;">
+                          Issue{this._renderSortIndicator("issue")}
                         </th>
                         <th>Status</th>
                         <th>Source</th>
-                        <th onClick={() => this._toggleSort('date')} style="cursor: pointer;">
-                          Date{this._renderSortIndicator('date')}
+                        <th onClick={() => this._toggleSort("date")} style="cursor: pointer;">
+                          Date{this._renderSortIndicator("date")}
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map(item => (
+                      {rows.map((item) => (
                         <tr key={item.id || item._id}>
                           <td>
                             <span class="ink-history-series" title={item.series_name || item.series}>
-                              {item.series_name || item.series || '—'}
+                              {item.series_name || item.series || "—"}
                             </span>
                           </td>
                           <td>
                             <span class="ink-history-issue" title={item.issue || item.title}>
-                              {item.issue || item.title || '—'}
+                              {item.issue || item.title || "—"}
                             </span>
                           </td>
                           <td>
                             <span class={`ink-history-status ${this._statusClass(item.status)}`}>
-                              {item.status || '—'}
+                              {item.status || "—"}
                             </span>
                           </td>
                           <td>
-                            <span class="ink-history-source">
-                              {item.source || item.source_name || '—'}
-                            </span>
+                            <span class="ink-history-source">{item.source || item.source_name || "—"}</span>
                           </td>
                           <td>
                             <span class="ink-history-date">

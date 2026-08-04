@@ -4,9 +4,9 @@
  * Polls search runs, shows results with filters, supports grab and cancel.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-manual-overlay {
@@ -211,7 +211,7 @@ class ManualSearchOverlay extends Component {
     this.state = {
       open: false,
       seriesId: null,
-      seriesName: '',
+      seriesName: "",
       runId: null,
       runStatus: null,
       loading: false,
@@ -220,16 +220,16 @@ class ManualSearchOverlay extends Component {
       totalResults: 0,
       offset: 0,
       filters: {
-        decision: '',
-        provider: '',
-        protocol: '',
-        language: '',
-        format: '',
-        pack: '',
-        assisted: '',
-        score_min: '',
-        score_max: '',
-        sort: '',
+        decision: "",
+        provider: "",
+        protocol: "",
+        language: "",
+        format: "",
+        pack: "",
+        assisted: "",
+        score_min: "",
+        score_max: "",
+        sort: "",
       },
       grabbing: new Set(),
     };
@@ -246,49 +246,52 @@ class ManualSearchOverlay extends Component {
   }
 
   componentDidMount() {
-    window.addEventListener('inkdrop:open-manual-search', this._onOpen);
-    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener("inkdrop:open-manual-search", this._onOpen);
+    window.addEventListener("keydown", this._onKeyDown);
   }
 
   componentWillUnmount() {
-    window.removeEventListener('inkdrop:open-manual-search', this._onOpen);
-    window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener("inkdrop:open-manual-search", this._onOpen);
+    window.removeEventListener("keydown", this._onKeyDown);
     if (this._pollTimer) clearInterval(this._pollTimer);
   }
 
   _onOpen(e) {
     const detail = e.detail || {};
-    this.setState({
-      open: true,
-      seriesId: detail.series_id || null,
-      seriesName: detail.series_name || detail.title || '',
-      runId: null,
-      runStatus: null,
-      loading: false,
-      error: null,
-      results: [],
-      totalResults: 0,
-      offset: 0,
-      filters: {
-        decision: '',
-        provider: '',
-        protocol: '',
-        language: '',
-        format: '',
-        pack: '',
-        assisted: '',
-        score_min: '',
-        score_max: '',
-        sort: '',
+    this.setState(
+      {
+        open: true,
+        seriesId: detail.series_id || null,
+        seriesName: detail.series_name || detail.title || "",
+        runId: null,
+        runStatus: null,
+        loading: false,
+        error: null,
+        results: [],
+        totalResults: 0,
+        offset: 0,
+        filters: {
+          decision: "",
+          provider: "",
+          protocol: "",
+          language: "",
+          format: "",
+          pack: "",
+          assisted: "",
+          score_min: "",
+          score_max: "",
+          sort: "",
+        },
+        grabbing: new Set(),
       },
-      grabbing: new Set(),
-    }, () => {
-      this._startSearch();
-    });
+      () => {
+        this._startSearch();
+      },
+    );
   }
 
   _onKeyDown(e) {
-    if (e.key === 'Escape' && this.state.open) {
+    if (e.key === "Escape" && this.state.open) {
       this._close();
     }
   }
@@ -304,7 +307,7 @@ class ManualSearchOverlay extends Component {
   async _startSearch() {
     const { seriesId } = this.state;
     if (!seriesId) {
-      this.setState({ error: 'No series selected', loading: false });
+      this.setState({ error: "No series selected", loading: false });
       return;
     }
 
@@ -313,14 +316,14 @@ class ManualSearchOverlay extends Component {
       const data = await api.manualSearch.createRun({ series_id: seriesId });
       if (data.ok) {
         const runId = data.run_id || data.id || data.run?.id;
-        this.setState({ runId, loading: false, runStatus: 'pending' }, () => {
+        this.setState({ runId, loading: false, runStatus: "pending" }, () => {
           this._pollRun();
         });
       } else {
-        this.setState({ error: data.error || 'Failed to start search', loading: false });
+        this.setState({ error: data.error || "Failed to start search", loading: false });
       }
     } catch (err) {
-      this.setState({ error: err.message || 'Failed to start search', loading: false });
+      this.setState({ error: err.message || "Failed to start search", loading: false });
     }
   }
 
@@ -338,11 +341,11 @@ class ManualSearchOverlay extends Component {
           const status = runData.status || runData.state;
           this.setState({ runStatus: status });
 
-          if (status === 'completed' || status === 'finished' || status === 'done') {
+          if (status === "completed" || status === "finished" || status === "done") {
             clearInterval(this._pollTimer);
             this._pollTimer = null;
             this._loadResults();
-          } else if (status === 'failed' || status === 'error' || status === 'cancelled') {
+          } else if (status === "failed" || status === "error" || status === "cancelled") {
             clearInterval(this._pollTimer);
             this._pollTimer = null;
             this.setState({ error: runData.error || `Search ${status}` });
@@ -365,11 +368,11 @@ class ManualSearchOverlay extends Component {
       };
       // Add non-empty filters
       for (const [key, value] of Object.entries(filters)) {
-        if (value !== '' && value !== null && value !== undefined) {
-          if (key === 'score_min') params.score_min = Number(value);
-          else if (key === 'score_max') params.score_max = Number(value);
-          else if (key === 'sort') params.sort = value;
-          else if (key === 'assisted') params.assisted = value === 'true' ? true : value === 'false' ? false : value;
+        if (value !== "" && value !== null && value !== undefined) {
+          if (key === "score_min") params.score_min = Number(value);
+          else if (key === "score_max") params.score_max = Number(value);
+          else if (key === "sort") params.sort = value;
+          else if (key === "assisted") params.assisted = value === "true" ? true : value === "false" ? false : value;
           else params[key] = value;
         }
       }
@@ -383,7 +386,7 @@ class ManualSearchOverlay extends Component {
         });
       }
     } catch (err) {
-      this.setState({ error: err.message || 'Failed to load results' });
+      this.setState({ error: err.message || "Failed to load results" });
     }
   }
 
@@ -398,13 +401,13 @@ class ManualSearchOverlay extends Component {
     try {
       const data = await api.manualSearch.grabCandidate(candidateId, {});
       if (data.ok) {
-        toast('Candidate grabbed successfully', 'success');
+        toast("Candidate grabbed successfully", "success");
         this._loadResults();
       } else {
-        toast(data.error || 'Failed to grab candidate', 'error');
+        toast(data.error || "Failed to grab candidate", "error");
       }
     } catch (err) {
-      toast(err.message || 'Failed to grab candidate', 'error');
+      toast(err.message || "Failed to grab candidate", "error");
     } finally {
       this.setState((prev) => {
         const next = new Set(prev.grabbing);
@@ -421,27 +424,30 @@ class ManualSearchOverlay extends Component {
     try {
       const data = await api.manualSearch.cancelRun(runId);
       if (data.ok) {
-        toast('Search cancelled', 'info');
+        toast("Search cancelled", "info");
         if (this._pollTimer) {
           clearInterval(this._pollTimer);
           this._pollTimer = null;
         }
-        this.setState({ runStatus: 'cancelled' });
+        this.setState({ runStatus: "cancelled" });
       } else {
-        toast(data.error || 'Failed to cancel search', 'error');
+        toast(data.error || "Failed to cancel search", "error");
       }
     } catch (err) {
-      toast(err.message || 'Failed to cancel search', 'error');
+      toast(err.message || "Failed to cancel search", "error");
     }
   }
 
   _handleFilterChange(key, value) {
-    this.setState((prev) => ({
-      filters: { ...prev.filters, [key]: value },
-      offset: 0,
-    }), () => {
-      this._loadResults();
-    });
+    this.setState(
+      (prev) => ({
+        filters: { ...prev.filters, [key]: value },
+        offset: 0,
+      }),
+      () => {
+        this._loadResults();
+      },
+    );
   }
 
   _handlePageChange(newOffset) {
@@ -453,29 +459,39 @@ class ManualSearchOverlay extends Component {
   _renderStatusPill(status) {
     if (!status) return null;
     const s = String(status).toLowerCase();
-    if (s === 'completed' || s === 'finished' || s === 'done') return <span class="ink-pill ink-pill-success">Completed</span>;
-    if (s === 'running' || s === 'in_progress' || s === 'pending') return <span class="ink-pill ink-pill-info">{status}</span>;
-    if (s === 'failed' || s === 'error') return <span class="ink-pill ink-pill-danger">Failed</span>;
-    if (s === 'cancelled') return <span class="ink-pill ink-pill-warning">Cancelled</span>;
+    if (s === "completed" || s === "finished" || s === "done")
+      return <span class="ink-pill ink-pill-success">Completed</span>;
+    if (s === "running" || s === "in_progress" || s === "pending")
+      return <span class="ink-pill ink-pill-info">{status}</span>;
+    if (s === "failed" || s === "error") return <span class="ink-pill ink-pill-danger">Failed</span>;
+    if (s === "cancelled") return <span class="ink-pill ink-pill-warning">Cancelled</span>;
     return <span class="ink-pill ink-pill-muted">{status}</span>;
   }
 
   render() {
-    const { open, seriesName, runStatus, loading, error, results, totalResults, offset, filters, grabbing } = this.state;
+    const { open, seriesName, runStatus, loading, error, results, totalResults, offset, filters, grabbing } =
+      this.state;
 
     if (!open) return null;
 
     const totalPages = Math.ceil(totalResults / PAGE_SIZE);
     const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
-    const isSearching = runStatus && !['completed', 'finished', 'done', 'failed', 'error', 'cancelled'].includes(String(runStatus).toLowerCase());
+    const isSearching =
+      runStatus &&
+      !["completed", "finished", "done", "failed", "error", "cancelled"].includes(String(runStatus).toLowerCase());
 
     return (
-      <div class="ink-manual-overlay" onClick={(e) => { if (e.target === e.currentTarget) this._close(); }}>
+      <div
+        class="ink-manual-overlay"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) this._close();
+        }}
+      >
         <style>{styles}</style>
         <div class="ink-manual-dialog" role="dialog" aria-modal="true" aria-label="Manual Search">
           {/* Header */}
           <div class="ink-manual-header">
-            <h2>Manual Search{seriesName ? `: ${seriesName}` : ''}</h2>
+            <h2>Manual Search{seriesName ? `: ${seriesName}` : ""}</h2>
             <button class="ink-manual-close" onClick={this._close} aria-label="Close search overlay">
               ✕
             </button>
@@ -487,9 +503,7 @@ class ManualSearchOverlay extends Component {
             {runStatus && (
               <div class="ink-manual-status">
                 {isSearching && <div class="ink-spinner" />}
-                <span class="ink-manual-status-text">
-                  {isSearching ? 'Searching...' : 'Search complete'}
-                </span>
+                <span class="ink-manual-status-text">{isSearching ? "Searching..." : "Search complete"}</span>
                 {this._renderStatusPill(runStatus)}
                 {isSearching && (
                   <button class="ink-btn-danger ink-btn-sm" onClick={this._handleCancel} style="margin-left: auto;">
@@ -520,10 +534,7 @@ class ManualSearchOverlay extends Component {
             {/* Filters */}
             {results.length > 0 && (
               <div class="ink-manual-filters">
-                <select
-                  value={filters.decision}
-                  onChange={(e) => this._handleFilterChange('decision', e.target.value)}
-                >
+                <select value={filters.decision} onChange={(e) => this._handleFilterChange("decision", e.target.value)}>
                   <option value="">All Decisions</option>
                   <option value="approved">Approved</option>
                   <option value="rejected">Rejected</option>
@@ -533,12 +544,9 @@ class ManualSearchOverlay extends Component {
                   type="text"
                   placeholder="Provider"
                   value={filters.provider}
-                  onInput={(e) => this._handleFilterChange('provider', e.target.value)}
+                  onInput={(e) => this._handleFilterChange("provider", e.target.value)}
                 />
-                <select
-                  value={filters.protocol}
-                  onChange={(e) => this._handleFilterChange('protocol', e.target.value)}
-                >
+                <select value={filters.protocol} onChange={(e) => this._handleFilterChange("protocol", e.target.value)}>
                   <option value="">All Protocols</option>
                   <option value="torrent">Torrent</option>
                   <option value="usenet">Usenet</option>
@@ -548,24 +556,21 @@ class ManualSearchOverlay extends Component {
                   type="text"
                   placeholder="Language"
                   value={filters.language}
-                  onInput={(e) => this._handleFilterChange('language', e.target.value)}
+                  onInput={(e) => this._handleFilterChange("language", e.target.value)}
                 />
                 <input
                   type="text"
                   placeholder="Format"
                   value={filters.format}
-                  onInput={(e) => this._handleFilterChange('format', e.target.value)}
+                  onInput={(e) => this._handleFilterChange("format", e.target.value)}
                 />
                 <input
                   type="text"
                   placeholder="Pack"
                   value={filters.pack}
-                  onInput={(e) => this._handleFilterChange('pack', e.target.value)}
+                  onInput={(e) => this._handleFilterChange("pack", e.target.value)}
                 />
-                <select
-                  value={filters.assisted}
-                  onChange={(e) => this._handleFilterChange('assisted', e.target.value)}
-                >
+                <select value={filters.assisted} onChange={(e) => this._handleFilterChange("assisted", e.target.value)}>
                   <option value="">All Types</option>
                   <option value="true">Assisted</option>
                   <option value="false">Unassisted</option>
@@ -574,7 +579,7 @@ class ManualSearchOverlay extends Component {
                   type="number"
                   placeholder="Min Score"
                   value={filters.score_min}
-                  onInput={(e) => this._handleFilterChange('score_min', e.target.value)}
+                  onInput={(e) => this._handleFilterChange("score_min", e.target.value)}
                   min="0"
                   max="100"
                   style="max-width: 80px;"
@@ -583,15 +588,12 @@ class ManualSearchOverlay extends Component {
                   type="number"
                   placeholder="Max Score"
                   value={filters.score_max}
-                  onInput={(e) => this._handleFilterChange('score_max', e.target.value)}
+                  onInput={(e) => this._handleFilterChange("score_max", e.target.value)}
                   min="0"
                   max="100"
                   style="max-width: 80px;"
                 />
-                <select
-                  value={filters.sort}
-                  onChange={(e) => this._handleFilterChange('sort', e.target.value)}
-                >
+                <select value={filters.sort} onChange={(e) => this._handleFilterChange("sort", e.target.value)}>
                   <option value="">Default Sort</option>
                   <option value="score">Score</option>
                   <option value="age">Age</option>
@@ -612,10 +614,18 @@ class ManualSearchOverlay extends Component {
                       <div class="ink-manual-result" key={candidateId || idx}>
                         {/* Score */}
                         <div class="ink-manual-score">
-                          <div class="ink-manual-score-value" style={{
-                            color: (result.score || 0) >= 80 ? 'var(--ink-success)' : (result.score || 0) >= 50 ? 'var(--ink-warning)' : 'var(--ink-text-muted)',
-                          }}>
-                            {result.score != null ? result.score : '—'}
+                          <div
+                            class="ink-manual-score-value"
+                            style={{
+                              color:
+                                (result.score || 0) >= 80
+                                  ? "var(--ink-success)"
+                                  : (result.score || 0) >= 50
+                                    ? "var(--ink-warning)"
+                                    : "var(--ink-text-muted)",
+                            }}
+                          >
+                            {result.score != null ? result.score : "—"}
                           </div>
                           <div class="ink-manual-score-label">score</div>
                         </div>
@@ -623,7 +633,7 @@ class ManualSearchOverlay extends Component {
                         {/* Info */}
                         <div class="ink-manual-result-info">
                           <div class="ink-manual-result-title">
-                            {result.title || result.name || result.release_name || 'Unknown'}
+                            {result.title || result.name || result.release_name || "Unknown"}
                           </div>
                           <div class="ink-manual-result-meta">
                             {result.provider && <span class="ink-pill ink-pill-muted">{result.provider}</span>}
@@ -642,10 +652,10 @@ class ManualSearchOverlay extends Component {
                           <button
                             class="ink-btn-primary ink-btn-sm"
                             onClick={() => this._handleGrab(candidateId)}
-                            disabled={isGrabbing || result.decision === 'approved'}
+                            disabled={isGrabbing || result.decision === "approved"}
                           >
                             {isGrabbing ? <span class="ink-spinner" /> : null}
-                            {result.decision === 'approved' ? 'Grabbed' : 'Grab'}
+                            {result.decision === "approved" ? "Grabbed" : "Grab"}
                           </button>
                         </div>
                       </div>
@@ -663,7 +673,9 @@ class ManualSearchOverlay extends Component {
                     >
                       ← Previous
                     </button>
-                    <span>Page {currentPage} of {totalPages}</span>
+                    <span>
+                      Page {currentPage} of {totalPages}
+                    </span>
                     <button
                       class="ink-btn-ghost ink-btn-sm"
                       disabled={offset + PAGE_SIZE >= totalResults}

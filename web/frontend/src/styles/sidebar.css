@@ -130,7 +130,9 @@
   text-align: left;
   min-height: 34px;
   cursor: pointer;
-  transition: background var(--ink-transition-fast), color var(--ink-transition-fast);
+  transition:
+    background var(--ink-transition-fast),
+    color var(--ink-transition-fast);
   white-space: nowrap;
   overflow: hidden;
 }

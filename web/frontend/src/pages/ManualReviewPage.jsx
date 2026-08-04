@@ -4,9 +4,9 @@
  * Supports Approve, Ignore, Bad Match decisions plus pack review and SLSKD probe data.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-review-table-wrap {
@@ -163,10 +163,10 @@ class ManualReviewPage extends Component {
           loading: false,
         });
       } else {
-        this.setState({ error: data.error || 'Failed to load review items', loading: false });
+        this.setState({ error: data.error || "Failed to load review items", loading: false });
       }
     } catch (err) {
-      this.setState({ error: err.message || 'Failed to load review items', loading: false });
+      this.setState({ error: err.message || "Failed to load review items", loading: false });
     }
   }
 
@@ -180,25 +180,25 @@ class ManualReviewPage extends Component {
 
     try {
       let data;
-      if (action === 'approve') {
+      if (action === "approve") {
         data = await api.manualReview.approve({ id });
-      } else if (action === 'ignore') {
+      } else if (action === "ignore") {
         data = await api.manualReview.ignore({ id });
-      } else if (action === 'bad_match') {
+      } else if (action === "bad_match") {
         data = await api.manualReview.badMatch({ id });
       }
 
       if (data && data.ok) {
-        const label = action === 'approve' ? 'Approved' : action === 'ignore' ? 'Ignored' : 'Marked as bad match';
-        toast(`${label} successfully`, 'success');
+        const label = action === "approve" ? "Approved" : action === "ignore" ? "Ignored" : "Marked as bad match";
+        toast(`${label} successfully`, "success");
         this.setState((prev) => ({
           items: prev.items.filter((item) => (item.id || item.issue_id) !== id),
         }));
       } else {
-        toast(data?.error || `Failed to ${action} item`, 'error');
+        toast(data?.error || `Failed to ${action} item`, "error");
       }
     } catch (err) {
-      toast(err.message || `Failed to ${action} item`, 'error');
+      toast(err.message || `Failed to ${action} item`, "error");
     } finally {
       this.setState((prev) => {
         const next = new Set(prev.processingIds);
@@ -209,15 +209,15 @@ class ManualReviewPage extends Component {
   }
 
   _handleApprove(item) {
-    this._handleDecision('approve', item.id || item.issue_id);
+    this._handleDecision("approve", item.id || item.issue_id);
   }
 
   _handleIgnore(item) {
-    this._handleDecision('ignore', item.id || item.issue_id);
+    this._handleDecision("ignore", item.id || item.issue_id);
   }
 
   _handleBadMatch(item) {
-    this._handleDecision('bad_match', item.id || item.issue_id);
+    this._handleDecision("bad_match", item.id || item.issue_id);
   }
 
   render() {
@@ -231,8 +231,8 @@ class ManualReviewPage extends Component {
         <div class="ink-review-header">
           <div class="ink-review-count">
             {items.length > 0
-              ? `${items.length} item${items.length !== 1 ? 's' : ''} awaiting review`
-              : 'No items awaiting review'}
+              ? `${items.length} item${items.length !== 1 ? "s" : ""} awaiting review`
+              : "No items awaiting review"}
           </div>
           <button class="ink-btn-ghost" onClick={this._loadData}>
             ↻ Refresh
@@ -288,22 +288,16 @@ class ManualReviewPage extends Component {
                       <tr key={id || Math.random()}>
                         <td>
                           <div class="ink-review-issue-name">
-                            {item.issue_name || item.issue || item.title || 'Unknown'}
+                            {item.issue_name || item.issue || item.title || "Unknown"}
                           </div>
-                          {item.series_name && (
-                            <div class="ink-mini">{item.series_name}</div>
-                          )}
-                          {item.issue_number && (
-                            <div class="ink-mini">#{item.issue_number}</div>
-                          )}
+                          {item.series_name && <div class="ink-mini">{item.series_name}</div>}
+                          {item.issue_number && <div class="ink-mini">#{item.issue_number}</div>}
                         </td>
                         <td>
                           <div class="ink-review-source">
-                            {item.source_candidate || item.source || item.candidate || '—'}
+                            {item.source_candidate || item.source || item.candidate || "—"}
                           </div>
-                          {item.source_info && (
-                            <div class="ink-mini">{item.source_info}</div>
-                          )}
+                          {item.source_info && <div class="ink-mini">{item.source_info}</div>}
                         </td>
                         <td>
                           <div class="ink-review-actions">
@@ -353,10 +347,16 @@ class ManualReviewPage extends Component {
                     <div class="ink-review-pack-item" key={pack.id || idx}>
                       <div>
                         <strong>{pack.name || pack.title || `Pack #${idx + 1}`}</strong>
-                        {pack.size && <span class="ink-mini" style="margin-left: var(--ink-space-sm);">{pack.size}</span>}
+                        {pack.size && (
+                          <span class="ink-mini" style="margin-left: var(--ink-space-sm);">
+                            {pack.size}
+                          </span>
+                        )}
                       </div>
-                      <span class={`ink-pill ${pack.status === 'ready' ? 'ink-pill-success' : pack.status === 'pending' ? 'ink-pill-warning' : 'ink-pill-muted'}`}>
-                        {pack.status || 'unknown'}
+                      <span
+                        class={`ink-pill ${pack.status === "ready" ? "ink-pill-success" : pack.status === "pending" ? "ink-pill-warning" : "ink-pill-muted"}`}
+                      >
+                        {pack.status || "unknown"}
                       </span>
                     </div>
                   ))
@@ -383,14 +383,18 @@ class ManualReviewPage extends Component {
               <div class="ink-section-body">
                 <div class="ink-review-slskd-data">
                   {Object.entries(slskdProbeData).map(([key, value]) => {
-                    if (key === 'id' || key.startsWith('_')) return null;
+                    if (key === "id" || key.startsWith("_")) return null;
                     return (
                       <div class="ink-review-slskd-item" key={key}>
-                        <div class="ink-review-slskd-item-label">{key.replace(/_/g, ' ')}</div>
+                        <div class="ink-review-slskd-item-label">{key.replace(/_/g, " ")}</div>
                         <div class="ink-review-slskd-item-value">
-                          {typeof value === 'boolean'
-                            ? <span class={`ink-pill ${value ? 'ink-pill-success' : 'ink-pill-muted'}`}>{String(value)}</span>
-                            : String(value)}
+                          {typeof value === "boolean" ? (
+                            <span class={`ink-pill ${value ? "ink-pill-success" : "ink-pill-muted"}`}>
+                              {String(value)}
+                            </span>
+                          ) : (
+                            String(value)
+                          )}
                         </div>
                       </div>
                     );

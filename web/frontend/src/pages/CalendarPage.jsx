@@ -4,9 +4,9 @@
  * Supports window selectors: Last 2 weeks, Last month, Last 3 months.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-calendar-window {
@@ -144,9 +144,9 @@ const styles = `
 `;
 
 const WINDOW_OPTIONS = [
-  { label: 'Last 2 weeks', days: 14 },
-  { label: 'Last month', days: 30 },
-  { label: 'Last 3 months', days: 90 },
+  { label: "Last 2 weeks", days: 14 },
+  { label: "Last month", days: 30 },
+  { label: "Last 3 months", days: 90 },
 ];
 
 class CalendarPage extends Component {
@@ -178,16 +178,19 @@ class CalendarPage extends Component {
       if (data.ok) {
         const stateData = data.state || data;
         const entries = stateData.items || stateData.entries || stateData.results || [];
-        this.setState({
-          entries,
-          totalCount: stateData.total_count || stateData.total || entries.length,
-          loading: false,
-        }, () => this._groupByWeek());
+        this.setState(
+          {
+            entries,
+            totalCount: stateData.total_count || stateData.total || entries.length,
+            loading: false,
+          },
+          () => this._groupByWeek(),
+        );
       } else {
-        this.setState({ error: data.error || 'Failed to load calendar', loading: false });
+        this.setState({ error: data.error || "Failed to load calendar", loading: false });
       }
     } catch (err) {
-      this.setState({ error: err.message || 'Failed to load calendar', loading: false });
+      this.setState({ error: err.message || "Failed to load calendar", loading: false });
     }
   }
 
@@ -207,12 +210,12 @@ class CalendarPage extends Component {
       const diff = day === 0 ? -6 : 1 - day; // Monday start
       const monday = new Date(date);
       monday.setDate(date.getDate() + diff);
-      const weekKey = monday.toISOString().split('T')[0];
+      const weekKey = monday.toISOString().split("T")[0];
 
       if (!weeks[weekKey]) {
         weeks[weekKey] = {
           monday,
-          label: `Week of ${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+          label: `Week of ${monday.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
           days: {},
         };
       }
@@ -221,7 +224,7 @@ class CalendarPage extends Component {
       if (!weeks[weekKey].days[dayKey]) {
         weeks[weekKey].days[dayKey] = {
           date,
-          label: date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+          label: date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
           entries: [],
         };
       }
@@ -261,7 +264,7 @@ class CalendarPage extends Component {
         {/* Header */}
         <div class="ink-calendar-header">
           <div class="ink-calendar-count">
-            {totalCount > 0 ? `${totalCount} release${totalCount !== 1 ? 's' : ''}` : 'No releases'}
+            {totalCount > 0 ? `${totalCount} release${totalCount !== 1 ? "s" : ""}` : "No releases"}
           </div>
           <button class="ink-btn-ghost" onClick={() => this._loadData()}>
             ↻ Refresh
@@ -273,7 +276,7 @@ class CalendarPage extends Component {
           {WINDOW_OPTIONS.map((opt) => (
             <button
               key={opt.days}
-              class={windowDays === opt.days ? 'ink-calendar-window-active' : ''}
+              class={windowDays === opt.days ? "ink-calendar-window-active" : ""}
               onClick={() => this._handleWindowChange(opt.days)}
             >
               {opt.label}
@@ -327,7 +330,7 @@ class CalendarPage extends Component {
                     <div class="ink-calendar-day-header">
                       <span class="ink-calendar-day-label">{day.label}</span>
                       <span class="ink-calendar-day-date">
-                        {day.date.toLocaleDateString('en-US', { year: 'numeric' })}
+                        {day.date.toLocaleDateString("en-US", { year: "numeric" })}
                       </span>
                     </div>
 
@@ -344,20 +347,22 @@ class CalendarPage extends Component {
                           )}
                           <div class="ink-calendar-entry-info">
                             <div class="ink-calendar-entry-title">
-                              {entry.title || entry.series_name || entry.series || 'Unknown'}
+                              {entry.title || entry.series_name || entry.series || "Unknown"}
                             </div>
                             <div class="ink-calendar-entry-meta">
-                              {entry.issue_number || entry.issue
-                                ? `#${entry.issue_number || entry.issue}`
-                                : ''}
-                              {entry.publisher ? ` · ${entry.publisher}` : ''}
+                              {entry.issue_number || entry.issue ? `#${entry.issue_number || entry.issue}` : ""}
+                              {entry.publisher ? ` · ${entry.publisher}` : ""}
                             </div>
                           </div>
                           <div class="ink-calendar-entry-owned">
                             {entry.owned || entry.owned_status ? (
-                              <span class="ink-pill ink-pill-success" title="Owned">✓</span>
+                              <span class="ink-pill ink-pill-success" title="Owned">
+                                ✓
+                              </span>
                             ) : (
-                              <span class="ink-pill ink-pill-muted" title="Not owned">○</span>
+                              <span class="ink-pill ink-pill-muted" title="Not owned">
+                                ○
+                              </span>
                             )}
                           </div>
                         </div>

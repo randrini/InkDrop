@@ -3,7 +3,7 @@
  * No external dependency; uses simple pub/sub for state management.
  */
 
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect } from "preact/hooks";
 
 const subscribers = new Map();
 let nextId = 0;
@@ -81,7 +81,7 @@ export const appStore = createStore({
   setupRequired: false,
   bootstrapRequired: false,
   // Navigation
-  currentSection: 'series',
+  currentSection: "series",
   currentSubsection: null,
   routeParams: {},
   sidebarCollapsed: false,
@@ -98,9 +98,9 @@ export const appStore = createStore({
 });
 
 // ── Preferences Store (persisted to localStorage) ────────────────────────
-const PREF_KEY = 'inkdrop.preferences.v1';
+const PREF_KEY = "inkdrop.preferences.v1";
 const prefDefaults = {
-  tableDensity: 'comfortable',
+  tableDensity: "comfortable",
   tableThumbnails: true,
   tableDetails: false,
   tablePageSize: 50,
@@ -109,7 +109,7 @@ const prefDefaults = {
 
 function loadPrefs() {
   try {
-    const saved = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    const saved = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
     return { ...prefDefaults, ...saved };
   } catch {
     return { ...prefDefaults };
@@ -119,7 +119,9 @@ function loadPrefs() {
 function savePrefs(prefs) {
   try {
     localStorage.setItem(PREF_KEY, JSON.stringify(prefs));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 export const prefStore = createStore(loadPrefs());
@@ -144,7 +146,7 @@ prefStore.set = function (key, value) {
 export function useStore(store) {
   const [, bump] = useState(0);
   useEffect(() => {
-    return subscribe(() => bump(n => n + 1));
+    return subscribe(() => bump((n) => n + 1));
   }, [store]);
   return store.snapshot();
 }

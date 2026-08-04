@@ -4,9 +4,9 @@
  * download clients placeholder, advanced toggle, search, and unsaved changes tracking.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 /* ── Scoped Styles ─────────────────────────────────────────────────────── */
 const styles = `
@@ -465,59 +465,59 @@ const styles = `
 
 function getAreaFromHash() {
   try {
-    const hash = window.location.hash || '';
+    const hash = window.location.hash || "";
     const m = hash.match(/[?&]area=([^&]+)/);
-    return m ? decodeURIComponent(m[1]) : 'setup';
+    return m ? decodeURIComponent(m[1]) : "setup";
   } catch {
-    return 'setup';
+    return "setup";
   }
 }
 
 function getFieldType(schema) {
-  if (!schema) return 'text';
-  if (schema.type === 'boolean') return 'checkbox';
-  if (schema.type === 'integer' || schema.type === 'number') return 'number';
-  if (schema.enum && Array.isArray(schema.enum)) return 'select';
-  if (schema.type === 'password') return 'password';
-  if (schema.format === 'uri' || schema.format === 'url') return 'url';
-  if (schema.type === 'textarea') return 'textarea';
-  if (schema.type === 'range') return 'range';
-  return 'text';
+  if (!schema) return "text";
+  if (schema.type === "boolean") return "checkbox";
+  if (schema.type === "integer" || schema.type === "number") return "number";
+  if (schema.enum && Array.isArray(schema.enum)) return "select";
+  if (schema.type === "password") return "password";
+  if (schema.format === "uri" || schema.format === "url") return "url";
+  if (schema.type === "textarea") return "textarea";
+  if (schema.type === "range") return "range";
+  return "text";
 }
 
 function getFieldDefault(schema) {
-  if (!schema) return '';
+  if (!schema) return "";
   if (schema.default !== undefined && schema.default !== null) return schema.default;
-  if (schema.type === 'boolean') return false;
-  if (schema.type === 'integer' || schema.type === 'number') return 0;
-  return '';
+  if (schema.type === "boolean") return false;
+  if (schema.type === "integer" || schema.type === "number") return 0;
+  return "";
 }
 
 function coerceValue(value, schema) {
-  if (schema.type === 'boolean') return !!value;
-  if (schema.type === 'integer') return parseInt(value, 10) || 0;
-  if (schema.type === 'number') return parseFloat(value) || 0;
+  if (schema.type === "boolean") return !!value;
+  if (schema.type === "integer") return parseInt(value, 10) || 0;
+  if (schema.type === "number") return parseFloat(value) || 0;
   return value;
 }
 
 function isAdvancedField(schema) {
-  return schema && (schema.advanced === true || schema.category === 'advanced');
+  return schema && (schema.advanced === true || schema.category === "advanced");
 }
 
 function fieldMatchesSearch(fieldKey, schema, query) {
   if (!query) return true;
   const q = query.toLowerCase();
-  const key = (fieldKey || '').toLowerCase();
-  const label = ((schema && schema.label) || '').toLowerCase();
-  const hint = ((schema && schema.hint) || '').toLowerCase();
+  const key = (fieldKey || "").toLowerCase();
+  const label = ((schema && schema.label) || "").toLowerCase();
+  const hint = ((schema && schema.hint) || "").toLowerCase();
   return key.includes(q) || label.includes(q) || hint.includes(q);
 }
 
 function sectionMatchesSearch(section, query) {
   if (!query) return true;
   const q = query.toLowerCase();
-  const name = (section.name || section.key || '').toLowerCase();
-  const desc = (section.description || '').toLowerCase();
+  const name = (section.name || section.key || "").toLowerCase();
+  const desc = (section.description || "").toLowerCase();
   return name.includes(q) || desc.includes(q);
 }
 
@@ -532,7 +532,7 @@ class SettingsPage extends Component {
       error: null,
       data: null,
       showAdvanced: false,
-      searchQuery: '',
+      searchQuery: "",
       unsavedChanges: false,
       dirtyFields: {},
       // Provider editing
@@ -545,10 +545,21 @@ class SettingsPage extends Component {
       backupData: null,
       backupPreview: null,
       backupPreviewLoading: false,
-      restoreText: '',
+      restoreText: "",
       restoreLoading: false,
       // Collapsed sections
       collapsedSections: {},
+      // Download clients
+      dcLoading: false,
+      dcList: [],
+      dcRegistry: [],
+      dcStatus: null,
+      dcShowForm: false,
+      dcEditing: null,
+      dcFormData: { name: "", type: "", url: "", api_key: "", username: "", password: "", category: "" },
+      dcTesting: false,
+      dcTestResult: null,
+      dcTestAllResult: null,
     };
 
     this._onHashChange = this._onHashChange.bind(this);
@@ -566,36 +577,48 @@ class SettingsPage extends Component {
     this._handleBackupPreview = this._handleBackupPreview.bind(this);
     this._handleBackupRestore = this._handleBackupRestore.bind(this);
     this._toggleSection = this._toggleSection.bind(this);
+    this._loadDownloadClients = this._loadDownloadClients.bind(this);
+    this._handleDcAdd = this._handleDcAdd.bind(this);
+    this._handleDcEdit = this._handleDcEdit.bind(this);
+    this._handleDcSave = this._handleDcSave.bind(this);
+    this._handleDcDelete = this._handleDcDelete.bind(this);
+    this._handleDcTest = this._handleDcTest.bind(this);
+    this._handleDcTestAll = this._handleDcTestAll.bind(this);
+    this._handleDcFormChange = this._handleDcFormChange.bind(this);
   }
 
   componentDidMount() {
-    window.addEventListener('hashchange', this._onHashChange);
+    window.addEventListener("hashchange", this._onHashChange);
     this._loadSettings();
+    this._loadDownloadClients();
   }
 
   componentWillUnmount() {
-    window.removeEventListener('hashchange', this._onHashChange);
+    window.removeEventListener("hashchange", this._onHashChange);
   }
 
   _onHashChange() {
     const newArea = getAreaFromHash();
     if (newArea !== this.state.area) {
-      this.setState({
-        area: newArea,
-        loading: true,
-        error: null,
-        data: null,
-        unsavedChanges: false,
-        dirtyFields: {},
-        editingProvider: null,
-        providerFormData: null,
-        providerFormErrors: null,
-        testingProvider: null,
-        backupData: null,
-        backupPreview: null,
-        restoreText: '',
-        searchQuery: '',
-      }, () => this._loadSettings());
+      this.setState(
+        {
+          area: newArea,
+          loading: true,
+          error: null,
+          data: null,
+          unsavedChanges: false,
+          dirtyFields: {},
+          editingProvider: null,
+          providerFormData: null,
+          providerFormErrors: null,
+          testingProvider: null,
+          backupData: null,
+          backupPreview: null,
+          restoreText: "",
+          searchQuery: "",
+        },
+        () => this._loadSettings(),
+      );
     }
   }
 
@@ -608,13 +631,13 @@ class SettingsPage extends Component {
         this.setState({ data: data.settings || data, loading: false });
       } else {
         this.setState({
-          error: (data && data.error) || 'Failed to load settings',
+          error: (data && data.error) || "Failed to load settings",
           loading: false,
         });
       }
     } catch (err) {
       this.setState({
-        error: api.friendlyMessage ? api.friendlyMessage(err) : (err.message || 'Failed to load settings'),
+        error: api.friendlyMessage ? api.friendlyMessage(err) : err.message || "Failed to load settings",
         loading: false,
       });
     }
@@ -622,17 +645,18 @@ class SettingsPage extends Component {
 
   async _handleSync() {
     const { area } = this.state;
-    toast('Syncing settings from disk…', 'info');
+    toast("Syncing settings from disk…", "info");
     try {
       const data = await api.settings.sync(area);
       if (data && data.ok) {
-        toast('Settings synced', 'success');
+        toast("Settings synced", "success");
         this._loadSettings();
+        this._loadDownloadClients();
       } else {
-        toast((data && data.error) || 'Sync failed', 'error');
+        toast((data && data.error) || "Sync failed", "error");
       }
     } catch (err) {
-      toast(api.friendlyMessage ? api.friendlyMessage(err) : 'Sync failed', 'error');
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Sync failed", "error");
     }
   }
 
@@ -640,13 +664,13 @@ class SettingsPage extends Component {
 
   _handleFieldChange(sectionKey, fieldKey, schema, value) {
     const coerced = coerceValue(value, schema);
-    this.setState(prev => {
+    this.setState((prev) => {
       const dirtyFields = { ...prev.dirtyFields };
       if (!dirtyFields[sectionKey]) dirtyFields[sectionKey] = {};
       dirtyFields[sectionKey][fieldKey] = coerced;
       return {
         dirtyFields,
-        unsavedChanges: Object.keys(dirtyFields).some(sk => Object.keys(dirtyFields[sk]).length > 0),
+        unsavedChanges: Object.keys(dirtyFields).some((sk) => Object.keys(dirtyFields[sk]).length > 0),
       };
     });
   }
@@ -668,7 +692,7 @@ class SettingsPage extends Component {
     const { dirtyFields, area } = this.state;
     const keys = Object.keys(dirtyFields);
     if (keys.length === 0) {
-      toast('No changes to save', 'info');
+      toast("No changes to save", "info");
       return;
     }
 
@@ -684,21 +708,21 @@ class SettingsPage extends Component {
             saved++;
           } else {
             errors++;
-            toast(`Failed to save ${fieldKey}: ${(result && result.error) || 'unknown error'}`, 'error');
+            toast(`Failed to save ${fieldKey}: ${(result && result.error) || "unknown error"}`, "error");
           }
         } catch (err) {
           errors++;
-          toast(`Failed to save ${fieldKey}: ${api.friendlyMessage ? api.friendlyMessage(err) : err.message}`, 'error');
+          toast(`Failed to save ${fieldKey}: ${api.friendlyMessage ? api.friendlyMessage(err) : err.message}`, "error");
         }
       }
     }
 
     if (errors === 0 && saved > 0) {
-      toast(`Saved ${saved} setting${saved !== 1 ? 's' : ''}`, 'success');
+      toast(`Saved ${saved} setting${saved !== 1 ? "s" : ""}`, "success");
       this.setState({ dirtyFields: {}, unsavedChanges: false });
       this._loadSettings();
     } else if (saved > 0) {
-      toast(`Saved ${saved} setting${saved !== 1 ? 's' : ''} (${errors} failed)`, 'warning');
+      toast(`Saved ${saved} setting${saved !== 1 ? "s" : ""} (${errors} failed)`, "warning");
       this.setState({ dirtyFields: {}, unsavedChanges: false });
       this._loadSettings();
     }
@@ -708,8 +732,8 @@ class SettingsPage extends Component {
 
   _handleProviderAdd() {
     this.setState({
-      editingProvider: '__new__',
-      providerFormData: { name: '', type: '', config: {} },
+      editingProvider: "__new__",
+      providerFormData: { name: "", type: "", config: {} },
       providerFormErrors: null,
     });
   }
@@ -718,8 +742,8 @@ class SettingsPage extends Component {
     this.setState({
       editingProvider: provider.id,
       providerFormData: {
-        name: provider.name || '',
-        type: provider.type || '',
+        name: provider.name || "",
+        type: provider.type || "",
         config: { ...(provider.config || {}) },
         revision: provider.revision,
       },
@@ -732,13 +756,13 @@ class SettingsPage extends Component {
     try {
       const result = await api.settings.providerDelete({ id: provider.id, revision: provider.revision });
       if (result && result.ok) {
-        toast('Provider deleted', 'success');
+        toast("Provider deleted", "success");
         this._loadSettings();
       } else {
-        toast((result && result.error) || 'Failed to delete provider', 'error');
+        toast((result && result.error) || "Failed to delete provider", "error");
       }
     } catch (err) {
-      toast(api.friendlyMessage ? api.friendlyMessage(err) : 'Failed to delete provider', 'error');
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Failed to delete provider", "error");
     }
   }
 
@@ -747,19 +771,19 @@ class SettingsPage extends Component {
     try {
       const result = await api.settings.providerTest({ id: provider.id, revision: provider.revision });
       if (result && result.ok) {
-        toast(`Test successful: ${result.message || 'Provider is reachable'}`, 'success');
+        toast(`Test successful: ${result.message || "Provider is reachable"}`, "success");
       } else {
-        toast((result && result.error) || 'Test failed', 'error');
+        toast((result && result.error) || "Test failed", "error");
       }
     } catch (err) {
-      toast(api.friendlyMessage ? api.friendlyMessage(err) : 'Test failed', 'error');
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Test failed", "error");
     } finally {
       this.setState({ testingProvider: null });
     }
   }
 
   _handleProviderFormChange(field, value) {
-    this.setState(prev => ({
+    this.setState((prev) => ({
       providerFormData: { ...prev.providerFormData, [field]: value },
       providerFormErrors: null,
     }));
@@ -768,13 +792,13 @@ class SettingsPage extends Component {
   async _handleProviderFormSubmit() {
     const { editingProvider, providerFormData } = this.state;
     if (!providerFormData.name || !providerFormData.type) {
-      this.setState({ providerFormErrors: 'Name and type are required' });
+      this.setState({ providerFormErrors: "Name and type are required" });
       return;
     }
 
     try {
       let result;
-      if (editingProvider === '__new__') {
+      if (editingProvider === "__new__") {
         result = await api.settings.providerAdd({
           name: providerFormData.name,
           type: providerFormData.type,
@@ -791,7 +815,7 @@ class SettingsPage extends Component {
       }
 
       if (result && result.ok) {
-        toast(editingProvider === '__new__' ? 'Provider added' : 'Provider updated', 'success');
+        toast(editingProvider === "__new__" ? "Provider added" : "Provider updated", "success");
         this.setState({
           editingProvider: null,
           providerFormData: null,
@@ -799,7 +823,7 @@ class SettingsPage extends Component {
         });
         this._loadSettings();
       } else {
-        this.setState({ providerFormErrors: (result && result.error) || 'Operation failed' });
+        this.setState({ providerFormErrors: (result && result.error) || "Operation failed" });
       }
     } catch (err) {
       this.setState({
@@ -824,20 +848,20 @@ class SettingsPage extends Component {
       const result = await api.settings.backupExport();
       if (result && result.ok) {
         const blob = new Blob([result.document_text || JSON.stringify(result, null, 2)], {
-          type: 'application/json',
+          type: "application/json",
         });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = url;
         a.download = `inkdrop-backup-${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        toast('Backup exported', 'success');
+        toast("Backup exported", "success");
       } else {
-        toast((result && result.error) || 'Export failed', 'error');
+        toast((result && result.error) || "Export failed", "error");
       }
     } catch (err) {
-      toast(api.friendlyMessage ? api.friendlyMessage(err) : 'Export failed', 'error');
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Export failed", "error");
     } finally {
       this.setState({ backupLoading: false });
     }
@@ -849,12 +873,12 @@ class SettingsPage extends Component {
       const result = await api.settings.backupPreview(this.state.restoreText);
       if (result && result.ok) {
         this.setState({ backupPreview: result.preview || result });
-        toast('Preview generated', 'success');
+        toast("Preview generated", "success");
       } else {
-        toast((result && result.error) || 'Preview failed', 'error');
+        toast((result && result.error) || "Preview failed", "error");
       }
     } catch (err) {
-      toast(api.friendlyMessage ? api.friendlyMessage(err) : 'Preview failed', 'error');
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Preview failed", "error");
     } finally {
       this.setState({ backupPreviewLoading: false });
     }
@@ -862,23 +886,23 @@ class SettingsPage extends Component {
 
   async _handleBackupRestore() {
     if (!this.state.restoreText.trim()) {
-      toast('Paste backup data first', 'warning');
+      toast("Paste backup data first", "warning");
       return;
     }
-    if (!confirm('Are you sure you want to restore from this backup? This will overwrite current settings.')) return;
+    if (!confirm("Are you sure you want to restore from this backup? This will overwrite current settings.")) return;
 
     this.setState({ restoreLoading: true });
     try {
       const result = await api.settings.backupRestore(this.state.restoreText);
       if (result && result.ok) {
-        toast('Backup restored successfully', 'success');
-        this.setState({ restoreText: '', backupPreview: null });
+        toast("Backup restored successfully", "success");
+        this.setState({ restoreText: "", backupPreview: null });
         this._loadSettings();
       } else {
-        toast((result && result.error) || 'Restore failed', 'error');
+        toast((result && result.error) || "Restore failed", "error");
       }
     } catch (err) {
-      toast(api.friendlyMessage ? api.friendlyMessage(err) : 'Restore failed', 'error');
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Restore failed", "error");
     } finally {
       this.setState({ restoreLoading: false });
     }
@@ -887,7 +911,7 @@ class SettingsPage extends Component {
   /* ── Section Collapse ───────────────────────────────────────────────── */
 
   _toggleSection(key) {
-    this.setState(prev => {
+    this.setState((prev) => {
       const collapsedSections = { ...prev.collapsedSections };
       if (collapsedSections[key]) {
         delete collapsedSections[key];
@@ -915,9 +939,9 @@ class SettingsPage extends Component {
 
     const handleChange = (e) => {
       let val;
-      if (type === 'checkbox') {
+      if (type === "checkbox") {
         val = e.target.checked;
-      } else if (type === 'number' || type === 'range') {
+      } else if (type === "number" || type === "range") {
         val = e.target.value;
       } else {
         val = e.target.value;
@@ -927,42 +951,34 @@ class SettingsPage extends Component {
 
     let input;
     switch (type) {
-      case 'checkbox':
+      case "checkbox":
         input = (
           <div class="ink-checkbox-wrapper">
-            <input
-              id={inputId}
-              type="checkbox"
-              checked={!!value}
-              onChange={handleChange}
-            />
+            <input id={inputId} type="checkbox" checked={!!value} onChange={handleChange} />
             <label for={inputId}>{schema.label || fieldKey}</label>
           </div>
         );
         break;
 
-      case 'select':
+      case "select":
         input = (
           <select id={inputId} value={String(value)} onChange={handleChange}>
-            {schema.enum.map(opt => (
-              <option key={opt} value={opt}>{opt}</option>
+            {schema.enum.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
             ))}
           </select>
         );
         break;
 
-      case 'textarea':
+      case "textarea":
         input = (
-          <textarea
-            id={inputId}
-            value={String(value)}
-            onInput={handleChange}
-            placeholder={schema.placeholder || ''}
-          />
+          <textarea id={inputId} value={String(value)} onInput={handleChange} placeholder={schema.placeholder || ""} />
         );
         break;
 
-      case 'range':
+      case "range":
         input = (
           <div>
             <input
@@ -974,39 +990,42 @@ class SettingsPage extends Component {
               value={Number(value)}
               onChange={handleChange}
             />
-            <div class="ink-settings-range-value">{value}{schema.unit || ''}</div>
+            <div class="ink-settings-range-value">
+              {value}
+              {schema.unit || ""}
+            </div>
           </div>
         );
         break;
 
-      case 'password':
+      case "password":
         input = (
           <input
             id={inputId}
             type="password"
             value={String(value)}
             onInput={handleChange}
-            placeholder={schema.placeholder || ''}
+            placeholder={schema.placeholder || ""}
             autocomplete="off"
             spellcheck="false"
           />
         );
         break;
 
-      case 'url':
+      case "url":
         input = (
           <input
             id={inputId}
             type="url"
             value={String(value)}
             onInput={handleChange}
-            placeholder={schema.placeholder || 'https://…'}
+            placeholder={schema.placeholder || "https://…"}
             spellcheck="false"
           />
         );
         break;
 
-      case 'number':
+      case "number":
         input = (
           <input
             id={inputId}
@@ -1015,8 +1034,8 @@ class SettingsPage extends Component {
             onInput={handleChange}
             min={schema.minimum}
             max={schema.maximum}
-            step={schema.step || 'any'}
-            placeholder={schema.placeholder || ''}
+            step={schema.step || "any"}
+            placeholder={schema.placeholder || ""}
           />
         );
         break;
@@ -1028,7 +1047,7 @@ class SettingsPage extends Component {
             type="text"
             value={String(value)}
             onInput={handleChange}
-            placeholder={schema.placeholder || ''}
+            placeholder={schema.placeholder || ""}
             spellcheck="false"
           />
         );
@@ -1036,7 +1055,7 @@ class SettingsPage extends Component {
 
     return (
       <div class="ink-settings-field" key={fieldKey}>
-        {type !== 'checkbox' && (
+        {type !== "checkbox" && (
           <label class="ink-settings-field-label" for={inputId}>
             {schema.label || fieldKey}
             {isAdvanced && <span class="ink-advanced-badge">Advanced</span>}
@@ -1050,14 +1069,14 @@ class SettingsPage extends Component {
   }
 
   _renderSection(section) {
-    const sectionKey = section.key || section.name || 'unknown';
+    const sectionKey = section.key || section.name || "unknown";
     const isCollapsed = !!this.state.collapsedSections[sectionKey];
     const fields = section.fields || {};
     const fieldKeys = Object.keys(fields);
 
     // Filter by search
     const query = this.state.searchQuery;
-    const visibleFields = fieldKeys.filter(k => {
+    const visibleFields = fieldKeys.filter((k) => {
       const schema = fields[k];
       if (isAdvancedField(schema) && !this.state.showAdvanced) return false;
       if (query && !fieldMatchesSearch(k, schema, query)) return false;
@@ -1073,18 +1092,20 @@ class SettingsPage extends Component {
           onClick={() => this._toggleSection(sectionKey)}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') this._toggleSection(sectionKey); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") this._toggleSection(sectionKey);
+          }}
         >
           <div>
             <h3>{section.label || section.name || sectionKey}</h3>
             {section.description && <div class="ink-section-desc">{section.description}</div>}
           </div>
-          <span class={`ink-section-toggle${isCollapsed ? '' : ' open'}`}>▼</span>
+          <span class={`ink-section-toggle${isCollapsed ? "" : " open"}`}>▼</span>
         </div>
         {!isCollapsed && (
           <div class="ink-settings-section-body">
             {visibleFields.length > 0 ? (
-              visibleFields.map(fk => this._renderField(sectionKey, fk, fields[fk]))
+              visibleFields.map((fk) => this._renderField(sectionKey, fk, fields[fk]))
             ) : (
               <div class="ink-settings-empty">No settings in this section</div>
             )}
@@ -1100,7 +1121,7 @@ class SettingsPage extends Component {
 
     return (
       <div class="ink-settings-provider-form">
-        <h4>{this.state.editingProvider === '__new__' ? 'Add Provider' : 'Edit Provider'}</h4>
+        <h4>{this.state.editingProvider === "__new__" ? "Add Provider" : "Edit Provider"}</h4>
 
         {providerFormErrors && (
           <div class="ink-settings-field-error" style="margin-bottom:var(--ink-space-md)">
@@ -1114,7 +1135,7 @@ class SettingsPage extends Component {
             <input
               type="text"
               value={providerFormData.name}
-              onInput={(e) => this._handleProviderFormChange('name', e.target.value)}
+              onInput={(e) => this._handleProviderFormChange("name", e.target.value)}
               placeholder="My Indexer"
             />
           </div>
@@ -1123,7 +1144,7 @@ class SettingsPage extends Component {
             <input
               type="text"
               value={providerFormData.type}
-              onInput={(e) => this._handleProviderFormChange('type', e.target.value)}
+              onInput={(e) => this._handleProviderFormChange("type", e.target.value)}
               placeholder="newznab / torznab / etc."
             />
           </div>
@@ -1136,7 +1157,7 @@ class SettingsPage extends Component {
             onInput={(e) => {
               try {
                 const parsed = JSON.parse(e.target.value);
-                this._handleProviderFormChange('config', parsed);
+                this._handleProviderFormChange("config", parsed);
               } catch {
                 // Allow editing even if invalid JSON temporarily
               }
@@ -1148,9 +1169,11 @@ class SettingsPage extends Component {
 
         <div class="ink-settings-provider-form-actions">
           <button class="ink-btn-primary" onClick={this._handleProviderFormSubmit}>
-            {this.state.editingProvider === '__new__' ? 'Add Provider' : 'Update Provider'}
+            {this.state.editingProvider === "__new__" ? "Add Provider" : "Update Provider"}
           </button>
-          <button class="ink-btn-ghost" onClick={this._handleProviderFormCancel}>Cancel</button>
+          <button class="ink-btn-ghost" onClick={this._handleProviderFormCancel}>
+            Cancel
+          </button>
         </div>
       </div>
     );
@@ -1165,17 +1188,15 @@ class SettingsPage extends Component {
         {this._renderProviderForm()}
 
         {providers.length === 0 && !this.state.editingProvider ? (
-          <div class="ink-settings-empty">
-            No providers configured. Click "Add Provider" to get started.
-          </div>
+          <div class="ink-settings-empty">No providers configured. Click "Add Provider" to get started.</div>
         ) : (
           <div class="ink-settings-providers">
-            {providers.map(provider => (
+            {providers.map((provider) => (
               <div class="ink-settings-provider-card" key={provider.id}>
                 <div class="ink-settings-provider-card-header">
                   <div>
                     <div class="ink-settings-provider-card-name">{provider.name || provider.id}</div>
-                    <div class="ink-settings-provider-card-type">{provider.type || 'Unknown type'}</div>
+                    <div class="ink-settings-provider-card-type">{provider.type || "Unknown type"}</div>
                   </div>
                   <div class="ink-settings-provider-card-actions">
                     <button
@@ -1191,7 +1212,7 @@ class SettingsPage extends Component {
                       disabled={this.state.testingProvider === provider.id}
                       title="Test provider"
                     >
-                      {this.state.testingProvider === provider.id ? '…' : '🔍'}
+                      {this.state.testingProvider === provider.id ? "…" : "🔍"}
                     </button>
                     <button
                       class="ink-btn-ghost ink-btn-sm"
@@ -1205,12 +1226,16 @@ class SettingsPage extends Component {
                 </div>
                 {provider.config && Object.keys(provider.config).length > 0 && (
                   <dl class="ink-settings-provider-card-config">
-                    {Object.entries(provider.config).slice(0, 4).map(([k, v]) => (
-                      <span key={k}>
-                        <dt>{k}:</dt>{' '}
-                        <dd>{typeof v === 'string' && v.length > 40 ? v.slice(0, 40) + '…' : JSON.stringify(v)}</dd>{' '}
-                      </span>
-                    ))}
+                    {Object.entries(provider.config)
+                      .slice(0, 4)
+                      .map(([k, v]) => (
+                        <span key={k}>
+                          <dt>{k}:</dt>{" "}
+                          <dd>
+                            {typeof v === "string" && v.length > 40 ? v.slice(0, 40) + "…" : JSON.stringify(v)}
+                          </dd>{" "}
+                        </span>
+                      ))}
                     {Object.keys(provider.config).length > 4 && (
                       <span class="ink-mini">+{Object.keys(provider.config).length - 4} more</span>
                     )}
@@ -1230,21 +1255,284 @@ class SettingsPage extends Component {
     );
   }
 
+  /* ── Download Client Methods ──────────────────────────────────────── */
+
+  async _loadDownloadClients() {
+    this.setState({ dcLoading: true });
+    try {
+      const [dcList, dcRegistry, dcStatus] = await Promise.all([
+        api.downloadClients.list(),
+        api.downloadClients.registry(),
+        api.downloadClients.status(),
+      ]);
+      this.setState({ dcList, dcRegistry, dcStatus, dcLoading: false });
+    } catch (err) {
+      this.setState({ dcLoading: false });
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Failed to load download clients", "error");
+    }
+  }
+
+  _handleDcAdd() {
+    this.setState({
+      dcShowForm: true,
+      dcEditing: null,
+      dcFormData: { name: "", type: "", url: "", api_key: "", username: "", password: "", category: "" },
+    });
+  }
+
+  _handleDcEdit(client) {
+    this.setState({
+      dcShowForm: true,
+      dcEditing: client,
+      dcFormData: {
+        name: client.name || "",
+        type: client.type || "",
+        url: client.url || "",
+        api_key: client.api_key || "",
+        username: client.username || "",
+        password: client.password || "",
+        category: client.category || "",
+      },
+    });
+  }
+
+  async _handleDcSave() {
+    const { dcEditing, dcFormData } = this.state;
+    try {
+      if (dcEditing) {
+        await api.downloadClients.update(dcEditing.id, dcFormData);
+        toast("Download client updated", "success");
+      } else {
+        await api.downloadClients.create(dcFormData);
+        toast("Download client created", "success");
+      }
+      this.setState({ dcShowForm: false, dcEditing: null });
+      this._loadDownloadClients();
+    } catch (err) {
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Failed to save download client", "error");
+    }
+  }
+
+  async _handleDcDelete(client) {
+    if (!confirm(`Delete download client "${client.name}"?`)) return;
+    try {
+      await api.downloadClients.delete(client.id, client.revision);
+      toast("Download client deleted", "success");
+      this._loadDownloadClients();
+    } catch (err) {
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Failed to delete download client", "error");
+    }
+  }
+
+  async _handleDcTest(client) {
+    this.setState({ dcTesting: true, dcTestResult: null });
+    try {
+      const result = await api.downloadClients.testInstance(client.id);
+      const msg = result?.message || result?.status || "Test completed";
+      toast(msg, result?.connected ? "success" : "error");
+      this.setState({ dcTesting: false, dcTestResult: result });
+    } catch (err) {
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Test failed", "error");
+      this.setState({ dcTesting: false });
+    }
+  }
+
+  async _handleDcTestAll() {
+    this.setState({ dcTesting: true, dcTestAllResult: null });
+    try {
+      const result = await api.downloadClients.testAll();
+      const msg = result?.message || "All clients tested";
+      toast(msg, "success");
+      this.setState({ dcTesting: false, dcTestAllResult: result });
+    } catch (err) {
+      toast(api.friendlyMessage ? api.friendlyMessage(err) : "Test all failed", "error");
+      this.setState({ dcTesting: false });
+    }
+  }
+
+  _handleDcFormChange(field, value) {
+    this.setState((prev) => ({
+      dcFormData: { ...prev.dcFormData, [field]: value },
+    }));
+  }
+
   _renderDownloadClients() {
+    const { dcLoading, dcList, dcRegistry, dcStatus, dcShowForm, dcEditing, dcFormData, dcTesting } = this.state;
+
+    if (dcLoading && dcList.length === 0) {
+      return (
+        <div class="ink-empty">
+          <div class="ink-spinner" />
+          <div class="ink-empty-title">Loading download clients...</div>
+        </div>
+      );
+    }
+
+    // Client type registry for form dropdown
+    const types = dcRegistry?.download_clients || dcRegistry || [];
+
     return (
-      <div class="ink-settings-dc-placeholder">
-        <div style="font-size:2rem;opacity:0.4">📥</div>
-        <h3 style="font-size:var(--ink-text-lg);font-weight:600">Download Clients</h3>
-        <p>
-          Manage your download clients — SABnzbd, NZBGet, qBittorrent, Deluge, and more.
-          Configure connections, test connectivity, and monitor active downloads.
-        </p>
-        <button
-          class="ink-btn-primary ink-btn-lg"
-          onClick={() => window.dispatchEvent(new CustomEvent('inkdrop:open-download-clients'))}
-        >
-          Open Download Clients
-        </button>
+      <div>
+        {/* Client list */}
+        {dcList.length === 0 ? (
+          <div class="ink-empty">
+            <div class="ink-empty-icon">📥</div>
+            <div class="ink-empty-title">No Download Clients</div>
+            <p class="ink-mini">Add a download client to enable automatic grabbing.</p>
+          </div>
+        ) : (
+          <div style="display:flex;flex-direction:column;gap:var(--ink-space-md);">
+            {dcList.map((client) => {
+              const status = dcStatus?.clients?.find((c) => c.id === client.id);
+              const isOnline = status?.connected === true;
+              return (
+                <div
+                  key={client.id}
+                  style="display:flex;align-items:center;gap:var(--ink-space-md);padding:var(--ink-space-md);background:var(--ink-bg-surface);border:1px solid var(--ink-border-subtle);border-radius:var(--ink-radius-lg);"
+                >
+                  <div style="flex:1;min-width:0;">
+                    <div style="display:flex;align-items:center;gap:var(--ink-space-sm);">
+                      <span style="font-weight:600;font-size:var(--ink-text-base);">{client.name}</span>
+                      <span class={`ink-pill ${isOnline ? "ink-pill-success" : "ink-pill-muted"}`}>{client.type}</span>
+                      {isOnline && <span class="ink-pill ink-pill-success">Online</span>}
+                      {status && !isOnline && <span class="ink-pill ink-pill-danger">Offline</span>}
+                    </div>
+                    <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);margin-top:2px;">
+                      {client.url || "—"}
+                    </div>
+                    {status?.message && (
+                      <div style="font-size:var(--ink-text-xs);color:var(--ink-text-muted);margin-top:2px;">
+                        {status.message}
+                      </div>
+                    )}
+                  </div>
+                  <div style="display:flex;gap:var(--ink-space-xs);flex-shrink:0;">
+                    <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._handleDcTest(client)} type="button">
+                      Test
+                    </button>
+                    <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._handleDcEdit(client)} type="button">
+                      Edit
+                    </button>
+                    <button
+                      class="ink-btn-ghost ink-btn-sm"
+                      style="color:var(--ink-danger)"
+                      onClick={() => this._handleDcDelete(client)}
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Add / Test All buttons */}
+        <div style="display:flex;gap:var(--ink-space-sm);margin-top:var(--ink-space-md);">
+          <button class="ink-btn-primary ink-btn-sm" onClick={() => this._handleDcAdd()} type="button">
+            + Add Download Client
+          </button>
+          {dcList.length > 0 && (
+            <button
+              class="ink-btn-ghost ink-btn-sm"
+              onClick={() => this._handleDcTestAll()}
+              type="button"
+              disabled={dcTesting}
+            >
+              Test All
+            </button>
+          )}
+        </div>
+
+        {/* Add/Edit form modal */}
+        {dcShowForm && (
+          <div
+            class="ink-dialog-backdrop"
+            onClick={(e) => e.target === e.currentTarget && this.setState({ dcShowForm: false })}
+          >
+            <div class="ink-dialog" style="max-width:560px;">
+              <div class="ink-dialog-header">
+                <h2>{dcEditing ? "Edit Download Client" : "Add Download Client"}</h2>
+              </div>
+              <div class="ink-dialog-body">
+                <div class="ink-field">
+                  <label class="ink-field-label">Name</label>
+                  <input
+                    type="text"
+                    value={dcFormData.name}
+                    onInput={(e) => this._handleDcFormChange("name", e.target.value)}
+                    placeholder="My SABnzbd"
+                  />
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">Type</label>
+                  <select value={dcFormData.type} onChange={(e) => this._handleDcFormChange("type", e.target.value)}>
+                    <option value="">Select type...</option>
+                    {types.map((t) => (
+                      <option key={t.id || t.type || t.name} value={t.type || t.id}>
+                        {t.name || t.type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">URL</label>
+                  <input
+                    type="url"
+                    value={dcFormData.url}
+                    onInput={(e) => this._handleDcFormChange("url", e.target.value)}
+                    placeholder="http://localhost:8080"
+                  />
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">API Key</label>
+                  <input
+                    type="password"
+                    value={dcFormData.api_key}
+                    onInput={(e) => this._handleDcFormChange("api_key", e.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">Username</label>
+                  <input
+                    type="text"
+                    value={dcFormData.username}
+                    onInput={(e) => this._handleDcFormChange("username", e.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">Password</label>
+                  <input
+                    type="password"
+                    value={dcFormData.password}
+                    onInput={(e) => this._handleDcFormChange("password", e.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div class="ink-field">
+                  <label class="ink-field-label">Category</label>
+                  <input
+                    type="text"
+                    value={dcFormData.category}
+                    onInput={(e) => this._handleDcFormChange("category", e.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+              </div>
+              <div class="ink-dialog-footer">
+                <button class="ink-btn-ghost" onClick={() => this.setState({ dcShowForm: false })} type="button">
+                  Cancel
+                </button>
+                <button class="ink-btn-primary" onClick={() => this._handleDcSave()} type="button">
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1252,19 +1540,22 @@ class SettingsPage extends Component {
   _renderBackupSection() {
     return (
       <div class="ink-settings-section">
-        <div class="ink-settings-section-header"
-          onClick={() => this._toggleSection('__backup__')}
+        <div
+          class="ink-settings-section-header"
+          onClick={() => this._toggleSection("__backup__")}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') this._toggleSection('__backup__'); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") this._toggleSection("__backup__");
+          }}
         >
           <div>
             <h3>Backup & Restore</h3>
             <div class="ink-section-desc">Export, preview, and restore your InkDrop settings</div>
           </div>
-          <span class={`ink-section-toggle${this.state.collapsedSections['__backup__'] ? '' : ' open'}`}>▼</span>
+          <span class={`ink-section-toggle${this.state.collapsedSections["__backup__"] ? "" : " open"}`}>▼</span>
         </div>
-        {!this.state.collapsedSections['__backup__'] && (
+        {!this.state.collapsedSections["__backup__"] && (
           <div class="ink-settings-section-body">
             <div class="ink-settings-backup-actions">
               <button
@@ -1272,7 +1563,7 @@ class SettingsPage extends Component {
                 onClick={this._handleBackupExport}
                 disabled={this.state.backupLoading}
               >
-                {this.state.backupLoading ? 'Exporting…' : '📤 Export Backup'}
+                {this.state.backupLoading ? "Exporting…" : "📤 Export Backup"}
               </button>
             </div>
 
@@ -1289,14 +1580,14 @@ class SettingsPage extends Component {
                   onClick={this._handleBackupPreview}
                   disabled={this.state.backupPreviewLoading || !this.state.restoreText.trim()}
                 >
-                  {this.state.backupPreviewLoading ? 'Generating…' : '🔍 Preview'}
+                  {this.state.backupPreviewLoading ? "Generating…" : "🔍 Preview"}
                 </button>
                 <button
                   class="ink-btn-danger ink-btn-sm"
                   onClick={this._handleBackupRestore}
                   disabled={this.state.restoreLoading || !this.state.restoreText.trim()}
                 >
-                  {this.state.restoreLoading ? 'Restoring…' : '⚠️ Restore'}
+                  {this.state.restoreLoading ? "Restoring…" : "⚠️ Restore"}
                 </button>
               </div>
             </div>
@@ -1318,16 +1609,16 @@ class SettingsPage extends Component {
     const { area, loading, error, data, showAdvanced, searchQuery, unsavedChanges } = this.state;
 
     const areaLabels = {
-      setup: 'Setup',
-      media_management: 'Media Management',
-      language: 'Language',
-      indexers: 'Indexers',
-      download_clients: 'Download Clients',
-      connect: 'Connect',
-      metadata: 'Metadata',
-      general: 'General',
-      ui: 'UI',
-      root_folders: 'Paths',
+      setup: "Setup",
+      media_management: "Media Management",
+      language: "Language",
+      indexers: "Indexers",
+      download_clients: "Download Clients",
+      connect: "Connect",
+      metadata: "Metadata",
+      general: "General",
+      ui: "UI",
+      root_folders: "Paths",
     };
 
     const areaLabel = areaLabels[area] || area;
@@ -1392,12 +1683,12 @@ class SettingsPage extends Component {
         {!loading && !error && data && (
           <div>
             {/* Download Clients — special placeholder */}
-            {area === 'download_clients' ? (
+            {area === "download_clients" ? (
               this._renderDownloadClients()
             ) : (
               <>
                 {/* Provider/Indexer areas — show provider cards + form */}
-                {(area === 'indexers' || area === 'connect') ? (
+                {area === "indexers" || area === "connect" ? (
                   <>
                     {this._renderProviders()}
                     {this._renderBackupSection()}
@@ -1406,22 +1697,27 @@ class SettingsPage extends Component {
                   <>
                     {/* App settings sections */}
                     {data.areas && data.areas.length > 0 ? (
-                      data.areas.map(section => this._renderSection(section))
+                      data.areas.map((section) => this._renderSection(section))
                     ) : data.app && Object.keys(data.app).length > 0 ? (
                       /* Fallback: render app keys as a single section */
                       <div class="ink-settings-section">
-                        <div class="ink-settings-section-header"
-                          onClick={() => this._toggleSection('__app__')}
+                        <div
+                          class="ink-settings-section-header"
+                          onClick={() => this._toggleSection("__app__")}
                           role="button"
                           tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') this._toggleSection('__app__'); }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") this._toggleSection("__app__");
+                          }}
                         >
                           <div>
                             <h3>{areaLabel} Settings</h3>
                           </div>
-                          <span class={`ink-section-toggle${this.state.collapsedSections['__app__'] ? '' : ' open'}`}>▼</span>
+                          <span class={`ink-section-toggle${this.state.collapsedSections["__app__"] ? "" : " open"}`}>
+                            ▼
+                          </span>
                         </div>
-                        {!this.state.collapsedSections['__app__'] && (
+                        {!this.state.collapsedSections["__app__"] && (
                           <div class="ink-settings-section-body">
                             {Object.entries(data.app).map(([key, value]) => (
                               <div class="ink-settings-field" key={key}>
@@ -1433,9 +1729,7 @@ class SettingsPage extends Component {
                         )}
                       </div>
                     ) : (
-                      <div class="ink-settings-empty">
-                        No settings available for this area.
-                      </div>
+                      <div class="ink-settings-empty">No settings available for this area.</div>
                     )}
 
                     {this._renderBackupSection()}

@@ -3,9 +3,9 @@
  * Dashboard showing current transfers, downloads, and import activity.
  */
 
-import { h, Component, Fragment } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component, Fragment } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 const styles = `
 .ink-activity-page { padding-bottom: var(--ink-space-2xl); }
@@ -335,10 +335,7 @@ class ActivityPage extends Component {
 
   async _load() {
     try {
-      const [summaryRes, currentRes] = await Promise.all([
-        api.activity.summary(),
-        api.activity.current({ limit: 50 }),
-      ]);
+      const [summaryRes, currentRes] = await Promise.all([api.activity.summary(), api.activity.current({ limit: 50 })]);
 
       this.setState({
         loading: false,
@@ -350,7 +347,7 @@ class ActivityPage extends Component {
     } catch (err) {
       this.setState({
         loading: false,
-        error: err.message || 'Failed to load activity data',
+        error: err.message || "Failed to load activity data",
       });
     }
   }
@@ -371,54 +368,57 @@ class ActivityPage extends Component {
     try {
       const res = await api.activity.detail(id);
       if (res.ok) {
-        this.setState(prev => ({
+        this.setState((prev) => ({
           expandedId: id,
           detailLoading: null,
           detailCache: { ...prev.detailCache, [id]: res.activity },
         }));
       } else {
         this.setState({ detailLoading: null });
-        toast('Failed to load activity detail', 'error');
+        toast("Failed to load activity detail", "error");
       }
     } catch (err) {
       this.setState({ detailLoading: null });
-      toast(err.message || 'Failed to load activity detail', 'error');
+      toast(err.message || "Failed to load activity detail", "error");
     }
   }
 
   _stageClass(stage) {
-    const s = (stage || '').toLowerCase();
-    if (s.includes('download')) return 'ink-activity-stage-downloading';
-    if (s.includes('import')) return 'ink-activity-stage-importing';
-    if (s.includes('queue') || s.includes('wait')) return 'ink-activity-stage-queued';
-    if (s.includes('complete') || s.includes('done')) return 'ink-activity-stage-complete';
-    if (s.includes('error') || s.includes('fail')) return 'ink-activity-stage-error';
-    return 'ink-activity-stage-queued';
+    const s = (stage || "").toLowerCase();
+    if (s.includes("download")) return "ink-activity-stage-downloading";
+    if (s.includes("import")) return "ink-activity-stage-importing";
+    if (s.includes("queue") || s.includes("wait")) return "ink-activity-stage-queued";
+    if (s.includes("complete") || s.includes("done")) return "ink-activity-stage-complete";
+    if (s.includes("error") || s.includes("fail")) return "ink-activity-stage-error";
+    return "ink-activity-stage-queued";
   }
 
   _progressFillClass(stage) {
-    const s = (stage || '').toLowerCase();
-    if (s.includes('download')) return 'ink-activity-progress-fill-downloading';
-    if (s.includes('import')) return 'ink-activity-progress-fill-importing';
-    if (s.includes('queue') || s.includes('wait')) return 'ink-activity-progress-fill-queued';
-    if (s.includes('complete') || s.includes('done')) return 'ink-activity-progress-fill-complete';
-    if (s.includes('error') || s.includes('fail')) return 'ink-activity-progress-fill-error';
-    return 'ink-activity-progress-fill-queued';
+    const s = (stage || "").toLowerCase();
+    if (s.includes("download")) return "ink-activity-progress-fill-downloading";
+    if (s.includes("import")) return "ink-activity-progress-fill-importing";
+    if (s.includes("queue") || s.includes("wait")) return "ink-activity-progress-fill-queued";
+    if (s.includes("complete") || s.includes("done")) return "ink-activity-progress-fill-complete";
+    if (s.includes("error") || s.includes("fail")) return "ink-activity-progress-fill-error";
+    return "ink-activity-progress-fill-queued";
   }
 
   _formatSpeed(bytesPerSec) {
-    if (bytesPerSec == null || isNaN(bytesPerSec)) return '—';
-    if (bytesPerSec === 0) return '0 B/s';
-    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    if (bytesPerSec == null || isNaN(bytesPerSec)) return "—";
+    if (bytesPerSec === 0) return "0 B/s";
+    const units = ["B/s", "KB/s", "MB/s", "GB/s"];
     let i = 0;
     let val = bytesPerSec;
-    while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+    while (val >= 1024 && i < units.length - 1) {
+      val /= 1024;
+      i++;
+    }
     return `${val.toFixed(1)} ${units[i]}`;
   }
 
   _formatETA(seconds) {
-    if (seconds == null || isNaN(seconds) || seconds < 0) return '—';
-    if (seconds === 0) return 'Complete';
+    if (seconds == null || isNaN(seconds) || seconds < 0) return "—";
+    if (seconds === 0) return "Complete";
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
@@ -432,28 +432,33 @@ class ActivityPage extends Component {
     if (!summary) return null;
 
     const chips = [
-      { key: 'total', label: 'Total', value: summary.total ?? 0, cls: 'ink-activity-chip-total' },
-      { key: 'downloading', label: 'Downloading', value: summary.downloading ?? 0, cls: 'ink-activity-chip-downloading' },
-      { key: 'importing', label: 'Importing', value: summary.importing ?? 0, cls: 'ink-activity-chip-importing' },
-      { key: 'queued', label: 'Queued', value: summary.queued ?? 0, cls: 'ink-activity-chip-queued' },
+      { key: "total", label: "Total", value: summary.total ?? 0, cls: "ink-activity-chip-total" },
+      {
+        key: "downloading",
+        label: "Downloading",
+        value: summary.downloading ?? 0,
+        cls: "ink-activity-chip-downloading",
+      },
+      { key: "importing", label: "Importing", value: summary.importing ?? 0, cls: "ink-activity-chip-importing" },
+      { key: "queued", label: "Queued", value: summary.queued ?? 0, cls: "ink-activity-chip-queued" },
     ];
 
     // Add any extra keys from the summary that aren't the standard ones
-    const known = new Set(['total', 'downloading', 'importing', 'queued']);
+    const known = new Set(["total", "downloading", "importing", "queued"]);
     for (const [key, value] of Object.entries(summary)) {
-      if (!known.has(key) && typeof value === 'number') {
+      if (!known.has(key) && typeof value === "number") {
         chips.push({
           key,
-          label: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          label: key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
           value,
-          cls: 'ink-activity-chip-other',
+          cls: "ink-activity-chip-other",
         });
       }
     }
 
     return (
       <div class="ink-activity-chips">
-        {chips.map(chip => (
+        {chips.map((chip) => (
           <div key={chip.key} class={`ink-activity-chip ${chip.cls}`}>
             <span class="ink-activity-chip-value">{chip.value}</span>
             <span class="ink-activity-chip-label">{chip.label}</span>
@@ -490,23 +495,21 @@ class ActivityPage extends Component {
             </tr>
           </thead>
           <tbody>
-            {activity.map(item => (
+            {activity.map((item) => (
               <Fragment key={item.id || item._id}>
                 <tr onClick={() => this._toggleDetail(item.id || item._id)}>
                   <td>
                     <span class="ink-activity-series-name" title={item.series_name || item.series}>
-                      {item.series_name || item.series || '—'}
+                      {item.series_name || item.series || "—"}
                     </span>
                   </td>
                   <td>
                     <span class="ink-activity-issue" title={item.issue || item.title}>
-                      {item.issue || item.title || '—'}
+                      {item.issue || item.title || "—"}
                     </span>
                   </td>
                   <td>
-                    <span class={`ink-activity-stage ${this._stageClass(item.stage)}`}>
-                      {item.stage || '—'}
-                    </span>
+                    <span class={`ink-activity-stage ${this._stageClass(item.stage)}`}>{item.stage || "—"}</span>
                   </td>
                   <td class="ink-activity-progress-cell">
                     <div class="ink-activity-progress-wrap">
@@ -517,19 +520,15 @@ class ActivityPage extends Component {
                         />
                       </div>
                       <span class="ink-activity-progress-pct">
-                        {item.progress != null ? `${Math.round(item.progress)}%` : '—'}
+                        {item.progress != null ? `${Math.round(item.progress)}%` : "—"}
                       </span>
                     </div>
                   </td>
                   <td>
-                    <span class="ink-activity-speed">
-                      {this._formatSpeed(item.speed || item.download_speed)}
-                    </span>
+                    <span class="ink-activity-speed">{this._formatSpeed(item.speed || item.download_speed)}</span>
                   </td>
                   <td>
-                    <span class="ink-activity-eta">
-                      {this._formatETA(item.eta || item.estimated_seconds)}
-                    </span>
+                    <span class="ink-activity-eta">{this._formatETA(item.eta || item.estimated_seconds)}</span>
                   </td>
                 </tr>
                 {expandedId === (item.id || item._id) && (
@@ -560,15 +559,15 @@ class ActivityPage extends Component {
 
     const fields = [];
     for (const [key, value] of Object.entries(detail)) {
-      if (value == null || value === '' || key.startsWith('_')) continue;
-      const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      const display = typeof value === 'object' ? JSON.stringify(value, null, 1) : String(value);
+      if (value == null || value === "" || key.startsWith("_")) continue;
+      const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      const display = typeof value === "object" ? JSON.stringify(value, null, 1) : String(value);
       fields.push({ key, label, value: display });
     }
 
     return (
       <div class="ink-activity-detail-grid">
-        {fields.map(f => (
+        {fields.map((f) => (
           <div key={f.key} class="ink-activity-detail-field">
             <span class="ink-activity-detail-field-label">{f.label}</span>
             <span class="ink-activity-detail-field-value">{f.value}</span>
@@ -585,11 +584,7 @@ class ActivityPage extends Component {
       <div class="ink-page ink-activity-page">
         <style>{styles}</style>
 
-        {error && (
-          <div class="ink-activity-error">
-            {error}
-          </div>
-        )}
+        {error && <div class="ink-activity-error">{error}</div>}
 
         {loading ? (
           <div class="ink-loading">
@@ -603,7 +598,11 @@ class ActivityPage extends Component {
               <div class="ink-activity-toolbar-left">
                 <span class="ink-activity-poll-dot" />
                 <span>Auto-refreshing every 30s</span>
-                {total > 0 && <span>· {total} item{total !== 1 ? 's' : ''}</span>}
+                {total > 0 && (
+                  <span>
+                    · {total} item{total !== 1 ? "s" : ""}
+                  </span>
+                )}
               </div>
               <div class="ink-activity-toolbar-right">
                 <button class="ink-btn-ghost ink-btn-sm" onClick={this._load}>

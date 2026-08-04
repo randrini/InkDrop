@@ -3,44 +3,49 @@
  * Bootstraps auth, router, and mounts the Preact app.
  */
 
-import { h, render } from 'preact';
-import { appStore, useStoreKey } from './stores/app-store.jsx';
-import api from './api/client.jsx';
-import { router } from './router.jsx';
+import { h, render } from "preact";
+import { appStore, useStoreKey } from "./stores/app-store.jsx";
+import api from "./api/client.jsx";
+import { router } from "./router.jsx";
 
 // Layout
-import { AppShell } from './components/AppShell.jsx';
-import { AuthGate } from './components/AuthGate.jsx';
+import { AppShell } from "./components/AppShell.jsx";
+import { AuthGate } from "./components/AuthGate.jsx";
 
 // Pages
-import { SeriesPage } from './pages/SeriesPage.jsx';
-import { WantedPage } from './pages/WantedPage.jsx';
-import { ActivityPage } from './pages/ActivityPage.jsx';
-import { QueuePage } from './pages/QueuePage.jsx';
-import { HistoryPage } from './pages/HistoryPage.jsx';
-import { ManualReviewPage } from './pages/ManualReviewPage.jsx';
-import { SettingsPage } from './pages/SettingsPage.jsx';
-import { SystemPage } from './pages/SystemPage.jsx';
-import { CalendarPage } from './pages/CalendarPage.jsx';
+import { SeriesPage } from "./pages/SeriesPage.jsx";
+import { SeriesDetailPage } from "./pages/SeriesDetailPage.jsx";
+import { WantedPage } from "./pages/WantedPage.jsx";
+import { ActivityPage } from "./pages/ActivityPage.jsx";
+import { QueuePage } from "./pages/QueuePage.jsx";
+import { HistoryPage } from "./pages/HistoryPage.jsx";
+import { ManualReviewPage } from "./pages/ManualReviewPage.jsx";
+import { SettingsPage } from "./pages/SettingsPage.jsx";
+import { SystemPage } from "./pages/SystemPage.jsx";
+import { CalendarPage } from "./pages/CalendarPage.jsx";
+import { SourceMemoryPage } from "./pages/SourceMemoryPage.jsx";
 
 // Overlays
-import { ManualSearchOverlay } from './components/ManualSearchOverlay.jsx';
-import { ToastContainer } from './components/Toast.jsx';
+import { ManualSearchOverlay } from "./components/ManualSearchOverlay.jsx";
+import { ToastContainer } from "./components/Toast.jsx";
 
 // Styles
-import './styles/base.css';
-import './styles/layout.css';
-import './styles/sidebar.css';
-import './styles/auth.css';
+import "./styles/base.css";
+import "./styles/layout.css";
+import "./styles/sidebar.css";
+import "./styles/auth.css";
 
 // ── Toast helper ──────────────────────────────────────────────────────
 let _toastId = 0;
-export function toast(message, type = 'info', duration = 4000) {
+export function toast(message, type = "info", duration = 4000) {
   const id = ++_toastId;
-  const toasts = [...appStore.get('toasts'), { id, message, type, duration }];
-  appStore.set('toasts', toasts);
+  const toasts = [...appStore.get("toasts"), { id, message, type, duration }];
+  appStore.set("toasts", toasts);
   setTimeout(() => {
-    appStore.set('toasts', appStore.get('toasts').filter(t => t.id !== id));
+    appStore.set(
+      "toasts",
+      appStore.get("toasts").filter((t) => t.id !== id),
+    );
   }, duration);
 }
 
@@ -50,7 +55,7 @@ async function initAuth() {
     await api.refreshAuthContract();
     const data = await api.auth.status();
     if (data.ok && data.auth) {
-      const bootstrapRequired = !!(data.auth.built_in_auth?.bootstrap_required);
+      const bootstrapRequired = !!data.auth.built_in_auth?.bootstrap_required;
       const setupRequired = !!data.auth.setup_required;
 
       // If setup is required (no admin exists), show bootstrap
@@ -95,7 +100,7 @@ async function initAuth() {
       appStore.setMany({ authReady: true, authStatus: { required: false }, authenticated: true, administrator: false });
     }
   } catch (err) {
-    console.error('Auth init failed:', err);
+    console.error("Auth init failed:", err);
     // Network error — allow app to load, user can retry
     appStore.setMany({ authReady: true, authStatus: { required: false }, authenticated: true, administrator: false });
   }
@@ -107,9 +112,11 @@ async function pollStatus() {
   try {
     const data = await api.system.status();
     if (data.ok) {
-      appStore.set('sectionsData', data);
+      appStore.set("sectionsData", data);
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function startStatusPolling() {
@@ -119,25 +126,38 @@ function startStatusPolling() {
 }
 
 // ── Hash-based routing (preact-iso for future SPA, hash for now) ─────
-function resolvePage(section) {
+function resolvePage(section, params) {
   switch (section) {
-    case 'series': return SeriesPage;
-    case 'wanted': return WantedPage;
-    case 'activity': return ActivityPage;
-    case 'queue': return QueuePage;
-    case 'history': return HistoryPage;
-    case 'manual_review': return ManualReviewPage;
-    case 'settings': return SettingsPage;
-    case 'system': return SystemPage;
-    case 'calendar': return CalendarPage;
-    default: return SeriesPage;
+    case "series":
+      return params?.id ? SeriesDetailPage : SeriesPage;
+    case "wanted":
+      return WantedPage;
+    case "activity":
+      return ActivityPage;
+    case "queue":
+      return QueuePage;
+    case "history":
+      return HistoryPage;
+    case "manual_review":
+      return ManualReviewPage;
+    case "settings":
+      return SettingsPage;
+    case "system":
+      return SystemPage;
+    case "calendar":
+      return CalendarPage;
+    case "source_memory":
+      return SourceMemoryPage;
+    default:
+      return SeriesPage;
   }
 }
 
 // ── Main App Component ───────────────────────────────────────────────
 function App() {
-  const section = useStoreKey(appStore, 'currentSection');
-  const Page = resolvePage(section);
+  const section = useStoreKey(appStore, "currentSection");
+  const params = useStoreKey(appStore, "routeParams");
+  const Page = resolvePage(section, params);
 
   return (
     <AuthGate>
@@ -154,14 +174,17 @@ function App() {
 async function boot() {
   await initAuth();
   router.startRouter();
-  if (appStore.get('authenticated')) {
+  if (appStore.get("authenticated")) {
     startStatusPolling();
   }
-  appStore.subscribeKey('authenticated', (val) => {
+  appStore.subscribeKey("authenticated", (val) => {
     if (val) startStatusPolling();
-    else if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null; }
+    else if (_statusTimer) {
+      clearInterval(_statusTimer);
+      _statusTimer = null;
+    }
   });
-  render(<App />, document.getElementById('app'));
+  render(<App />, document.getElementById("app"));
 }
 
 boot();

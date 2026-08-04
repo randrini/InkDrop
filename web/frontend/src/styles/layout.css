@@ -112,9 +112,15 @@
   flex-shrink: 0;
 }
 
-.ink-status-dot.ink-dot-ok { background: var(--ink-success); }
-.ink-status-dot.ink-dot-warn { background: var(--ink-warning); }
-.ink-status-dot.ink-dot-err { background: var(--ink-danger); }
+.ink-status-dot.ink-dot-ok {
+  background: var(--ink-success);
+}
+.ink-status-dot.ink-dot-warn {
+  background: var(--ink-warning);
+}
+.ink-status-dot.ink-dot-err {
+  background: var(--ink-danger);
+}
 
 /* ── Page Description ───────────────────────────────────────────── */
 .ink-page-description {

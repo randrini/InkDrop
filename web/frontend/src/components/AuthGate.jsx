@@ -3,24 +3,24 @@
  * Handles login, bootstrap, session validation, and account management.
  */
 
-import { h, Component } from 'preact';
-import { appStore } from '../stores/app-store.jsx';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
+import { h, Component } from "preact";
+import { appStore } from "../stores/app-store.jsx";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
 
 class AuthGate extends Component {
   constructor() {
     super();
     this.state = {
       loading: true,
-      username: '',
-      password: '',
+      username: "",
+      password: "",
       error: null,
       showBootstrap: false,
       showAccount: false,
-      newPassword: '',
-      currentPassword: '',
-      confirmPassword: '',
+      newPassword: "",
+      currentPassword: "",
+      confirmPassword: "",
       passwordError: null,
     };
     this._onSessionExpired = this._onSessionExpired.bind(this);
@@ -28,23 +28,23 @@ class AuthGate extends Component {
   }
 
   componentDidMount() {
-    window.addEventListener('inkdrop:session-expired', this._onSessionExpired);
-    window.addEventListener('inkdrop-auth-state', this._onAuthState);
+    window.addEventListener("inkdrop:session-expired", this._onSessionExpired);
+    window.addEventListener("inkdrop-auth-state", this._onAuthState);
     // Re-render when auth-related store keys change
     this._unsubs = [
-      appStore.subscribeKey('authenticated', () => this.forceUpdate()),
-      appStore.subscribeKey('authReady', () => this.forceUpdate()),
-      appStore.subscribeKey('setupRequired', () => this.forceUpdate()),
-      appStore.subscribeKey('bootstrapRequired', () => this.forceUpdate()),
+      appStore.subscribeKey("authenticated", () => this.forceUpdate()),
+      appStore.subscribeKey("authReady", () => this.forceUpdate()),
+      appStore.subscribeKey("setupRequired", () => this.forceUpdate()),
+      appStore.subscribeKey("bootstrapRequired", () => this.forceUpdate()),
     ];
     // Start session polling if authenticated
     this._startSessionPoll();
   }
 
   componentWillUnmount() {
-    window.removeEventListener('inkdrop:session-expired', this._onSessionExpired);
-    window.removeEventListener('inkdrop-auth-state', this._onAuthState);
-    if (this._unsubs) this._unsubs.forEach(fn => fn());
+    window.removeEventListener("inkdrop:session-expired", this._onSessionExpired);
+    window.removeEventListener("inkdrop-auth-state", this._onAuthState);
+    if (this._unsubs) this._unsubs.forEach((fn) => fn());
     this._stopSessionPoll();
   }
 
@@ -56,14 +56,14 @@ class AuthGate extends Component {
   _onAuthState(e) {
     const detail = e.detail || {};
     if (detail.administrator !== undefined) {
-      appStore.set('administrator', detail.administrator);
+      appStore.set("administrator", detail.administrator);
     }
   }
 
   _startSessionPoll() {
     this._stopSessionPoll();
     this._pollTimer = setInterval(async () => {
-      if (!appStore.get('authenticated')) return;
+      if (!appStore.get("authenticated")) return;
       try {
         const data = await api.auth.session();
         if (!data.ok) {
@@ -77,7 +77,10 @@ class AuthGate extends Component {
   }
 
   _stopSessionPoll() {
-    if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+    if (this._pollTimer) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
   }
 
   async _handleLogin(e) {
@@ -93,10 +96,10 @@ class AuthGate extends Component {
           principal: session.principal,
           administrator: !!session.principal?.administrator,
         });
-        toast('Signed in', 'success');
+        toast("Signed in", "success");
         this._startSessionPoll();
       } else {
-        this.setState({ error: data.error || 'Login failed' });
+        this.setState({ error: data.error || "Login failed" });
       }
     } catch (err) {
       this.setState({ error: api.friendlyMessage(err) });
@@ -107,7 +110,7 @@ class AuthGate extends Component {
     e.preventDefault();
     this.setState({ error: null });
     if (this.state.password !== this.state.confirmPassword) {
-      this.setState({ error: 'Passwords do not match' });
+      this.setState({ error: "Passwords do not match" });
       return;
     }
     try {
@@ -122,10 +125,10 @@ class AuthGate extends Component {
           setupRequired: false,
           bootstrapRequired: false,
         });
-        toast('Admin account created', 'success');
+        toast("Admin account created", "success");
         this._startSessionPoll();
       } else {
-        this.setState({ error: data.error || 'Setup failed' });
+        this.setState({ error: data.error || "Setup failed" });
       }
     } catch (err) {
       this.setState({ error: api.friendlyMessage(err) });
@@ -133,10 +136,14 @@ class AuthGate extends Component {
   }
 
   async _handleLogout() {
-    try { await api.auth.logout(); } catch { /* ignore */ }
+    try {
+      await api.auth.logout();
+    } catch {
+      /* ignore */
+    }
     appStore.setMany({ authenticated: false, principal: null, administrator: false });
     this._stopSessionPoll();
-    toast('Signed out', 'info');
+    toast("Signed out", "info");
   }
 
   render() {
@@ -151,7 +158,7 @@ class AuthGate extends Component {
     }
 
     // No auth required
-    if (appStore.get('authStatus')?.required === false) {
+    if (appStore.get("authStatus")?.required === false) {
       if (!authenticated) {
         // Mark as authenticated without login
         appStore.setMany({ authenticated: true, administrator: false });
@@ -183,7 +190,9 @@ class AuthGate extends Component {
           {this.state.error && <div class="ink-auth-error">{this.state.error}</div>}
           <form class="ink-auth-form" onSubmit={(e) => this._handleLogin(e)}>
             <div class="ink-field">
-              <label class="ink-field-label" for="inkdrop-username">Username</label>
+              <label class="ink-field-label" for="inkdrop-username">
+                Username
+              </label>
               <input
                 id="inkdrop-username"
                 type="text"
@@ -195,7 +204,9 @@ class AuthGate extends Component {
               />
             </div>
             <div class="ink-field">
-              <label class="ink-field-label" for="inkdrop-password">Password</label>
+              <label class="ink-field-label" for="inkdrop-password">
+                Password
+              </label>
               <input
                 id="inkdrop-password"
                 type="password"
@@ -204,7 +215,9 @@ class AuthGate extends Component {
                 onInput={(e) => this.setState({ password: e.target.value })}
               />
             </div>
-            <button type="submit" class="ink-btn-primary ink-btn-lg">Sign In</button>
+            <button type="submit" class="ink-btn-primary ink-btn-lg">
+              Sign In
+            </button>
           </form>
         </div>
       </div>
@@ -223,7 +236,9 @@ class AuthGate extends Component {
           {this.state.error && <div class="ink-auth-error">{this.state.error}</div>}
           <form class="ink-auth-form" onSubmit={(e) => this._handleBootstrap(e)}>
             <div class="ink-field">
-              <label class="ink-field-label" for="inkdrop-new-username">Username</label>
+              <label class="ink-field-label" for="inkdrop-new-username">
+                Username
+              </label>
               <input
                 id="inkdrop-new-username"
                 type="text"
@@ -235,7 +250,9 @@ class AuthGate extends Component {
               />
             </div>
             <div class="ink-field">
-              <label class="ink-field-label" for="inkdrop-new-password">Password</label>
+              <label class="ink-field-label" for="inkdrop-new-password">
+                Password
+              </label>
               <input
                 id="inkdrop-new-password"
                 type="password"
@@ -245,7 +262,9 @@ class AuthGate extends Component {
               />
             </div>
             <div class="ink-field">
-              <label class="ink-field-label" for="inkdrop-confirm-password">Confirm Password</label>
+              <label class="ink-field-label" for="inkdrop-confirm-password">
+                Confirm Password
+              </label>
               <input
                 id="inkdrop-confirm-password"
                 type="password"
@@ -254,7 +273,9 @@ class AuthGate extends Component {
                 onInput={(e) => this.setState({ confirmPassword: e.target.value })}
               />
             </div>
-            <button type="submit" class="ink-btn-primary ink-btn-lg">Create Account</button>
+            <button type="submit" class="ink-btn-primary ink-btn-lg">
+              Create Account
+            </button>
           </form>
         </div>
       </div>

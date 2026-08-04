@@ -3,38 +3,75 @@
  * Sidebar + topbar + page area layout shell.
  */
 
-import { h, Component } from 'preact';
-import { appStore } from '../stores/app-store.jsx';
-import { router } from '../router.jsx';
-import { toast } from '../main.jsx';
-import api from '../api/client.jsx';
+import { h, Component } from "preact";
+import { appStore } from "../stores/app-store.jsx";
+import { router } from "../router.jsx";
+import { toast } from "../main.jsx";
+import api from "../api/client.jsx";
+
+/* ── Scoped Styles ─────────────────────────────────────────────────────── */
+const styles = `
+.ink-account-menu { position: relative; }
+.ink-account-toggle { display: flex; align-items: center; gap: var(--ink-space-sm); width: 100%; padding: 8px 12px; border: none; background: transparent; color: var(--ink-text-secondary); font-size: var(--ink-text-sm); cursor: pointer; border-radius: var(--ink-radius-md); transition: background var(--ink-transition-fast); }
+.ink-account-toggle:hover { background: var(--ink-bg-elevated); color: var(--ink-text-primary); }
+.ink-account-toggle-icon { width: 28px; height: 28px; border-radius: 50%; background: var(--ink-accent-gold-dim); color: var(--ink-accent-gold); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: var(--ink-text-sm); flex-shrink: 0; }
+.ink-account-toggle-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
+.ink-account-dropdown { position: absolute; bottom: 100%; left: 0; right: 0; background: var(--ink-bg-elevated); border: 1px solid var(--ink-border-subtle); border-radius: var(--ink-radius-lg); padding: var(--ink-space-sm); margin-bottom: 4px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+.ink-account-dropdown button { display: block; width: 100%; text-align: left; padding: 8px 12px; border: none; background: transparent; color: var(--ink-text-primary); font-size: var(--ink-text-sm); cursor: pointer; border-radius: var(--ink-radius-md); }
+.ink-account-dropdown button:hover { background: var(--ink-bg-surface); }
+.ink-account-dropdown-divider { height: 1px; background: var(--ink-border-subtle); margin: var(--ink-space-xs) 0; }
+`;
 
 const NAV_ITEMS = [
-  { section: 'calendar', label: 'Calendar', icon: '📅', group: 'Library', feature: 'calendar' },
-  { section: 'series', label: 'Series', icon: '📚', group: 'Library' },
-  { group: 'Operations' },
-  { section: 'wanted', label: 'Wanted', icon: '🎯', group: 'Operations' },
-  { section: 'activity', label: 'Activity', icon: '⚡', group: 'Operations' },
-  { section: 'queue', label: 'Queue', icon: '📋', group: 'Activity', parent: 'activity' },
-  { section: 'history', label: 'History', icon: '🕐', group: 'Activity', parent: 'activity' },
-  { section: 'source_memory', label: 'Blocklist', icon: '🚫', group: 'Activity', parent: 'activity' },
-  { section: 'manual_review', label: 'Manual Review', icon: '🔍', group: 'Operations' },
-  { group: 'Administration' },
-  { section: 'settings', label: 'Settings', icon: '⚙️', group: 'Administration' },
-  { section: 'system', label: 'System', icon: '🖥️', group: 'Administration' },
+  { section: "calendar", label: "Calendar", icon: "📅", group: "Library", feature: "calendar" },
+  { section: "series", label: "Series", icon: "📚", group: "Library" },
+  { group: "Operations" },
+  { section: "wanted", label: "Wanted", icon: "🎯", group: "Operations" },
+  { section: "activity", label: "Activity", icon: "⚡", group: "Operations" },
+  { section: "queue", label: "Queue", icon: "📋", group: "Activity", parent: "activity" },
+  { section: "history", label: "History", icon: "🕐", group: "Activity", parent: "activity" },
+  { section: "source_memory", label: "Blocklist", icon: "🚫", group: "Activity", parent: "activity" },
+  { section: "manual_review", label: "Manual Review", icon: "🔍", group: "Operations" },
+  { group: "Administration" },
+  { section: "settings", label: "Settings", icon: "⚙️", group: "Administration" },
+  { section: "system", label: "System", icon: "🖥️", group: "Administration" },
 ];
 
 const SECTION_TITLES = {
-  calendar: { title: 'Calendar', eyebrow: 'InkDrop', description: 'What came out, on which day, and whether you have it.' },
-  series: { title: 'Series', eyebrow: 'InkDrop', description: 'Your comics and manga library, tracked and filled automatically.' },
-  wanted: { title: 'Wanted', eyebrow: 'InkDrop', description: 'Issues you want but don\'t have yet.' },
-  activity: { title: 'Activity', eyebrow: 'InkDrop', description: 'Current transfers, downloads, and import activity.' },
-  queue: { title: 'Queue', eyebrow: 'Activity', description: 'Active download and processing queue.' },
-  history: { title: 'History', eyebrow: 'Activity', description: 'Past transfers, imports, and acquisitions.' },
-  source_memory: { title: 'Blocklist', eyebrow: 'Activity', description: 'Source attempts blocked from future searches.' },
-  manual_review: { title: 'Manual Review', eyebrow: 'InkDrop', description: 'Items that need your decision before proceeding.' },
-  settings: { title: 'Settings', eyebrow: 'InkDrop', description: 'Indexers, download clients, paths, language rules, and automation defaults.' },
-  system: { title: 'System', eyebrow: 'InkDrop', description: 'Health, tasks, logs, and installed version.' },
+  calendar: {
+    title: "Calendar",
+    eyebrow: "InkDrop",
+    description: "What came out, on which day, and whether you have it.",
+  },
+  series: {
+    title: "Series",
+    eyebrow: "InkDrop",
+    description: "Your comics and manga library, tracked and filled automatically.",
+  },
+  wanted: { title: "Wanted", eyebrow: "InkDrop", description: "Issues you want but don't have yet." },
+  activity: {
+    title: "Activity",
+    eyebrow: "InkDrop",
+    description: "Current transfers, downloads, and import activity.",
+  },
+  queue: { title: "Queue", eyebrow: "Activity", description: "Active download and processing queue." },
+  history: { title: "History", eyebrow: "Activity", description: "Past transfers, imports, and acquisitions." },
+  source_memory: {
+    title: "Blocklist",
+    eyebrow: "Activity",
+    description: "Source attempts blocked from future searches.",
+  },
+  manual_review: {
+    title: "Manual Review",
+    eyebrow: "InkDrop",
+    description: "Items that need your decision before proceeding.",
+  },
+  settings: {
+    title: "Settings",
+    eyebrow: "InkDrop",
+    description: "Indexers, download clients, paths, language rules, and automation defaults.",
+  },
+  system: { title: "System", eyebrow: "InkDrop", description: "Health, tasks, logs, and installed version." },
 };
 
 class AppShell extends Component {
@@ -43,12 +80,17 @@ class AppShell extends Component {
     this.state = {
       sidebarCollapsed: false,
       mobileMenuOpen: false,
-      statusText: 'loading...',
+      statusText: "loading...",
       statusOk: null,
       seriesCount: null,
       wantedCount: null,
       reviewCount: null,
       activityCount: null,
+      searchQuery: "",
+      showAccountMenu: false,
+      showChangePassword: false,
+      changePasswordError: null,
+      changePasswordLoading: false,
     };
     this._onKeyDown = this._onKeyDown.bind(this);
     this._navigateTo = this._navigateTo.bind(this);
@@ -58,27 +100,36 @@ class AppShell extends Component {
     this._closeMobileMenu = this._closeMobileMenu.bind(this);
     this._loadStatus = this._loadStatus.bind(this);
     this._loadNavCounts = this._loadNavCounts.bind(this);
+    this._handleSearch = this._handleSearch.bind(this);
+    this._handleSearchInput = this._handleSearchInput.bind(this);
+    this._toggleAccountMenu = this._toggleAccountMenu.bind(this);
+    this._closeAccountMenu = this._closeAccountMenu.bind(this);
+    this._handleLogout = this._handleLogout.bind(this);
+    this._handleChangePassword = this._handleChangePassword.bind(this);
   }
 
   componentDidMount() {
     this._unsubs = [
-      appStore.subscribeKey('currentSection', () => this.forceUpdate()),
-      appStore.subscribeKey('authenticated', () => { this._loadNavCounts(); this.forceUpdate(); }),
+      appStore.subscribeKey("currentSection", () => this.forceUpdate()),
+      appStore.subscribeKey("authenticated", () => {
+        this._loadNavCounts();
+        this.forceUpdate();
+      }),
     ];
-    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener("keydown", this._onKeyDown);
     this._loadNavCounts();
     this._statusTimer = setInterval(() => this._loadStatus(), 30000);
     this._loadStatus();
   }
 
   componentWillUnmount() {
-    if (this._unsubs) this._unsubs.forEach(fn => fn());
-    window.removeEventListener('keydown', this._onKeyDown);
+    if (this._unsubs) this._unsubs.forEach((fn) => fn());
+    window.removeEventListener("keydown", this._onKeyDown);
     if (this._statusTimer) clearInterval(this._statusTimer);
   }
 
   _onKeyDown(e) {
-    if (e.key === 'Escape' && this.state.mobileMenuOpen) {
+    if (e.key === "Escape" && this.state.mobileMenuOpen) {
       this._closeMobileMenu();
     }
   }
@@ -87,10 +138,10 @@ class AppShell extends Component {
     try {
       const data = await api.system.status();
       if (data.ok) {
-        this.setState({ statusText: data.status || 'running', statusOk: true });
+        this.setState({ statusText: data.status || "running", statusOk: true });
       }
     } catch {
-      this.setState({ statusText: 'unreachable', statusOk: false });
+      this.setState({ statusText: "unreachable", statusOk: false });
     }
   }
 
@@ -99,17 +150,19 @@ class AppShell extends Component {
       const data = await api.state.sections();
       if (data.ok && data.state?.sections) {
         for (const s of data.state.sections) {
-          if (s.id === 'series') this.setState({ seriesCount: s.count });
-          if (s.id === 'wanted') this.setState({ wantedCount: s.count });
-          if (s.id === 'manual_review') this.setState({ reviewCount: s.count });
-          if (s.id === 'activity' || s.id === 'queue') this.setState({ activityCount: s.count });
+          if (s.id === "series") this.setState({ seriesCount: s.count });
+          if (s.id === "wanted") this.setState({ wantedCount: s.count });
+          if (s.id === "manual_review") this.setState({ reviewCount: s.count });
+          if (s.id === "activity" || s.id === "queue") this.setState({ activityCount: s.count });
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   _toggleSidebar() {
-    this.setState(prev => ({ sidebarCollapsed: !prev.sidebarCollapsed }));
+    this.setState((prev) => ({ sidebarCollapsed: !prev.sidebarCollapsed }));
   }
 
   _closeMobileMenu() {
@@ -117,7 +170,7 @@ class AppShell extends Component {
   }
 
   _toggleMobileMenu() {
-    this.setState(prev => ({ mobileMenuOpen: !prev.mobileMenuOpen }));
+    this.setState((prev) => ({ mobileMenuOpen: !prev.mobileMenuOpen }));
   }
 
   _navigateTo(section) {
@@ -130,9 +183,70 @@ class AppShell extends Component {
     this.setState({ mobileMenuOpen: false });
   }
 
+  _handleSearch(e) {
+    e.preventDefault();
+    const query = (this.state.searchQuery || "").trim();
+    if (!query) return;
+    // Navigate to series with a search filter
+    router.navigate("series", { search: query });
+    this.setState({ mobileMenuOpen: false });
+  }
+
+  _handleSearchInput(e) {
+    this.setState({ searchQuery: e.target.value });
+  }
+
+  _toggleAccountMenu() {
+    this.setState((prev) => ({ showAccountMenu: !prev.showAccountMenu }));
+  }
+
+  _closeAccountMenu() {
+    this.setState({ showAccountMenu: false });
+  }
+
+  _handleLogout() {
+    this._closeAccountMenu();
+    try {
+      api.auth.logout();
+    } catch {
+      /* ignore */
+    }
+    appStore.setMany({ authenticated: false, principal: null, administrator: false });
+    toast("Signed out", "info");
+  }
+
+  async _handleChangePassword(e) {
+    e.preventDefault();
+    const form = e.target;
+    const currentPassword = form.currentPassword?.value || "";
+    const newPassword = form.newPassword?.value || "";
+    const confirmPassword = form.confirmPassword?.value || "";
+    if (newPassword !== confirmPassword) {
+      this.setState({ changePasswordError: "Passwords do not match" });
+      return;
+    }
+    if (!newPassword || newPassword.length < 6) {
+      this.setState({ changePasswordError: "Password must be at least 6 characters" });
+      return;
+    }
+    this.setState({ changePasswordLoading: true, changePasswordError: null });
+    try {
+      const data = await api.auth.changePassword(currentPassword, newPassword, true);
+      if (data.ok) {
+        toast("Password changed successfully", "success");
+        this.setState({ showChangePassword: false, changePasswordLoading: false, changePasswordError: null });
+        this._closeAccountMenu();
+      } else {
+        this.setState({ changePasswordError: data.error || "Failed to change password", changePasswordLoading: false });
+      }
+    } catch (err) {
+      this.setState({ changePasswordError: api.friendlyMessage(err), changePasswordLoading: false });
+    }
+  }
+
   render({ children }) {
-    const currentSection = appStore.get('currentSection');
-    const currentSubsection = appStore.get('currentSubsection');
+    const currentSection = appStore.get("currentSection");
+    const currentSubsection = appStore.get("currentSubsection");
     const meta = SECTION_TITLES[currentSection] || SECTION_TITLES.series;
     const { sidebarCollapsed, mobileMenuOpen } = this.state;
 
@@ -144,92 +258,119 @@ class AppShell extends Component {
 
     const settingsArea = (() => {
       try {
-        const hash = window.location.hash || '';
+        const hash = window.location.hash || "";
         const m = hash.match(/[?&]area=([^&]+)/);
         return m ? m[1] : null;
-      } catch { return null; }
+      } catch {
+        return null;
+      }
     })();
 
     const settingsSubnav = [
-      { area: 'setup', label: 'Setup' },
-      { area: 'media_management', label: 'Media Management' },
-      { area: 'language', label: 'Language' },
-      { area: 'indexers', label: 'Indexers' },
-      { area: 'download_clients', label: 'Download Clients' },
-      { area: 'connect', label: 'Connect' },
-      { area: 'metadata', label: 'Metadata' },
-      { area: 'general', label: 'General' },
-      { area: 'ui', label: 'UI' },
-      { area: 'root_folders', label: 'Paths' },
+      { area: "setup", label: "Setup" },
+      { area: "media_management", label: "Media Management" },
+      { area: "language", label: "Language" },
+      { area: "indexers", label: "Indexers" },
+      { area: "download_clients", label: "Download Clients" },
+      { area: "connect", label: "Connect" },
+      { area: "metadata", label: "Metadata" },
+      { area: "general", label: "General" },
+      { area: "ui", label: "UI" },
+      { area: "root_folders", label: "Paths" },
     ];
 
-    const navItems = NAV_ITEMS.filter(item => {
-      if (item.section === 'calendar') return false; // hidden by default
-      return true;
-    });
+    const navItems = NAV_ITEMS;
 
     let lastGroup = null;
     const navElements = [];
     for (const item of navItems) {
       if (item.group && item.group !== lastGroup) {
         navElements.push(
-          <span class="ink-nav-group-label" key={`group-${item.group}`}>{item.group}</span>
+          <span class="ink-nav-group-label" key={`group-${item.group}`}>
+            {item.group}
+          </span>,
         );
         lastGroup = item.group;
       }
       if (item.section) {
         const active = isSectionActive(item.section);
-        const count = item.section === 'series' ? this.state.seriesCount
-          : item.section === 'wanted' ? this.state.wantedCount
-          : item.section === 'manual_review' ? this.state.reviewCount
-          : item.section === 'activity' || item.section === 'queue' ? this.state.activityCount
-          : null;
-        const isSubnav = item.parent === 'activity' || item.section === 'queue' || item.section === 'history' || item.section === 'source_memory';
+        const count =
+          item.section === "series"
+            ? this.state.seriesCount
+            : item.section === "wanted"
+              ? this.state.wantedCount
+              : item.section === "manual_review"
+                ? this.state.reviewCount
+                : item.section === "activity" || item.section === "queue"
+                  ? this.state.activityCount
+                  : null;
+        const isSubnav =
+          item.parent === "activity" ||
+          item.section === "queue" ||
+          item.section === "history" ||
+          item.section === "source_memory";
         navElements.push(
           <button
             key={item.section}
-            class={`ink-nav-btn${active ? ' ink-nav-active' : ''}${isSubnav ? ' ink-nav-sub' : ''}`}
+            class={`ink-nav-btn${active ? " ink-nav-active" : ""}${isSubnav ? " ink-nav-sub" : ""}`}
             onClick={() => this._navigateTo(item.section)}
             title={item.label}
           >
             <span class="ink-nav-icon">{item.icon}</span>
             <span class="ink-nav-label">{item.label}</span>
             {count != null && count > 0 ? <span class="ink-nav-count">{count}</span> : null}
-          </button>
+          </button>,
         );
       }
     }
 
     // Settings subnav
-    if (currentSection === 'settings') {
+    if (currentSection === "settings") {
       navElements.push(
         <div class="ink-nav-subnav" key="settings-subnav">
-          {settingsSubnav.map(s => (
+          {settingsSubnav.map((s) => (
             <button
               key={s.area}
-              class={`ink-nav-btn${settingsArea === s.area ? ' ink-nav-active' : ''}`}
+              class={`ink-nav-btn${settingsArea === s.area ? " ink-nav-active" : ""}`}
               onClick={() => this._navigateToSettings(s.area)}
             >
               <span class="ink-nav-label">{s.label}</span>
             </button>
           ))}
-        </div>
+        </div>,
       );
     }
 
     return (
       <div class="ink-app-layout">
-        <aside class={`ink-sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileMenuOpen ? ' ink-mobile-open' : ''}`}>
+        <style>{styles}</style>
+        <aside class={`ink-sidebar${sidebarCollapsed ? " collapsed" : ""}${mobileMenuOpen ? " ink-mobile-open" : ""}`}>
           <div class="ink-sidebar-header">
-            <span class="ink-logo-mark"><img src="/inkdrop-logo-mark.png" alt="" loading="eager" /></span>
+            <span class="ink-logo-mark">
+              <img src="/inkdrop-logo-mark.png" alt="" loading="eager" />
+            </span>
             <span class="ink-sidebar-title">InkDrop</span>
-            <button class="ink-sidebar-toggle" type="button" aria-label="Toggle sidebar" onClick={() => this._toggleSidebar()}>
-              {sidebarCollapsed ? '→' : '←'}
+            <button
+              class="ink-sidebar-toggle"
+              type="button"
+              aria-label="Toggle sidebar"
+              onClick={() => this._toggleSidebar()}
+            >
+              {sidebarCollapsed ? "→" : "←"}
             </button>
           </div>
 
           <div class="ink-nav-search">
-            <input type="search" placeholder="Search Series..." autocomplete="off" aria-label="Search existing series" />
+            <form onSubmit={this._handleSearch} style="display:flex;gap:4px;">
+              <input
+                type="search"
+                placeholder="Search Series..."
+                autocomplete="off"
+                aria-label="Search existing series"
+                value={this.state.searchQuery || ""}
+                onInput={this._handleSearchInput}
+              />
+            </form>
           </div>
 
           <nav class="ink-nav" aria-label="InkDrop sections">
@@ -237,30 +378,128 @@ class AppShell extends Component {
           </nav>
 
           <div class="ink-nav-actions">
-            <button class="ink-nav-add" onClick={() => this._navigateTo('series', { add: '1' })}>Add Series</button>
+            <button class="ink-nav-add" onClick={() => this._navigateTo("series", { add: "1" })}>
+              Add Series
+            </button>
           </div>
 
           <div class="ink-activity-region" aria-live="polite">
-            <div class={`ink-status-pill${this.state.statusOk === true ? '' : this.state.statusOk === false ? ' ink-status-error' : ''}`}>
-              <span class={`ink-status-dot${this.state.statusOk === true ? ' ink-dot-ok' : this.state.statusOk === false ? ' ink-dot-err' : ''}`} />
+            <div
+              class={`ink-status-pill${this.state.statusOk === true ? "" : this.state.statusOk === false ? " ink-status-error" : ""}`}
+            >
+              <span
+                class={`ink-status-dot${this.state.statusOk === true ? " ink-dot-ok" : this.state.statusOk === false ? " ink-dot-err" : ""}`}
+              />
               <span>{this.state.statusText}</span>
             </div>
           </div>
+
+          {appStore.get("authenticated") && appStore.get("authStatus")?.required !== false && (
+            <div class="ink-account-menu">
+              <button class="ink-account-toggle" onClick={this._toggleAccountMenu} type="button">
+                <span class="ink-account-toggle-icon">
+                  {(appStore.get("principal")?.username || "U")[0].toUpperCase()}
+                </span>
+                <span class="ink-account-toggle-name">{appStore.get("principal")?.username || "User"}</span>
+              </button>
+              {this.state.showAccountMenu && (
+                <div class="ink-account-dropdown">
+                  <button
+                    onClick={() => {
+                      this.setState({ showAccountMenu: false, showChangePassword: true });
+                    }}
+                  >
+                    Change Password
+                  </button>
+                  <div class="ink-account-dropdown-divider" />
+                  <button onClick={this._handleLogout} style="color:var(--ink-danger);">
+                    Sign Out
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {this.state.showChangePassword && (
+            <div
+              class="ink-dialog-backdrop"
+              onClick={(e) => e.target === e.currentTarget && this.setState({ showChangePassword: false })}
+            >
+              <div class="ink-dialog" style="max-width:400px;">
+                <div class="ink-dialog-header">
+                  <h2>Change Password</h2>
+                </div>
+                <div class="ink-dialog-body">
+                  {this.state.changePasswordError && (
+                    <div class="ink-auth-error" style="margin-bottom:12px;">
+                      {this.state.changePasswordError}
+                    </div>
+                  )}
+                  <form onSubmit={this._handleChangePassword}>
+                    <div class="ink-field">
+                      <label class="ink-field-label">Current Password</label>
+                      <input type="password" name="currentPassword" autocomplete="current-password" required />
+                    </div>
+                    <div class="ink-field">
+                      <label class="ink-field-label">New Password</label>
+                      <input type="password" name="newPassword" autocomplete="new-password" required minlength="6" />
+                    </div>
+                    <div class="ink-field">
+                      <label class="ink-field-label">Confirm New Password</label>
+                      <input
+                        type="password"
+                        name="confirmPassword"
+                        autocomplete="new-password"
+                        required
+                        minlength="6"
+                      />
+                    </div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                      <button
+                        type="button"
+                        class="ink-btn-ghost"
+                        onClick={() => this.setState({ showChangePassword: false, changePasswordError: null })}
+                      >
+                        Cancel
+                      </button>
+                      <button type="submit" class="ink-btn-primary" disabled={this.state.changePasswordLoading}>
+                        {this.state.changePasswordLoading ? "Saving..." : "Change Password"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )}
         </aside>
 
-        <div class={`ink-mobile-backdrop${mobileMenuOpen ? ' ink-backdrop-visible' : ''}`} onClick={() => this._closeMobileMenu()} />
+        <div
+          class={`ink-mobile-backdrop${mobileMenuOpen ? " ink-backdrop-visible" : ""}`}
+          onClick={() => this._closeMobileMenu()}
+        />
 
         <div class="ink-content">
           <header class="ink-topbar">
-            <button class="ink-mobile-menu-btn" type="button" aria-label="Open menu" onClick={() => this._toggleMobileMenu()}>
-              <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            <button
+              class="ink-mobile-menu-btn"
+              type="button"
+              aria-label="Open menu"
+              onClick={() => this._toggleMobileMenu()}
+            >
+              <svg viewBox="0 0 24 24">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
             </button>
             <div class="ink-topbar-brand">
               <h1 class="ink-topbar-title">{meta.title}</h1>
               <span class="ink-topbar-eyebrow">{meta.eyebrow}</span>
             </div>
             <div class="ink-topbar-actions">
-              <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._loadNavCounts()}>↻ Refresh</button>
+              <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._loadNavCounts()}>
+                ↻ Refresh
+              </button>
             </div>
           </header>
 

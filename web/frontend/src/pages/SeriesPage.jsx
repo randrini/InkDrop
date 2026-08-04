@@ -4,11 +4,11 @@
  * compact card grid layout, and focus highlighting.
  */
 
-import { h, Component } from 'preact';
-import api from '../api/client.jsx';
-import { toast } from '../main.jsx';
-import { appStore } from '../stores/app-store.jsx';
-import { router } from '../router.jsx';
+import { h, Component } from "preact";
+import api from "../api/client.jsx";
+import { toast } from "../main.jsx";
+import { appStore } from "../stores/app-store.jsx";
+import { router } from "../router.jsx";
 
 /* ── Scoped Styles ──────────────────────────────────────────────────── */
 const styles = `
@@ -486,34 +486,34 @@ const styles = `
 
 /* ── Sort Options ───────────────────────────────────────────────────── */
 const SORT_OPTIONS = [
-  { value: 'name', label: 'Name' },
-  { value: 'publisher', label: 'Publisher' },
-  { value: 'source', label: 'Source' },
-  { value: 'wanted_count', label: 'Wanted' },
-  { value: 'active_queue_count', label: 'Queue' },
-  { value: 'needs_you_count', label: 'Needs You' },
-  { value: 'created', label: 'Created' },
-  { value: 'updated', label: 'Updated' },
+  { value: "name", label: "Name" },
+  { value: "publisher", label: "Publisher" },
+  { value: "source", label: "Source" },
+  { value: "wanted_count", label: "Wanted" },
+  { value: "active_queue_count", label: "Queue" },
+  { value: "needs_you_count", label: "Needs You" },
+  { value: "created", label: "Created" },
+  { value: "updated", label: "Updated" },
 ];
 
 /* ── Helpers ────────────────────────────────────────────────────────── */
 function formatCount(n) {
-  if (n == null || n === 0) return '0';
-  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  if (n == null || n === 0) return "0";
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
   return String(n);
 }
 
 function ownershipLabel(ownership) {
-  if (!ownership || ownership === 'none') return 'None';
-  if (ownership === 'all') return 'Owned';
-  if (ownership === 'partial') return 'Partial';
+  if (!ownership || ownership === "none") return "None";
+  if (ownership === "all") return "Owned";
+  if (ownership === "partial") return "Partial";
   return ownership;
 }
 
 function ownershipClass(ownership) {
-  if (!ownership || ownership === 'none') return 'series-ownership-none';
-  if (ownership === 'all') return 'series-ownership-owned';
-  return 'series-ownership-partial';
+  if (!ownership || ownership === "none") return "series-ownership-none";
+  if (ownership === "all") return "series-ownership-owned";
+  return "series-ownership-partial";
 }
 
 /* ── SeriesPage Component ────────────────────────────────────────────── */
@@ -528,15 +528,16 @@ export class SeriesPage extends Component {
       totalCount: 0,
       hasMore: false,
       filters: [],
-      seriesFilter: 'all',
-      sortBy: 'name',
-      sortDir: 'asc',
+      seriesFilter: "all",
+      sortBy: "name",
+      sortDir: "asc",
       focusId: null,
       refreshing: false,
       loadingMore: false,
-      rowMode: 'compact_card',
+      rowMode: "compact_card",
       showAddDialog: false,
-      addSearchQuery: '',
+      addSearchQuery: "",
+      addSearchProvider: "all", // 'all', 'comicvine', 'mangadex'
       addSearchResults: null,
       addSearchLoading: false,
       addSearchError: null,
@@ -551,10 +552,14 @@ export class SeriesPage extends Component {
     this._loadInitial();
     // If navigated with ?add=1, open the add series dialog
     const route = router.parseHash();
-    if (route.params?.add === '1') {
+    if (route.params?.add === "1") {
       this.setState({ showAddDialog: true });
       // Clear the add param from URL without losing the section
-      window.location.hash = '#series';
+      window.location.hash = "#series";
+    }
+    // If navigated with ?search=QUERY, set the search filter
+    if (route.params?.search) {
+      this.setState({ searchQuery: route.params.search });
     }
   }
 
@@ -574,9 +579,9 @@ export class SeriesPage extends Component {
 
     try {
       const [viewData, sectionsData] = await Promise.all([
-        api.state.view('series', {
-          summary_mode: 'compact',
-          row_mode: 'compact_card',
+        api.state.view("series", {
+          summary_mode: "compact",
+          row_mode: "compact_card",
         }),
         api.state.sections().catch(() => null),
       ]);
@@ -584,7 +589,7 @@ export class SeriesPage extends Component {
       if (!this._mounted) return;
 
       if (!viewData.ok) {
-        throw new Error(viewData.error || 'Failed to load series');
+        throw new Error(viewData.error || "Failed to load series");
       }
 
       this.setState({
@@ -594,12 +599,12 @@ export class SeriesPage extends Component {
         totalCount: viewData.total_count || 0,
         hasMore: viewData.has_more || false,
         filters: viewData.filters || [],
-        seriesFilter: viewData.series_filter || 'all',
-        rowMode: viewData.row_mode || 'compact_card',
+        seriesFilter: viewData.series_filter || "all",
+        rowMode: viewData.row_mode || "compact_card",
       });
 
       if (sectionsData && sectionsData.ok) {
-        appStore.set('sectionsData', sectionsData);
+        appStore.set("sectionsData", sectionsData);
       }
 
       // Handle focus — scroll into view after render
@@ -610,9 +615,9 @@ export class SeriesPage extends Component {
       if (!this._mounted) return;
       this.setState({
         loading: false,
-        error: err.message || 'An unexpected error occurred',
+        error: err.message || "An unexpected error occurred",
       });
-      toast(err.message || 'Failed to load series', 'error');
+      toast(err.message || "Failed to load series", "error");
     }
   }
 
@@ -622,11 +627,11 @@ export class SeriesPage extends Component {
     this.setState({ loadingMore: true });
 
     try {
-      const data = await api.state.view('series', {
-        summary_mode: 'compact',
+      const data = await api.state.view("series", {
+        summary_mode: "compact",
         row_mode: this.state.rowMode,
         offset: this.state.series.length,
-        series_filter: this.state.seriesFilter !== 'all' ? this.state.seriesFilter : undefined,
+        series_filter: this.state.seriesFilter !== "all" ? this.state.seriesFilter : undefined,
         sort_by: this.state.sortBy,
         sort_dir: this.state.sortDir,
       });
@@ -634,10 +639,10 @@ export class SeriesPage extends Component {
       if (!this._mounted) return;
 
       if (!data.ok) {
-        throw new Error(data.error || 'Failed to load more series');
+        throw new Error(data.error || "Failed to load more series");
       }
 
-      this.setState(prev => ({
+      this.setState((prev) => ({
         loadingMore: false,
         series: [...prev.series, ...(data.rows || [])],
         count: data.count || 0,
@@ -647,7 +652,7 @@ export class SeriesPage extends Component {
     } catch (err) {
       if (!this._mounted) return;
       this.setState({ loadingMore: false });
-      toast(err.message || 'Failed to load more series', 'error');
+      toast(err.message || "Failed to load more series", "error");
     }
   }
 
@@ -655,10 +660,10 @@ export class SeriesPage extends Component {
     this.setState({ refreshing: true });
 
     try {
-      const data = await api.state.view('series', {
-        summary_mode: 'compact',
+      const data = await api.state.view("series", {
+        summary_mode: "compact",
         row_mode: this.state.rowMode,
-        series_filter: this.state.seriesFilter !== 'all' ? this.state.seriesFilter : undefined,
+        series_filter: this.state.seriesFilter !== "all" ? this.state.seriesFilter : undefined,
         sort_by: this.state.sortBy,
         sort_dir: this.state.sortDir,
       });
@@ -666,7 +671,7 @@ export class SeriesPage extends Component {
       if (!this._mounted) return;
 
       if (!data.ok) {
-        throw new Error(data.error || 'Failed to refresh series');
+        throw new Error(data.error || "Failed to refresh series");
       }
 
       this.setState({
@@ -679,11 +684,11 @@ export class SeriesPage extends Component {
         seriesFilter: data.series_filter || this.state.seriesFilter,
       });
 
-      toast('Series refreshed', 'success');
+      toast("Series refreshed", "success");
     } catch (err) {
       if (!this._mounted) return;
       this.setState({ refreshing: false });
-      toast(err.message || 'Failed to refresh series', 'error');
+      toast(err.message || "Failed to refresh series", "error");
     }
   }
 
@@ -691,10 +696,10 @@ export class SeriesPage extends Component {
     this.setState({ loading: true, seriesFilter: filterValue, error: null });
 
     try {
-      const data = await api.state.view('series', {
-        summary_mode: 'compact',
+      const data = await api.state.view("series", {
+        summary_mode: "compact",
         row_mode: this.state.rowMode,
-        series_filter: filterValue !== 'all' ? filterValue : undefined,
+        series_filter: filterValue !== "all" ? filterValue : undefined,
         sort_by: this.state.sortBy,
         sort_dir: this.state.sortDir,
       });
@@ -702,7 +707,7 @@ export class SeriesPage extends Component {
       if (!this._mounted) return;
 
       if (!data.ok) {
-        throw new Error(data.error || 'Failed to filter series');
+        throw new Error(data.error || "Failed to filter series");
       }
 
       this.setState({
@@ -715,20 +720,20 @@ export class SeriesPage extends Component {
       });
     } catch (err) {
       if (!this._mounted) return;
-      this.setState({ loading: false, error: err.message || 'Failed to filter' });
-      toast(err.message || 'Failed to filter series', 'error');
+      this.setState({ loading: false, error: err.message || "Failed to filter" });
+      toast(err.message || "Failed to filter series", "error");
     }
   }
 
   async _applySort(sortBy) {
-    const sortDir = this.state.sortBy === sortBy && this.state.sortDir === 'asc' ? 'desc' : 'asc';
+    const sortDir = this.state.sortBy === sortBy && this.state.sortDir === "asc" ? "desc" : "asc";
     this.setState({ loading: true, sortBy, sortDir, error: null });
 
     try {
-      const data = await api.state.view('series', {
-        summary_mode: 'compact',
+      const data = await api.state.view("series", {
+        summary_mode: "compact",
         row_mode: this.state.rowMode,
-        series_filter: this.state.seriesFilter !== 'all' ? this.state.seriesFilter : undefined,
+        series_filter: this.state.seriesFilter !== "all" ? this.state.seriesFilter : undefined,
         sort_by: sortBy,
         sort_dir: sortDir,
       });
@@ -736,7 +741,7 @@ export class SeriesPage extends Component {
       if (!this._mounted) return;
 
       if (!data.ok) {
-        throw new Error(data.error || 'Failed to sort series');
+        throw new Error(data.error || "Failed to sort series");
       }
 
       this.setState({
@@ -748,28 +753,31 @@ export class SeriesPage extends Component {
       });
     } catch (err) {
       if (!this._mounted) return;
-      this.setState({ loading: false, error: err.message || 'Failed to sort' });
-      toast(err.message || 'Failed to sort series', 'error');
+      this.setState({ loading: false, error: err.message || "Failed to sort" });
+      toast(err.message || "Failed to sort series", "error");
     }
   }
 
   /* ── Navigation ──────────────────────────────────────────────────── */
   _navigateToSeries(seriesId) {
-    router.navigate('series', { id: seriesId });
+    router.navigate("series", { id: seriesId });
     // Load detail into app store for potential detail panel
-    api.state.seriesDetail(seriesId).then(data => {
-      if (data && data.ok) {
-        appStore.set('seriesDetail', data);
-      }
-    }).catch(() => {
-      // Silently fail — detail will load on the detail page
-    });
+    api.state
+      .seriesDetail(seriesId)
+      .then((data) => {
+        if (data && data.ok) {
+          appStore.set("seriesDetail", data);
+        }
+      })
+      .catch(() => {
+        // Silently fail — detail will load on the detail page
+      });
   }
 
   _scrollToFocus(focusId) {
     const el = document.querySelector(`[data-series-id="${focusId}"]`);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
 
@@ -781,17 +789,15 @@ export class SeriesPage extends Component {
 
     return (
       <div class="series-filter-bar">
-        {filters.map(f => (
+        {filters.map((f) => (
           <button
-            class={`series-filter-btn${seriesFilter === f.value ? ' active' : ''}`}
+            class={`series-filter-btn${seriesFilter === f.value ? " active" : ""}`}
             onClick={() => this._applyFilter(f.value)}
             aria-pressed={seriesFilter === f.value}
             type="button"
           >
             {f.label}
-            {f.count != null && (
-              <span class="series-filter-count">({formatCount(f.count)})</span>
-            )}
+            {f.count != null && <span class="series-filter-count">({formatCount(f.count)})</span>}
           </button>
         ))}
       </div>
@@ -804,17 +810,15 @@ export class SeriesPage extends Component {
     return (
       <div class="series-sort-bar">
         <span class="series-sort-label">Sort</span>
-        {SORT_OPTIONS.map(opt => (
+        {SORT_OPTIONS.map((opt) => (
           <button
-            class={`series-sort-btn${sortBy === opt.value ? ' active' : ''}`}
+            class={`series-sort-btn${sortBy === opt.value ? " active" : ""}`}
             onClick={() => this._applySort(opt.value)}
             type="button"
           >
             {opt.label}
             {sortBy === opt.value && (
-              <span class={`series-sort-arrow${sortDir === 'desc' ? ' desc' : ''}`}>
-                &#9650;
-              </span>
+              <span class={`series-sort-arrow${sortDir === "desc" ? " desc" : ""}`}>&#9650;</span>
             )}
           </button>
         ))}
@@ -829,12 +833,14 @@ export class SeriesPage extends Component {
 
     return (
       <div
-        class={`series-card${isFocus ? ' series-card-focus' : ''}`}
+        class={`series-card${isFocus ? " series-card-focus" : ""}`}
         data-series-id={series.id}
         onClick={() => this._navigateToSeries(series.id)}
         role="button"
         tabIndex={0}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') this._navigateToSeries(series.id); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") this._navigateToSeries(series.id);
+        }}
       >
         <div class="series-card-cover-wrap">
           {coverUrl ? (
@@ -843,16 +849,13 @@ export class SeriesPage extends Component {
               src={coverUrl}
               alt={`${series.name} cover`}
               loading="lazy"
-              onError={e => {
-                e.target.style.display = 'none';
-                e.target.nextSibling.style.display = 'flex';
+              onError={(e) => {
+                e.target.style.display = "none";
+                e.target.nextSibling.style.display = "flex";
               }}
             />
           ) : null}
-          <div
-            class="series-card-cover-placeholder"
-            style={coverUrl ? { display: 'none' } : {}}
-          >
+          <div class="series-card-cover-placeholder" style={coverUrl ? { display: "none" } : {}}>
             No Cover
           </div>
         </div>
@@ -912,12 +915,14 @@ export class SeriesPage extends Component {
 
     return (
       <div
-        class={`series-list-row${isFocus ? ' series-card-focus' : ''}`}
+        class={`series-list-row${isFocus ? " series-card-focus" : ""}`}
         data-series-id={series.id}
         onClick={() => this._navigateToSeries(series.id)}
         role="button"
         tabIndex={0}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') this._navigateToSeries(series.id); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") this._navigateToSeries(series.id);
+        }}
       >
         {coverUrl ? (
           <img
@@ -925,25 +930,22 @@ export class SeriesPage extends Component {
             src={coverUrl}
             alt=""
             loading="lazy"
-            onError={e => {
-              e.target.style.display = 'none';
-              e.target.nextSibling.style.display = 'flex';
+            onError={(e) => {
+              e.target.style.display = "none";
+              e.target.nextSibling.style.display = "flex";
             }}
           />
         ) : null}
-        <div
-          class="series-list-thumb-placeholder"
-          style={coverUrl ? { display: 'none' } : {}}
-        >
+        <div class="series-list-thumb-placeholder" style={coverUrl ? { display: "none" } : {}}>
           N/A
         </div>
-        <div class="series-list-name" title={series.name}>{series.name}</div>
-        <div class="series-list-cell series-list-cell-hide-mobile">{series.publisher || '—'}</div>
-        <div class="series-list-cell series-list-cell-hide-mobile">{series.source || '—'}</div>
+        <div class="series-list-name" title={series.name}>
+          {series.name}
+        </div>
+        <div class="series-list-cell series-list-cell-hide-mobile">{series.publisher || "—"}</div>
+        <div class="series-list-cell series-list-cell-hide-mobile">{series.source || "—"}</div>
         <div class="series-list-cell series-list-cell-hide-mobile">
-          <span class={`series-ownership ${ownershipClass(series.ownership)}`}>
-            {ownershipLabel(series.ownership)}
-          </span>
+          <span class={`series-ownership ${ownershipClass(series.ownership)}`}>{ownershipLabel(series.ownership)}</span>
         </div>
         <div class="series-list-cell" style="display:flex;gap:8px;align-items:center;">
           {series.wanted_count > 0 && (
@@ -967,7 +969,7 @@ export class SeriesPage extends Component {
   }
 
   _renderSeriesList() {
-    const { series, rowMode } = this.state;
+    const { series, rowMode, searchQuery } = this.state;
 
     if (!series || series.length === 0) {
       return (
@@ -975,27 +977,38 @@ export class SeriesPage extends Component {
           <div class="ink-empty-icon">&#128196;</div>
           <div class="ink-empty-title">No Series Found</div>
           <div class="ink-empty-description" style="color:var(--ink-text-muted);font-size:var(--ink-text-sm);">
-            {this.state.seriesFilter !== 'all'
-              ? 'No series match the current filter. Try a different filter.'
-              : 'No series have been added yet. Add a watch or import to get started.'}
+            {this.state.seriesFilter !== "all"
+              ? "No series match the current filter. Try a different filter."
+              : "No series have been added yet. Add a watch or import to get started."}
           </div>
         </div>
       );
     }
 
-    if (rowMode === 'compact_card') {
+    const query = (searchQuery || "").trim().toLowerCase();
+    const filtered = query
+      ? series.filter(
+          (s) => (s.name || "").toLowerCase().includes(query) || (s.publisher || "").toLowerCase().includes(query),
+        )
+      : series;
+
+    if (filtered.length === 0 && query) {
       return (
-        <div class="series-grid">
-          {series.map(s => this._renderCard(s))}
+        <div class="ink-empty">
+          <div class="ink-empty-icon">🔍</div>
+          <div class="ink-empty-title">No matches for "{searchQuery}"</div>
+          <div class="ink-empty-description" style="color:var(--ink-text-muted);font-size:var(--ink-text-sm);">
+            Try a different search term or clear the filter.
+          </div>
         </div>
       );
     }
 
-    return (
-      <div class="series-list">
-        {series.map(s => this._renderListRow(s))}
-      </div>
-    );
+    if (rowMode === "compact_card") {
+      return <div class="series-grid">{filtered.map((s) => this._renderCard(s))}</div>;
+    }
+
+    return <div class="series-list">{filtered.map((s) => this._renderListRow(s))}</div>;
   }
 
   _renderLoadMore() {
@@ -1003,12 +1016,7 @@ export class SeriesPage extends Component {
 
     return (
       <div class="series-load-more">
-        <button
-          class="ink-btn-ghost"
-          onClick={() => this._loadMore()}
-          disabled={this.state.loadingMore}
-          type="button"
-        >
+        <button class="ink-btn-ghost" onClick={() => this._loadMore()} disabled={this.state.loadingMore} type="button">
           {this.state.loadingMore ? (
             <>
               <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" />
@@ -1064,6 +1072,19 @@ export class SeriesPage extends Component {
             )}
           </div>
           <div class="series-toolbar-right">
+            <div class="series-search" style="position:relative;">
+              <input
+                type="search"
+                placeholder="Filter series..."
+                value={this.state.searchQuery || ""}
+                onInput={(e) => this.setState({ searchQuery: e.target.value })}
+                style="padding-left:28px;font-size:var(--ink-text-sm);min-width:160px;"
+                aria-label="Filter series by name"
+              />
+              <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);opacity:0.5;font-size:12px;pointer-events:none;">
+                🔍
+              </span>
+            </div>
             <button
               class="ink-btn-primary ink-btn-sm"
               onClick={() => this._openAddDialog()}
@@ -1082,7 +1103,16 @@ export class SeriesPage extends Component {
               {refreshing ? (
                 <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" />
               ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <polyline points="23 4 23 10 17 10" />
                   <polyline points="1 20 1 14 7 14" />
                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
@@ -1118,7 +1148,13 @@ export class SeriesPage extends Component {
   /* ── Add Series Dialog ──────────────────────────────────────────── */
 
   _openAddDialog() {
-    this.setState({ showAddDialog: true, addSearchQuery: '', addSearchResults: null, addSearchError: null });
+    this.setState({
+      showAddDialog: true,
+      addSearchQuery: "",
+      addSearchProvider: "all",
+      addSearchResults: null,
+      addSearchError: null,
+    });
   }
 
   _closeAddDialog() {
@@ -1129,11 +1165,66 @@ export class SeriesPage extends Component {
     e.preventDefault();
     const query = this.state.addSearchQuery.trim();
     if (!query) return;
+    const provider = this.state.addSearchProvider;
     this.setState({ addSearchLoading: true, addSearchError: null });
     try {
-      const results = await api.watches.comicvineSearch(query, 20);
+      let results;
+      if (provider === "mangadex") {
+        const data = await api.watches.mangadexSearch(query, 20);
+        results = data.ok
+          ? (data.results || []).map((r) => ({
+              ...r,
+              _provider: "mangadex",
+              _id: r.id || r.mangadex_id,
+              _cover: r.cover_url || r.image || null,
+              _description: r.description || r.deck || "",
+            }))
+          : [];
+      } else if (provider === "comicvine") {
+        const data = await api.watches.comicvineSearch(query, 20);
+        results = data.ok
+          ? (data.results || []).map((r) => ({
+              ...r,
+              _provider: "comicvine",
+              _id: r.id,
+              _cover: r.image?.thumb_url || r.image?.original_url || r.image?.tiny_url || null,
+              _description: r.deck || r.description || "",
+            }))
+          : [];
+      } else {
+        // 'all' — search both providers in parallel
+        const [cvData, mdData] = await Promise.allSettled([
+          api.watches.comicvineSearch(query, 10),
+          api.watches.mangadexSearch(query, 10),
+        ]);
+        const cvResults =
+          cvData.status === "fulfilled" && cvData.value?.ok
+            ? (cvData.value.results || []).map((r) => ({
+                ...r,
+                _provider: "comicvine",
+                _id: r.id,
+                _cover: r.image?.thumb_url || r.image?.original_url || r.image?.tiny_url || null,
+                _description: r.deck || r.description || "",
+              }))
+            : [];
+        const mdResults =
+          mdData.status === "fulfilled" && mdData.value?.ok
+            ? (mdData.value.results || []).map((r) => ({
+                ...r,
+                _provider: "mangadex",
+                _id: r.id || r.mangadex_id,
+                _cover: r.cover_url || r.image || null,
+                _description: r.description || r.deck || "",
+              }))
+            : [];
+        results = [...cvResults, ...mdResults];
+      }
       if (!this._mounted) return;
-      this.setState({ addSearchResults: results.ok ? (results.results || []) : [], addSearchLoading: false, addSearchError: results.ok ? null : (results.error || 'Search failed') });
+      this.setState({
+        addSearchResults: results,
+        addSearchLoading: false,
+        addSearchError: results.length === 0 ? "No results found" : null,
+      });
     } catch (err) {
       if (!this._mounted) return;
       this.setState({ addSearchLoading: false, addSearchError: api.friendlyMessage(err) });
@@ -1142,58 +1233,154 @@ export class SeriesPage extends Component {
 
   async _handleAddWatch(result) {
     try {
-      await api.watches.comicvineAdd({ comicvine_id: result.id, name: result.name, publisher: result.publisher });
-      toast(`Added "${result.name}"`, 'success');
+      if (result._provider === "mangadex") {
+        await api.watches.mangadexAdd({
+          mangadex_id: result._id || result.mangadex_id,
+          name: result.name || result.title,
+        });
+      } else {
+        await api.watches.comicvineAdd({
+          comicvine_id: result._id || result.id,
+          name: result.name,
+          publisher: result.publisher,
+        });
+      }
+      toast(`Added "${result.name || result.title}"`, "success");
       this._closeAddDialog();
       this._refresh();
     } catch (err) {
-      toast(api.friendlyMessage(err), 'error');
+      toast(api.friendlyMessage(err), "error");
     }
   }
 
   _renderAddDialog() {
-    const { addSearchQuery, addSearchResults, addSearchLoading, addSearchError } = this.state;
+    const { addSearchQuery, addSearchProvider, addSearchResults, addSearchLoading, addSearchError } = this.state;
     return (
       <div class="ink-dialog-backdrop" onClick={(e) => e.target === e.currentTarget && this._closeAddDialog()}>
-        <div class="ink-dialog" style="max-width:640px;">
+        <div class="ink-dialog" style="max-width:720px;">
           <div class="ink-dialog-header">
             <h2>Add Series</h2>
           </div>
           <div class="ink-dialog-body">
+            <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+              <select
+                value={addSearchProvider}
+                onChange={(e) =>
+                  this.setState({ addSearchProvider: e.target.value, addSearchResults: null, addSearchError: null })
+                }
+                style="min-height:36px;min-width:140px;"
+              >
+                <option value="all">All Providers</option>
+                <option value="comicvine">ComicVine</option>
+                <option value="mangadex">MangaDex</option>
+              </select>
+            </div>
             <form onSubmit={(e) => this._handleAddSearch(e)} style="display:flex;gap:8px;margin-bottom:16px;">
               <input
                 type="search"
-                placeholder="Search ComicVine for a series..."
+                placeholder={
+                  addSearchProvider === "mangadex"
+                    ? "Search MangaDex for a manga..."
+                    : addSearchProvider === "comicvine"
+                      ? "Search ComicVine for a series..."
+                      : "Search all providers for a series..."
+                }
                 value={addSearchQuery}
                 onInput={(e) => this.setState({ addSearchQuery: e.target.value })}
                 style="flex:1;"
                 autofocus
               />
               <button type="submit" class="ink-btn-primary" disabled={addSearchLoading || !addSearchQuery.trim()}>
-                {addSearchLoading ? 'Searching...' : 'Search'}
+                {addSearchLoading ? (
+                  <>
+                    <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Searching
+                  </>
+                ) : (
+                  "Search"
+                )}
               </button>
             </form>
-            {addSearchError && <div class="ink-auth-error" style="margin-bottom:12px;">{addSearchError}</div>}
+            {addSearchError && (
+              <div class="ink-auth-error" style="margin-bottom:12px;">
+                {addSearchError}
+              </div>
+            )}
             {addSearchResults && addSearchResults.length === 0 && !addSearchLoading && (
-              <div class="ink-empty"><div class="ink-empty-title">No results found</div></div>
+              <div class="ink-empty">
+                <div class="ink-empty-icon">🔍</div>
+                <div class="ink-empty-title">No results found</div>
+                <p class="ink-mini">Try a different search term or provider.</p>
+              </div>
             )}
             {addSearchResults && addSearchResults.length > 0 && (
-              <div style="max-height:400px;overflow-y:auto;">
-                {addSearchResults.map((r) => (
-                  <div key={r.id || r.name} style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--ink-border-subtle);">
-                    <div style="flex:1;min-width:0;">
-                      <div style="font-weight:600;font-size:var(--ink-text-base);">{r.name}</div>
-                      {r.publisher && <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">{r.publisher}</div>}
-                      {r.start_year && <div style="font-size:var(--ink-text-xs);color:var(--ink-text-muted);">Started {r.start_year}</div>}
+              <div style="max-height:480px;overflow-y:auto;">
+                {addSearchResults.map((r) => {
+                  const coverUrl = r._cover || r.image?.thumb_url || r.image?.original_url || r.cover_url || null;
+                  const description = r._description || r.deck || r.description || "";
+                  const providerLabel = r._provider === "mangadex" ? "MangaDex" : "ComicVine";
+                  const providerClass = r._provider === "mangadex" ? "ink-pill-info" : "ink-pill-gold";
+                  return (
+                    <div
+                      key={r._id || r.id || r.name}
+                      style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--ink-border-subtle);"
+                    >
+                      {coverUrl ? (
+                        <img
+                          src={coverUrl}
+                          alt=""
+                          style="width:48px;height:72px;object-fit:cover;border-radius:4px;flex-shrink:0;background:var(--ink-bg-elevated);"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div style="width:48px;height:72px;border-radius:4px;background:var(--ink-bg-elevated);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--ink-text-muted);font-size:var(--ink-text-xs);">
+                          No art
+                        </div>
+                      )}
+                      <div style="flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+                          <span style="font-weight:600;font-size:var(--ink-text-base);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            {r.name || r.title}
+                          </span>
+                          <span class={`ink-pill ${providerClass}`}>{providerLabel}</span>
+                        </div>
+                        {r.publisher && (
+                          <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">{r.publisher}</div>
+                        )}
+                        {(r.start_year || r.count_of_issues || r.issue_count) && (
+                          <div style="font-size:var(--ink-text-xs);color:var(--ink-text-muted);margin-top:2px;">
+                            {r.start_year ? `Started ${r.start_year}` : ""}
+                            {r.start_year && r.count_of_issues ? " · " : ""}
+                            {r.count_of_issues
+                              ? `${r.count_of_issues} issues`
+                              : r.issue_count
+                                ? `${r.issue_count} chapters`
+                                : ""}
+                          </div>
+                        )}
+                        {description && (
+                          <div style="font-size:var(--ink-text-xs);color:var(--ink-text-muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">
+                            {description}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        class="ink-btn-primary ink-btn-sm"
+                        onClick={() => this._handleAddWatch(r)}
+                        type="button"
+                        style="align-self:center;flex-shrink:0;"
+                      >
+                        Add
+                      </button>
                     </div>
-                    <button class="ink-btn-primary ink-btn-sm" onClick={() => this._handleAddWatch(r)} type="button">Add</button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
           <div class="ink-dialog-footer">
-            <button class="ink-btn-ghost" onClick={() => this._closeAddDialog()} type="button">Close</button>
+            <button class="ink-btn-ghost" onClick={() => this._closeAddDialog()} type="button">
+              Close
+            </button>
           </div>
         </div>
       </div>
