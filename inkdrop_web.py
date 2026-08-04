@@ -849,7 +849,7 @@ HTML = r"""<!doctype html>
 
             <section class="notice" id="packReviewBanner" hidden></section>
 
-            <details class="card source-health workflow-snapshot-drawer" id="workflowSnapshot" data-arr-page="history" hidden>
+            <details class="workflow-snapshot-drawer" id="workflowSnapshot" data-arr-page="history" hidden>
               <summary>
                 <div class="section-title">
                   <div>
@@ -931,7 +931,7 @@ HTML = r"""<!doctype html>
               </div>
             </section>
 
-            <details class="card source-health settings-drawer" id="inkdropSettings" data-arr-page="settings" data-settings-page-shell="index" hidden open>
+            <details class="settings-drawer" id="inkdropSettings" data-arr-page="settings" data-settings-page-shell="index" hidden open>
               <summary>
                 <div class="section-title">
                   <div>
@@ -957,7 +957,7 @@ HTML = r"""<!doctype html>
               </div>
             </details>
 
-            <section class="card source-health system-page" id="inkdropSystem" data-arr-page="system" hidden>
+            <section class="system-page" id="inkdropSystem" data-arr-page="system" hidden>
               <div class="system-page-head">
                 <div>
                   <h2>System</h2>
@@ -973,7 +973,7 @@ HTML = r"""<!doctype html>
               </div>
             </section>
 
-            <section class="card calendar-page" id="inkdropCalendar" data-arr-page="calendar" hidden>
+            <section class="calendar-page" id="inkdropCalendar" data-arr-page="calendar" hidden>
               <div class="calendar-page-head">
                 <div>
                   <h2>Calendar</h2>
@@ -996,7 +996,7 @@ HTML = r"""<!doctype html>
               </div>
             </section>
 
-            <details class="card watch-panel manual-review-support-tools" id="manualReviewSupportTools" data-arr-page="manual_review">
+            <details class="manual-review-support-tools" id="manualReviewSupportTools" data-arr-page="manual_review">
               <summary>
                 <div class="section-title">
                   <div>
@@ -1007,7 +1007,7 @@ HTML = r"""<!doctype html>
                 <span class="queue-toggle"><span class="closed-label">Open support tools</span><span class="open-label">Close support tools</span></span>
               </summary>
               <div class="support-tools-body">
-                <details class="card watch-panel exception-drawer" id="manualReviewPanel" data-arr-page="manual_review">
+                <details class="exception-drawer" id="manualReviewPanel" data-arr-page="manual_review">
                   <summary>
                     <div class="section-title">
                       <div>
@@ -1023,7 +1023,7 @@ HTML = r"""<!doctype html>
                     </div>
                   </div>
                 </details>
-                <details class="card watch-panel exception-drawer" id="manualIntake" data-arr-page="manual_review">
+                <details class="exception-drawer" id="manualIntake" data-arr-page="manual_review">
                   <summary>
                     <div class="section-title">
                       <div class="side">
@@ -1057,7 +1057,7 @@ HTML = r"""<!doctype html>
                     </div>
                   </div>
                 </details>
-                <details class="card watch-panel exception-drawer" id="unmatchedDownloadsPanel" data-arr-page="manual_review">
+                <details class="exception-drawer" id="unmatchedDownloadsPanel" data-arr-page="manual_review">
                   <summary>
                     <div class="section-title">
                       <div>
@@ -1075,7 +1075,7 @@ HTML = r"""<!doctype html>
                     </div>
                   </div>
                 </details>
-                <details class="card watch-panel exception-drawer" id="sabComicFailuresPanel" data-arr-page="manual_review">
+                <details class="exception-drawer" id="sabComicFailuresPanel" data-arr-page="manual_review">
                   <summary>
                     <div class="section-title">
                       <div class="side">
@@ -1096,7 +1096,7 @@ HTML = r"""<!doctype html>
               </div>
             </details>
 
-            <section class="card source-health" id="sourceHealth" data-arr-page="queue" hidden>
+            <section class="source-health" id="sourceHealth" data-arr-page="queue" hidden>
               <div class="section-title">
                 <div>
                   <h2>Source Health</h2>
@@ -1107,7 +1107,7 @@ HTML = r"""<!doctype html>
             </section>
 
             <div id="seriesSearchLegacySlot" hidden></div>
-            <section class="card watch-panel" id="seriesSearchSection" data-arr-page="series queue" aria-expanded="false">
+            <section class="watch-panel" id="seriesSearchSection" data-arr-page="series queue" aria-expanded="false">
               <div class="series-add-head">
                 <div>
                   <strong>Add Series</strong>
@@ -1191,7 +1191,7 @@ HTML = r"""<!doctype html>
               </details>
             </section>
 
-            <details class="advanced card watch-panel" id="advancedOps" data-arr-page="system">
+            <details class="watch-panel" id="advancedOps" data-arr-page="system">
               <summary>
                 <span class="advanced-ops-title">
                   <strong>Maintenance</strong>
@@ -1259,7 +1259,7 @@ HTML = r"""<!doctype html>
                   <pre id="output">Ready.</pre>
                 </aside>
               </div>
-              <details class="advanced card watch-panel">
+              <details class="watch-panel">
                 <summary>Raw Source Watches</summary>
                 <section>
                   <div class="watch-grid">
