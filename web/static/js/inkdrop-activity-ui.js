@@ -486,7 +486,12 @@
   }
 
   function ensureAutoRoot() {
-    if (document.querySelector("[data-inkdrop-activity-dashboard]") || !shouldAutoMount()) return;
+    const existing = document.querySelector("[data-inkdrop-activity-dashboard]");
+    if (!shouldAutoMount()) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) return;
     // These are ordered preferences, not a selector list. querySelector on a
     // comma list returns whichever match comes first in the *document*, and
     // body precedes main, so "main, #content, .content, body" always resolved
