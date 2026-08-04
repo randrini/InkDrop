@@ -50,8 +50,14 @@ class AppShell extends Component {
       reviewCount: null,
       activityCount: null,
     };
-    this._onSectionChange = this._onSectionChange.bind(this);
     this._onKeyDown = this._onKeyDown.bind(this);
+    this._navigateTo = this._navigateTo.bind(this);
+    this._navigateToSettings = this._navigateToSettings.bind(this);
+    this._toggleSidebar = this._toggleSidebar.bind(this);
+    this._toggleMobileMenu = this._toggleMobileMenu.bind(this);
+    this._closeMobileMenu = this._closeMobileMenu.bind(this);
+    this._loadStatus = this._loadStatus.bind(this);
+    this._loadNavCounts = this._loadNavCounts.bind(this);
   }
 
   componentDidMount() {
