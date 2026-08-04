@@ -85,6 +85,7 @@
 }
 .inkdrop-activity-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -98,11 +99,21 @@
   background: var(--bg-alt);
   border-bottom: 2px solid var(--line);
 }
+.inkdrop-activity-table th:nth-child(1) { width: 22%; }
+.inkdrop-activity-table th:nth-child(2) { width: 14%; }
+.inkdrop-activity-table th:nth-child(3) { width: 12%; }
+.inkdrop-activity-table th:nth-child(4) { width: 14%; }
+.inkdrop-activity-table th:nth-child(5) { width: 10%; }
+.inkdrop-activity-table th:nth-child(6) { width: 18%; }
+.inkdrop-activity-table th:nth-child(7) { width: 10%; }
 .inkdrop-activity-table td {
   padding: 8px 10px;
   border-bottom: 1px solid var(--line-soft);
   color: var(--muted);
   transition: background var(--transition);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
 }
 .inkdrop-activity-table tr:hover td {
   background: var(--accent-warm);
