@@ -211,15 +211,87 @@ a:hover {
 .inkdrop-sidebar.collapsed {
   width: 60px;
 }
-.inkdrop-sidebar.collapsed .inkdrop-sidebar-title,
-.inkdrop-sidebar.collapsed .arr-nav-label,
-.inkdrop-sidebar.collapsed .arr-nav-count,
-.inkdrop-sidebar.collapsed .arr-nav-group-label,
-.inkdrop-sidebar.collapsed .arr-activity-subnav,
-.inkdrop-sidebar.collapsed .arr-settings-subnav {
+.inkdrop-sidebar.collapsed .inkdrop-sidebar-title {
   opacity: 0;
   width: 0;
   overflow: hidden;
+  pointer-events: none;
+}
+.inkdrop-sidebar.collapsed .inkdrop-sidebar-header {
+  padding: 12px 6px;
+  justify-content: center;
+}
+.inkdrop-sidebar.collapsed .arr-nav-search {
+  display: none;
+}
+.inkdrop-sidebar.collapsed .arr-nav {
+  padding: 4px 4px;
+}
+.inkdrop-sidebar.collapsed .arr-nav button {
+  padding: 8px 4px;
+  justify-content: center;
+  gap: 0;
+  border-left-width: 0;
+  border-radius: var(--radius-sm);
+}
+.inkdrop-sidebar.collapsed .arr-nav button::after {
+  content: attr(data-nav-abbr);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+.inkdrop-sidebar.collapsed .arr-nav button:hover::after {
+  color: var(--text);
+}
+.inkdrop-sidebar.collapsed .arr-nav button.active::after {
+  color: var(--accent);
+}
+.inkdrop-sidebar.collapsed .arr-nav-label,
+.inkdrop-sidebar.collapsed .arr-nav-count {
+  display: none;
+}
+.inkdrop-sidebar.collapsed .arr-nav-group-label {
+  font-size: 9px;
+  padding: 10px 2px 2px;
+  text-align: center;
+  opacity: 0.5;
+}
+.inkdrop-sidebar.collapsed .arr-activity-subnav,
+.inkdrop-sidebar.collapsed .arr-settings-subnav {
+  display: none;
+}
+.inkdrop-sidebar.collapsed .arr-nav-actions {
+  padding: 4px;
+}
+.inkdrop-sidebar.collapsed .activity-region {
+  padding: 4px;
+}
+.inkdrop-sidebar.collapsed .arr-nav button {
+  position: relative;
+}
+.inkdrop-sidebar.collapsed .arr-nav button[title]:hover::before {
+  content: attr(title);
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 8px;
+  padding: 4px 10px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 200;
+  box-shadow: var(--shadow-md);
   pointer-events: none;
 }
 .inkdrop-sidebar-header {
@@ -242,13 +314,24 @@ a:hover {
   border: none;
   color: var(--muted);
   cursor: pointer;
-  padding: 4px;
+  padding: 6px;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition:
     transform 0.3s ease,
     color 0.2s ease,
     background 0.2s ease;
+}
+.inkdrop-sidebar-toggle::before {
+  content: "‹";
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
 }
 .inkdrop-sidebar-toggle:hover {
   color: var(--accent);

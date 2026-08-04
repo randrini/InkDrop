@@ -768,26 +768,24 @@ HTML = r"""<!doctype html>
         <div class="inkdrop-sidebar-header">
           <span class="inkdrop-logo-mark" aria-hidden="true"><img class="inkdrop-logo-img" src="/inkdrop-logo-mark.png?v=20260728-opaque-logo" alt="" loading="eager" decoding="async"></span>
           <span class="inkdrop-sidebar-title">InkDrop</span>
-          <button class="inkdrop-sidebar-toggle" id="inkdropSidebarToggle" type="button" aria-label="Toggle sidebar" onclick="toggleInkdropSidebar()">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
+          <button class="inkdrop-sidebar-toggle" id="inkdropSidebarToggle" type="button" aria-label="Toggle sidebar" onclick="toggleInkdropSidebar()"></button>
         </div>
         <input class="arr-nav-search" id="inkdropSeriesNavSearch" type="search" placeholder="Search Series..." autocomplete="off" aria-label="Search existing series">
         <nav class="arr-nav" aria-label="InkDrop sections">
           <span class="arr-nav-group-label">Library</span>
-          <button type="button" data-arr-section="calendar" data-arr-icon-key="calendar" data-arr-static-nav="true" onclick="openInkdropNavSection('calendar')" hidden aria-hidden="true"><span class="arr-nav-label">Calendar</span></button>
-          <button type="button" data-arr-section="series" data-arr-icon-key="series" data-arr-badge-mode="label" onclick="openInkdropNavSection('series')"><span class="arr-nav-label">Series</span><span class="arr-nav-count" id="navSeriesCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <button type="button" data-arr-section="calendar" data-arr-icon-key="calendar" data-arr-static-nav="true" data-nav-abbr="Cal" title="Calendar" onclick="openInkdropNavSection('calendar')" hidden aria-hidden="true"><span class="arr-nav-label">Calendar</span></button>
+          <button type="button" data-arr-section="series" data-arr-icon-key="series" data-arr-badge-mode="label" data-nav-abbr="Ser" title="Series" onclick="openInkdropNavSection('series')"><span class="arr-nav-label">Series</span><span class="arr-nav-count" id="navSeriesCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
           <span class="arr-nav-group-label">Operations</span>
-          <button type="button" data-arr-section="wanted" data-arr-icon-key="wanted" data-arr-badge-mode="label" onclick="openInkdropNavSection('wanted')"><span class="arr-nav-label">Wanted</span><span class="arr-nav-count" id="navWantedCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
-          <button type="button" data-arr-section="activity" data-arr-icon-key="activity" data-arr-badge-mode="label" onclick="openInkdropNavSection('activity')"><span class="arr-nav-label">Activity</span><span class="arr-nav-count" id="navActivityCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <button type="button" data-arr-section="wanted" data-arr-icon-key="wanted" data-arr-badge-mode="label" data-nav-abbr="Want" title="Wanted" onclick="openInkdropNavSection('wanted')"><span class="arr-nav-label">Wanted</span><span class="arr-nav-count" id="navWantedCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <button type="button" data-arr-section="activity" data-arr-icon-key="activity" data-arr-badge-mode="label" data-nav-abbr="Act" title="Activity" onclick="openInkdropNavSection('activity')"><span class="arr-nav-label">Activity</span><span class="arr-nav-count" id="navActivityCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
           <div class="arr-activity-subnav" aria-label="Activity areas">
             <button type="button" data-arr-section="queue" data-arr-subsection="activity" onclick="openInkdropNavSection('queue')">Queue</button>
             <button type="button" data-arr-section="history" data-arr-subsection="activity" onclick="openInkdropNavSection('history')">History</button>
             <button type="button" data-arr-section="source_memory" data-arr-subsection="activity" onclick="openInkdropNavSection('source_memory')">Blocklist</button>
           </div>
-          <button type="button" data-arr-section="manual_review" data-arr-icon-key="manual-review" data-arr-badge-mode="label" onclick="openInkdropNavSection('manual_review')"><span class="arr-nav-label">Manual Review</span><span class="arr-nav-count" id="navReviewCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+          <button type="button" data-arr-section="manual_review" data-arr-icon-key="manual-review" data-arr-badge-mode="label" data-nav-abbr="Rev" title="Manual Review" onclick="openInkdropNavSection('manual_review')"><span class="arr-nav-label">Manual Review</span><span class="arr-nav-count" id="navReviewCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
           <span class="arr-nav-group-label">Administration</span>
-          <button type="button" data-arr-section="settings" data-arr-icon-key="settings" data-arr-static-nav="true" onclick="openInkdropSettingsArea('setup')"><span class="arr-nav-label">Settings</span></button>
+          <button type="button" data-arr-section="settings" data-arr-icon-key="settings" data-arr-static-nav="true" data-nav-abbr="⚙" title="Settings" onclick="openInkdropSettingsArea('setup')"><span class="arr-nav-label">Settings</span></button>
           <div class="arr-settings-subnav" aria-label="Settings areas">
             <button type="button" data-settings-nav-area="setup" onclick="openInkdropSettingsArea('setup')">Setup</button>
             <button type="button" data-settings-nav-area="media_management" onclick="openInkdropSettingsArea('media_management')">Media Management</button>
@@ -802,7 +800,7 @@ HTML = r"""<!doctype html>
             <button type="button" data-settings-nav-area="root_folders" onclick="openInkdropSettingsArea('root_folders')">Paths</button>
             <button type="button" data-settings-nav-area="automation" onclick="openInkdropSettingsArea('automation')" hidden aria-hidden="true">Automatic Search</button>
           </div>
-          <button type="button" data-arr-section="system" data-arr-icon-key="system" data-arr-static-nav="true" onclick="openInkdropNavSection('system')"><span class="arr-nav-label">System</span></button>
+          <button type="button" data-arr-section="system" data-arr-icon-key="system" data-arr-static-nav="true" data-nav-abbr="Sys" title="System" onclick="openInkdropNavSection('system')"><span class="arr-nav-label">System</span></button>
         </nav>
         <div class="arr-nav-actions">
           <button class="arr-nav-add" type="button" onclick="goToWorkflowTarget('seriesSearchSection')">Add Series</button>
