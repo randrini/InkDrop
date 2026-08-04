@@ -558,7 +558,7 @@ export class SeriesDetailPage extends Component {
     const { series } = this.state;
     if (!series) return null;
 
-    const coverUrl = (series.image || series.cover_url) ? api.cover.url(series.image || series.cover_url) : null;
+    const coverUrl = series.image || series.cover_url ? api.cover.url(series.image || series.cover_url) : null;
 
     return (
       <div class="series-detail-hero">
@@ -582,7 +582,9 @@ export class SeriesDetailPage extends Component {
         <div class="series-detail-info">
           <h1 class="series-detail-name">{series.title || series.name}</h1>
 
-          {series.description && <div class="series-detail-description">{series.description}</div>}
+          {(series.description || series.deck) && (
+            <div class="series-detail-description">{series.description || series.deck}</div>
+          )}
 
           <div class="series-detail-meta-row">
             {series.publisher && <span class="ink-pill ink-pill-muted">{series.publisher}</span>}
@@ -593,12 +595,15 @@ export class SeriesDetailPage extends Component {
             </span>
           </div>
 
-          {series.start_year && (
-            <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">
-              Started {series.start_year}
-              {series.total_issues != null ? ` · ${series.total_issues} issues` : ""}
-            </div>
-          )}
+          <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">
+            {(series.start_year || series.year) && <span>Started {series.start_year || series.year}</span>}
+            {(series.issue_count > 0 || series.count_of_issues > 0) && (
+              <span>
+                {series.start_year || series.year ? " · " : ""}
+                {series.issue_count || series.count_of_issues} issues
+              </span>
+            )}
+          </div>
 
           <div class="series-detail-stats-row">
             {series.wanted_count > 0 && <span class="ink-pill ink-pill-warning">{series.wanted_count} Wanted</span>}
@@ -753,7 +758,12 @@ export class SeriesDetailPage extends Component {
             {issues.map((issue, idx) => (
               <tr key={issue.id || issue.issue_number || idx}>
                 <td style="font-weight:600;white-space:nowrap;">{issue.issue_number || issue.number || "—"}</td>
-                <td>{issue.title || issue.name || "Untitled"}</td>
+                <td>
+                  {issue.title ||
+                    issue.name ||
+                    issue.issue_name ||
+                    `Issue #${issue.issue_number || issue.number || idx + 1}`}
+                </td>
                 <td>
                   {issue.status ? (
                     <span class={`ink-pill ${statusPillClass(issue.status)}`}>{issue.status}</span>
@@ -809,7 +819,17 @@ export class SeriesDetailPage extends Component {
               <span class="series-detail-library-label">
                 {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
               </span>
-              <span class="series-detail-library-value">{value == null ? "—" : String(value)}</span>
+              <span class="series-detail-library-value">
+                {value == null
+                  ? "—"
+                  : Array.isArray(value)
+                    ? value.length > 0
+                      ? value.join(", ")
+                      : "—"
+                    : typeof value === "object"
+                      ? JSON.stringify(value)
+                      : String(value)}
+              </span>
             </div>
           ))}
         </div>

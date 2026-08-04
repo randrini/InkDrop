@@ -829,7 +829,7 @@ export class SeriesPage extends Component {
   _renderCard(series) {
     const { focusId } = this.state;
     const isFocus = focusId === series.id;
-    const coverUrl = (series.image || series.cover_url) ? api.cover.url(series.image || series.cover_url) : null;
+    const coverUrl = series.image || series.cover_url ? api.cover.url(series.image || series.cover_url) : null;
 
     return (
       <div
@@ -911,7 +911,7 @@ export class SeriesPage extends Component {
   _renderListRow(series) {
     const { focusId } = this.state;
     const isFocus = focusId === series.id;
-    const coverUrl = (series.image || series.cover_url) ? api.cover.url(series.image || series.cover_url) : null;
+    const coverUrl = series.image || series.cover_url ? api.cover.url(series.image || series.cover_url) : null;
 
     return (
       <div
@@ -988,7 +988,9 @@ export class SeriesPage extends Component {
     const query = (searchQuery || "").trim().toLowerCase();
     const filtered = query
       ? series.filter(
-          (s) => (s.title || s.name || "").toLowerCase().includes(query) || (s.publisher || "").toLowerCase().includes(query),
+          (s) =>
+            (s.title || s.name || "").toLowerCase().includes(query) ||
+            (s.publisher || "").toLowerCase().includes(query),
         )
       : series;
 
@@ -1189,6 +1191,8 @@ export class SeriesPage extends Component {
               _id: r.id,
               _cover: r.image?.thumb_url || r.image?.original_url || r.image?.tiny_url || null,
               _description: r.deck || r.description || "",
+              _start_year: r.start_year || "",
+              _count_of_issues: r.count_of_issues || 0,
             }))
           : [];
       } else {
@@ -1205,6 +1209,8 @@ export class SeriesPage extends Component {
                 _id: r.id,
                 _cover: r.image?.thumb_url || r.image?.original_url || r.image?.tiny_url || null,
                 _description: r.deck || r.description || "",
+                _start_year: r.start_year || "",
+                _count_of_issues: r.count_of_issues || 0,
               }))
             : [];
         const mdResults =
@@ -1315,7 +1321,15 @@ export class SeriesPage extends Component {
             {addSearchResults && addSearchResults.length > 0 && (
               <div style="max-height:480px;overflow-y:auto;">
                 {addSearchResults.map((r) => {
-                  const coverUrl = r._cover || r.image?.thumb_url || r.image?.original_url || r.cover_url || null;
+                  const coverUrl = r._cover
+                    ? api.cover.url(r._cover)
+                    : r.image?.thumb_url
+                      ? api.cover.url(r.image.thumb_url)
+                      : r.image?.original_url
+                        ? api.cover.url(r.image.original_url)
+                        : r.cover_url
+                          ? api.cover.url(r.cover_url)
+                          : null;
                   const description = r._description || r.deck || r.description || "";
                   const providerLabel = r._provider === "mangadex" ? "MangaDex" : "ComicVine";
                   const providerClass = r._provider === "mangadex" ? "ink-pill-info" : "ink-pill-gold";
@@ -1346,12 +1360,12 @@ export class SeriesPage extends Component {
                         {r.publisher && (
                           <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">{r.publisher}</div>
                         )}
-                        {(r.start_year || r.count_of_issues || r.issue_count) && (
+                        {(r._start_year || r._count_of_issues || r.issue_count) && (
                           <div style="font-size:var(--ink-text-xs);color:var(--ink-text-muted);margin-top:2px;">
-                            {r.start_year ? `Started ${r.start_year}` : ""}
-                            {r.start_year && r.count_of_issues ? " · " : ""}
-                            {r.count_of_issues
-                              ? `${r.count_of_issues} issues`
+                            {r._start_year ? `Started ${r._start_year}` : ""}
+                            {r._start_year && r._count_of_issues ? " · " : ""}
+                            {r._count_of_issues
+                              ? `${r._count_of_issues} issues`
                               : r.issue_count
                                 ? `${r.issue_count} chapters`
                                 : ""}
