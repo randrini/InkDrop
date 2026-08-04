@@ -503,7 +503,7 @@ export class SeriesDetailPage extends Component {
     if (!id || this.state.deleting) return;
 
     const confirmed = window.confirm(
-      `Are you sure you want to delete "${this.state.series.name}"?\n\nThis action cannot be undone. All series data, including issues and library references, will be removed.`,
+      `Are you sure you want to delete "${this.state.series.title || this.state.series.name}"?\n\nThis action cannot be undone. All series data, including issues and library references, will be removed.`,
     );
 
     if (!confirmed) return;
@@ -558,7 +558,7 @@ export class SeriesDetailPage extends Component {
     const { series } = this.state;
     if (!series) return null;
 
-    const coverUrl = series.cover_url ? api.cover.url(series.cover_url) : null;
+    const coverUrl = (series.image || series.cover_url) ? api.cover.url(series.image || series.cover_url) : null;
 
     return (
       <div class="series-detail-hero">
@@ -567,7 +567,7 @@ export class SeriesDetailPage extends Component {
             <img
               class="series-detail-cover"
               src={coverUrl}
-              alt={`${series.name} cover`}
+              alt={`${series.title || series.name} cover`}
               onError={(e) => {
                 e.target.style.display = "none";
                 e.target.nextSibling.style.display = "flex";
@@ -580,7 +580,7 @@ export class SeriesDetailPage extends Component {
         </div>
 
         <div class="series-detail-info">
-          <h1 class="series-detail-name">{series.name}</h1>
+          <h1 class="series-detail-name">{series.title || series.name}</h1>
 
           {series.description && <div class="series-detail-description">{series.description}</div>}
 

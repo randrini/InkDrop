@@ -829,7 +829,7 @@ export class SeriesPage extends Component {
   _renderCard(series) {
     const { focusId } = this.state;
     const isFocus = focusId === series.id;
-    const coverUrl = series.cover_url ? api.cover.url(series.cover_url) : null;
+    const coverUrl = (series.image || series.cover_url) ? api.cover.url(series.image || series.cover_url) : null;
 
     return (
       <div
@@ -847,7 +847,7 @@ export class SeriesPage extends Component {
             <img
               class="series-card-cover"
               src={coverUrl}
-              alt={`${series.name} cover`}
+              alt={`${series.title || series.name} cover`}
               loading="lazy"
               onError={(e) => {
                 e.target.style.display = "none";
@@ -860,8 +860,8 @@ export class SeriesPage extends Component {
           </div>
         </div>
         <div class="series-card-body">
-          <div class="series-card-name" title={series.name}>
-            {series.name}
+          <div class="series-card-name" title={series.title || series.name}>
+            {series.title || series.name}
           </div>
           <div class="series-card-meta">
             {series.publisher && (
@@ -911,7 +911,7 @@ export class SeriesPage extends Component {
   _renderListRow(series) {
     const { focusId } = this.state;
     const isFocus = focusId === series.id;
-    const coverUrl = series.cover_url ? api.cover.url(series.cover_url) : null;
+    const coverUrl = (series.image || series.cover_url) ? api.cover.url(series.image || series.cover_url) : null;
 
     return (
       <div
@@ -939,8 +939,8 @@ export class SeriesPage extends Component {
         <div class="series-list-thumb-placeholder" style={coverUrl ? { display: "none" } : {}}>
           N/A
         </div>
-        <div class="series-list-name" title={series.name}>
-          {series.name}
+        <div class="series-list-name" title={series.title || series.name}>
+          {series.title || series.name}
         </div>
         <div class="series-list-cell series-list-cell-hide-mobile">{series.publisher || "—"}</div>
         <div class="series-list-cell series-list-cell-hide-mobile">{series.source || "—"}</div>
@@ -988,7 +988,7 @@ export class SeriesPage extends Component {
     const query = (searchQuery || "").trim().toLowerCase();
     const filtered = query
       ? series.filter(
-          (s) => (s.name || "").toLowerCase().includes(query) || (s.publisher || "").toLowerCase().includes(query),
+          (s) => (s.title || s.name || "").toLowerCase().includes(query) || (s.publisher || "").toLowerCase().includes(query),
         )
       : series;
 

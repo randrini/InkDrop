@@ -321,24 +321,24 @@ class AppShell extends Component {
             {count != null && count > 0 ? <span class="ink-nav-count">{count}</span> : null}
           </button>,
         );
-      }
-    }
 
-    // Settings subnav
-    if (currentSection === "settings") {
-      navElements.push(
-        <div class="ink-nav-subnav" key="settings-subnav">
-          {settingsSubnav.map((s) => (
-            <button
-              key={s.area}
-              class={`ink-nav-btn${settingsArea === s.area ? " ink-nav-active" : ""}`}
-              onClick={() => this._navigateToSettings(s.area)}
-            >
-              <span class="ink-nav-label">{s.label}</span>
-            </button>
-          ))}
-        </div>,
-      );
+        // Render settings subnav right after the settings nav item
+        if (item.section === "settings" && currentSection === "settings") {
+          navElements.push(
+            <div class="ink-nav-subnav" key="settings-subnav">
+              {settingsSubnav.map((s) => (
+                <button
+                  key={s.area}
+                  class={`ink-nav-btn${settingsArea === s.area ? " ink-nav-active" : ""}`}
+                  onClick={() => this._navigateToSettings(s.area)}
+                >
+                  <span class="ink-nav-label">{s.label}</span>
+                </button>
+              ))}
+            </div>,
+          );
+        }
+      }
     }
 
     return (
