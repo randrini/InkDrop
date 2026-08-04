@@ -59468,7 +59468,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
             for name, value in (headers or {}).items():
                 values = value if isinstance(value, (list, tuple)) else [value]
                 for item in values:
