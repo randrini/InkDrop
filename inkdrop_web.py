@@ -28104,6 +28104,7 @@ HTML = r"""<!doctype html>
           cancel.onclick = () => {
             resetProviderSettingsCard(card, provider, isDownloadClientCard ? bodyTarget : null);
             if (isDownloadClientCard) window.InkDropDownloadClients?.closeProviderCardModal?.(providerTarget);
+            else card.open = false;
           };
           actions.appendChild(cancel);
         }
