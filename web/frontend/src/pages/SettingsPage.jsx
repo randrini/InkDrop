@@ -1361,8 +1361,9 @@ class SettingsPage extends Component {
 
   _renderDownloadClients() {
     const { dcLoading, dcList, dcRegistry, dcStatus, dcShowForm, dcEditing, dcFormData, dcTesting } = this.state;
+    const clients = Array.isArray(dcList) ? dcList : [];
 
-    if (dcLoading && dcList.length === 0) {
+    if (dcLoading && clients.length === 0) {
       return (
         <div class="ink-empty">
           <div class="ink-spinner" />
@@ -1377,7 +1378,7 @@ class SettingsPage extends Component {
     return (
       <div>
         {/* Client list */}
-        {dcList.length === 0 ? (
+        {clients.length === 0 ? (
           <div class="ink-empty">
             <div class="ink-empty-icon">📥</div>
             <div class="ink-empty-title">No Download Clients</div>
@@ -1385,7 +1386,7 @@ class SettingsPage extends Component {
           </div>
         ) : (
           <div style="display:flex;flex-direction:column;gap:var(--ink-space-md);">
-            {dcList.map((client) => {
+            {clients.map((client) => {
               const status = dcStatus?.clients?.find((c) => c.id === client.id);
               const isOnline = status?.connected === true;
               return (
@@ -1436,7 +1437,7 @@ class SettingsPage extends Component {
           <button class="ink-btn-primary ink-btn-sm" onClick={() => this._handleDcAdd()} type="button">
             + Add Download Client
           </button>
-          {dcList.length > 0 && (
+          {clients.length > 0 && (
             <button
               class="ink-btn-ghost ink-btn-sm"
               onClick={() => this._handleDcTestAll()}
