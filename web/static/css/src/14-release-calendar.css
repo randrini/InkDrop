@@ -728,6 +728,12 @@
 }
 
 /* ===== Manual review (JS-generated) ===== */
+.manual-review-support-tools {
+  border-color: var(--line-light);
+}
+.manual-review-support-tools > summary {
+  color: var(--text-muted);
+}
 .manual-review-action-help {
   font-size: 11px;
   color: var(--text-muted);
@@ -1151,6 +1157,18 @@
   border-radius: 999px;
   background: var(--surface-3);
   color: var(--text-muted);
+}
+.source-chip.good {
+  color: var(--good);
+  background: rgba(74, 222, 128, 0.1);
+}
+.source-chip.warn {
+  color: var(--warn);
+  background: rgba(245, 158, 11, 0.1);
+}
+.source-chip.bad {
+  color: var(--bad);
+  background: rgba(239, 68, 68, 0.1);
 }
 .source-hint-compact {
   font-size: var(--font-sm);

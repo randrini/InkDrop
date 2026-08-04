@@ -144,26 +144,32 @@
   padding: 0 16px 16px;
 }
 .arr-section-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+  padding: 4px 0;
 }
 .arr-section-tile {
-  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-alt);
-  color: var(--text);
-  font-size: 13px;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  transition: all var(--transition);
+  text-align: left;
+  font-size: var(--font-sm);
 }
 .arr-section-tile:hover {
   border-color: var(--accent-dim);
   background: var(--surface-2);
+}
+.arr-section-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .arr-section-tile strong {
   font-size: 16px;
@@ -736,6 +742,15 @@
   font-size: var(--font-sm);
   color: var(--muted);
 }
+.core-activity-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0;
+}
+.core-activity-strip:empty {
+  display: none;
+}
 
 /* Workflow snapshot */
 .workflow-snapshot-drawer {
@@ -751,6 +766,7 @@
 }
 .workflow-grid {
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
 }
 .workflow-next {

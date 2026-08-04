@@ -2836,26 +2836,32 @@ details[open] .open-label {
   padding: 0 16px 16px;
 }
 .arr-section-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+  padding: 4px 0;
 }
 .arr-section-tile {
-  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-alt);
-  color: var(--text);
-  font-size: 13px;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  transition: all var(--transition);
+  text-align: left;
+  font-size: var(--font-sm);
 }
 .arr-section-tile:hover {
   border-color: var(--accent-dim);
   background: var(--surface-2);
+}
+.arr-section-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .arr-section-tile strong {
   font-size: 16px;
@@ -3428,6 +3434,15 @@ details[open] .open-label {
   font-size: var(--font-sm);
   color: var(--muted);
 }
+.core-activity-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0;
+}
+.core-activity-strip:empty {
+  display: none;
+}
 
 /* Workflow snapshot */
 .workflow-snapshot-drawer {
@@ -3443,6 +3458,7 @@ details[open] .open-label {
 }
 .workflow-grid {
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
 }
 .workflow-next {
@@ -5669,6 +5685,12 @@ details[open] .open-label {
 .series-remove-modal[hidden] {
   display: none;
 }
+.inkdrop-text-modal {
+  /* Text input modal — reuses series-remove-modal layout */
+}
+.series-library-modal {
+  /* Library move modal — reuses series-remove-modal layout */
+}
 .series-remove-dialog {
   background: var(--surface);
   border: 1px solid var(--line-light);
@@ -5690,6 +5712,9 @@ details[open] .open-label {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+.manual-review-decision-dialog {
+  max-width: 520px;
 }
 .series-remove-head {
   display: flex;
@@ -9538,6 +9563,12 @@ details[open] .open-label {
 }
 
 /* ===== Manual review (JS-generated) ===== */
+.manual-review-support-tools {
+  border-color: var(--line-light);
+}
+.manual-review-support-tools > summary {
+  color: var(--text-muted);
+}
 .manual-review-action-help {
   font-size: 11px;
   color: var(--text-muted);
@@ -9961,6 +9992,18 @@ details[open] .open-label {
   border-radius: 999px;
   background: var(--surface-3);
   color: var(--text-muted);
+}
+.source-chip.good {
+  color: var(--good);
+  background: rgba(74, 222, 128, 0.1);
+}
+.source-chip.warn {
+  color: var(--warn);
+  background: rgba(245, 158, 11, 0.1);
+}
+.source-chip.bad {
+  color: var(--bad);
+  background: rgba(239, 68, 68, 0.1);
 }
 .source-hint-compact {
   font-size: var(--font-sm);

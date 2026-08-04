@@ -306,6 +306,12 @@
 .series-remove-modal[hidden] {
   display: none;
 }
+.inkdrop-text-modal {
+  /* Text input modal — reuses series-remove-modal layout */
+}
+.series-library-modal {
+  /* Library move modal — reuses series-remove-modal layout */
+}
 .series-remove-dialog {
   background: var(--surface);
   border: 1px solid var(--line-light);
@@ -327,6 +333,9 @@
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+.manual-review-decision-dialog {
+  max-width: 520px;
 }
 .series-remove-head {
   display: flex;
