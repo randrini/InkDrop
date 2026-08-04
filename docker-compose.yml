@@ -1,25 +1,37 @@
-# The scheduler runs inside this one service by default, so this is the
-# whole install -- no separate worker container needed.
+# InkDrop comics and manga acquisition automation.
 #
-# Four mounts, matching the paths the image actually uses:
-#   /config          database, logs, cache, backups, quarantine, manual inbox
-#   /downloads       where downloads land before they are checked and imported
-#   /data/comics     your comic library
-#   /data/manga      your manga library
+# Path layout inside the InkDrop container (set by Dockerfile ENV):
+#   /config                       database, logs, cache, backups, quarantine
+#   /downloads                    parent of the staging area (bind mount)
+#   /downloads/staging            InkDrop working directory for in-flight downloads
+#   /downloads/staging/slskd     where InkDrop expects slskd completed files
+#   /data/comics                  your comic library
+#   /data/manga                   your manga library
 #
-# Mounting a library somewhere else without also changing Comic root or
-# Manga root under Settings -> Media Management leaves it invisible to
-# InkDrop, so it is worth keeping these as they are.
+# Path layout inside the slskd container:
+#   /downloads                    where slskd writes completed downloads
+#   /downloads/incomplete         where slskd stores partial downloads (InkDrop skips this)
+#   /app/config                   slskd configuration and API key
+#
+# The critical shared path: both containers mount the SAME host directory
+# (./downloads/staging/slskd). slskd writes completed files there; InkDrop's
+# staging sweep reads them from there. This is the only way slskd downloads
+# reach InkDrop's import pipeline.
+#
+# Before starting:
+#   1. Copy .env.example to .env and fill in the values.
+#   2. Create the shared download directory:
+#        mkdir -p downloads/staging/slskd
 services:
   inkdrop:
     image: ghcr.io/jaredbahr/inkdrop:latest
     container_name: inkdrop
     environment:
-      # Off by default so a fresh install never grabs anything before you've
-      # reviewed your setup. Turned on here because this is the documented
-      # path new users follow, and a beta build that silently finds nothing
-      # is worse than one that starts searching right away.
       INKDROP_QUEUE_RUNNER_AUTOPILOT_ENABLED: "1"
+      # slskd API URL — uses Docker DNS since both services share the default
+      # network. If you changed the slskd service name, update this too.
+      # InkDrop appends /api/v0 automatically.
+      INKDROP_SLSKD_API_BASE_URL: "http://slskd:5030"
     ports:
       - "8796:8796"
     volumes:
@@ -28,9 +40,28 @@ services:
       - /path/to/your/Comics:/data/comics
       - /path/to/your/Manga:/data/manga
     restart: unless-stopped
+
+  # slskd — Soulseek file sharing daemon.
+  # Completed downloads land in ./downloads/staging/slskd on the host,
+  # which is where InkDrop's staging sweep looks for them.
+  # InkDrop skips the "incomplete" subdirectory where partial transfers live.
+  slskd:
+    image: slskd/slskd:latest
+    container_name: slskd
+    environment:
+      SLSKD_NO_HTTPS: "true"
+      SLSKD_SLSK_USERNAME: ${SLSKD_USERNAME}
+      SLSKD_SLSK_PASSWORD: ${SLSKD_PASSWORD}
+      SLSKD_API_KEY: ${SLSKD_API_KEY:-inkdrop}
+    ports:
+      - "5030:5030"
+    volumes:
+      - ./downloads/staging/slskd:/downloads
+      - ./slskd-config:/app/config
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-B", "inkdrop_container_healthcheck.py", "--timeout", "5"]
-      interval: 60s
-      timeout: 10s
+      test: ["CMD", "curl", "-sf", "http://localhost:5030/api/v0/status"]
+      interval: 30s
+      timeout: 3s
       retries: 3
-      start_period: 30s
+      start_period: 10s
