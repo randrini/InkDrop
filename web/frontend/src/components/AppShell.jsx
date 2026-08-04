@@ -231,7 +231,7 @@ class AppShell extends Component {
           </nav>
 
           <div class="ink-nav-actions">
-            <button class="ink-nav-add" onClick={() => this._navigateTo('series')}>Add Series</button>
+            <button class="ink-nav-add" onClick={() => this._navigateTo('series', { add: '1' })}>Add Series</button>
           </div>
 
           <div class="ink-activity-region" aria-live="polite">

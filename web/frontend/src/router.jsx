@@ -69,6 +69,7 @@ function startRouter() {
     appStore.setMany({
       currentSection: route.section,
       currentSubsection: route.subsection,
+      routeParams: route.params,
     });
   }
   

@@ -83,6 +83,7 @@ export const appStore = createStore({
   // Navigation
   currentSection: 'series',
   currentSubsection: null,
+  routeParams: {},
   sidebarCollapsed: false,
   mobileMenuOpen: false,
   // State data

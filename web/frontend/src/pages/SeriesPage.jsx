@@ -535,6 +535,11 @@ export class SeriesPage extends Component {
       refreshing: false,
       loadingMore: false,
       rowMode: 'compact_card',
+      showAddDialog: false,
+      addSearchQuery: '',
+      addSearchResults: null,
+      addSearchLoading: false,
+      addSearchError: null,
     };
 
     this._mounted = false;
@@ -544,6 +549,13 @@ export class SeriesPage extends Component {
   componentDidMount() {
     this._mounted = true;
     this._loadInitial();
+    // If navigated with ?add=1, open the add series dialog
+    const route = router.parseHash();
+    if (route.params?.add === '1') {
+      this.setState({ showAddDialog: true });
+      // Clear the add param from URL without losing the section
+      window.location.hash = '#series';
+    }
   }
 
   componentWillUnmount() {
@@ -1053,6 +1065,14 @@ export class SeriesPage extends Component {
           </div>
           <div class="series-toolbar-right">
             <button
+              class="ink-btn-primary ink-btn-sm"
+              onClick={() => this._openAddDialog()}
+              type="button"
+              title="Add a new series"
+            >
+              + Add Series
+            </button>
+            <button
               class="ink-btn-ghost ink-btn-sm"
               onClick={() => this._refresh()}
               disabled={refreshing}
@@ -1088,6 +1108,94 @@ export class SeriesPage extends Component {
             {this._renderLoadMore()}
           </>
         )}
+
+        {/* ── Add Series Dialog ──────────────────────────────────── */}
+        {this.state.showAddDialog && this._renderAddDialog()}
+      </div>
+    );
+  }
+
+  /* ── Add Series Dialog ──────────────────────────────────────────── */
+
+  _openAddDialog() {
+    this.setState({ showAddDialog: true, addSearchQuery: '', addSearchResults: null, addSearchError: null });
+  }
+
+  _closeAddDialog() {
+    this.setState({ showAddDialog: false, addSearchResults: null, addSearchError: null });
+  }
+
+  async _handleAddSearch(e) {
+    e.preventDefault();
+    const query = this.state.addSearchQuery.trim();
+    if (!query) return;
+    this.setState({ addSearchLoading: true, addSearchError: null });
+    try {
+      const results = await api.watches.comicvineSearch(query, 20);
+      if (!this._mounted) return;
+      this.setState({ addSearchResults: results.ok ? (results.results || []) : [], addSearchLoading: false, addSearchError: results.ok ? null : (results.error || 'Search failed') });
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({ addSearchLoading: false, addSearchError: api.friendlyMessage(err) });
+    }
+  }
+
+  async _handleAddWatch(result) {
+    try {
+      await api.watches.comicvineAdd({ comicvine_id: result.id, name: result.name, publisher: result.publisher });
+      toast(`Added "${result.name}"`, 'success');
+      this._closeAddDialog();
+      this._refresh();
+    } catch (err) {
+      toast(api.friendlyMessage(err), 'error');
+    }
+  }
+
+  _renderAddDialog() {
+    const { addSearchQuery, addSearchResults, addSearchLoading, addSearchError } = this.state;
+    return (
+      <div class="ink-dialog-backdrop" onClick={(e) => e.target === e.currentTarget && this._closeAddDialog()}>
+        <div class="ink-dialog" style="max-width:640px;">
+          <div class="ink-dialog-header">
+            <h2>Add Series</h2>
+          </div>
+          <div class="ink-dialog-body">
+            <form onSubmit={(e) => this._handleAddSearch(e)} style="display:flex;gap:8px;margin-bottom:16px;">
+              <input
+                type="search"
+                placeholder="Search ComicVine for a series..."
+                value={addSearchQuery}
+                onInput={(e) => this.setState({ addSearchQuery: e.target.value })}
+                style="flex:1;"
+                autofocus
+              />
+              <button type="submit" class="ink-btn-primary" disabled={addSearchLoading || !addSearchQuery.trim()}>
+                {addSearchLoading ? 'Searching...' : 'Search'}
+              </button>
+            </form>
+            {addSearchError && <div class="ink-auth-error" style="margin-bottom:12px;">{addSearchError}</div>}
+            {addSearchResults && addSearchResults.length === 0 && !addSearchLoading && (
+              <div class="ink-empty"><div class="ink-empty-title">No results found</div></div>
+            )}
+            {addSearchResults && addSearchResults.length > 0 && (
+              <div style="max-height:400px;overflow-y:auto;">
+                {addSearchResults.map((r) => (
+                  <div key={r.id || r.name} style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--ink-border-subtle);">
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-weight:600;font-size:var(--ink-text-base);">{r.name}</div>
+                      {r.publisher && <div style="font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">{r.publisher}</div>}
+                      {r.start_year && <div style="font-size:var(--ink-text-xs);color:var(--ink-text-muted);">Started {r.start_year}</div>}
+                    </div>
+                    <button class="ink-btn-primary ink-btn-sm" onClick={() => this._handleAddWatch(r)} type="button">Add</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div class="ink-dialog-footer">
+            <button class="ink-btn-ghost" onClick={() => this._closeAddDialog()} type="button">Close</button>
+          </div>
+        </div>
       </div>
     );
   }

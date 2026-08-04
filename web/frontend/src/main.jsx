@@ -50,30 +50,54 @@ async function initAuth() {
     await api.refreshAuthContract();
     const data = await api.auth.status();
     if (data.ok && data.auth) {
+      const bootstrapRequired = !!(data.auth.built_in_auth?.bootstrap_required);
+      const setupRequired = !!data.auth.setup_required;
+
+      // If setup is required (no admin exists), show bootstrap
+      if (setupRequired && bootstrapRequired) {
+        appStore.setMany({
+          authStatus: data.auth,
+          authReady: true,
+          authenticated: false,
+          administrator: false,
+          setupRequired: true,
+          bootstrapRequired: true,
+        });
+        return;
+      }
+
+      // Try to validate existing session
+      let authenticated = false;
+      let principal = null;
+      let administrator = false;
+      try {
+        const session = await api.auth.session();
+        if (session.ok && session.principal) {
+          authenticated = true;
+          principal = session.principal;
+          administrator = !!session.principal.administrator;
+        }
+      } catch {
+        // Session invalid or expired — will show login
+      }
+
       appStore.setMany({
         authStatus: data.auth,
         authReady: true,
-        authenticated: !data.auth.required,
-        administrator: false,
-        setupRequired: !!data.auth.setup_required,
-        bootstrapRequired: !!(data.auth.built_in_auth?.bootstrap_required),
+        authenticated,
+        principal,
+        administrator,
+        setupRequired: false,
+        bootstrapRequired: false,
       });
-      if (!data.auth.required) {
-        const session = await api.auth.session();
-        if (session.ok) {
-          appStore.setMany({
-            authenticated: true,
-            principal: session.principal,
-            administrator: !!session.principal?.administrator,
-          });
-        }
-      }
     } else {
-      appStore.setMany({ authReady: true, authStatus: { required: false } });
+      // Auth status endpoint returned error — assume no auth required
+      appStore.setMany({ authReady: true, authStatus: { required: false }, authenticated: true, administrator: false });
     }
   } catch (err) {
     console.error('Auth init failed:', err);
-    appStore.set('authReady', true);
+    // Network error — allow app to load, user can retry
+    appStore.setMany({ authReady: true, authStatus: { required: false }, authenticated: true, administrator: false });
   }
 }
 
