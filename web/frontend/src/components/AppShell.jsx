@@ -55,7 +55,10 @@ class AppShell extends Component {
   }
 
   componentDidMount() {
-    appStore.subscribeKey('currentSection', this._onSectionChange);
+    this._unsubs = [
+      appStore.subscribeKey('currentSection', () => this.forceUpdate()),
+      appStore.subscribeKey('authenticated', () => { this._loadNavCounts(); this.forceUpdate(); }),
+    ];
     window.addEventListener('keydown', this._onKeyDown);
     this._loadNavCounts();
     this._statusTimer = setInterval(() => this._loadStatus(), 30000);
@@ -63,13 +66,9 @@ class AppShell extends Component {
   }
 
   componentWillUnmount() {
-    appStore.subscribeKey('currentSection', this._onSectionChange); // cleanup would need unsubscribe
+    if (this._unsubs) this._unsubs.forEach(fn => fn());
     window.removeEventListener('keydown', this._onKeyDown);
     if (this._statusTimer) clearInterval(this._statusTimer);
-  }
-
-  _onSectionChange() {
-    this.forceUpdate();
   }
 
   _onKeyDown(e) {

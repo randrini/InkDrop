@@ -3,6 +3,8 @@
  * No external dependency; uses simple pub/sub for state management.
  */
 
+import { useState, useEffect } from 'preact/hooks';
+
 const subscribers = new Map();
 let nextId = 0;
 
@@ -133,6 +135,30 @@ prefStore.set = function (key, value) {
   origSet.call(prefStore, key, value);
   savePrefs(prefStore.snapshot());
 };
+
+/**
+ * useStore — Preact hook that subscribes to store changes.
+ * Returns a snapshot of the store and re-renders on any change.
+ */
+export function useStore(store) {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    return subscribe(() => bump(n => n + 1));
+  }, [store]);
+  return store.snapshot();
+}
+
+/**
+ * useStoreKey — Preact hook that subscribes to a single store key.
+ * Re-renders only when that specific key changes.
+ */
+export function useStoreKey(store, key) {
+  const [value, setValue] = useState(() => store.get(key));
+  useEffect(() => {
+    return store.subscribeKey(key, (v) => setValue(v));
+  }, [store, key]);
+  return value;
+}
 
 export { createStore };
 export default appStore;

@@ -4,8 +4,7 @@
  */
 
 import { h, render } from 'preact';
-import { Router, Route } from 'preact-iso';
-import { appStore } from './stores/app-store.jsx';
+import { appStore, useStoreKey } from './stores/app-store.jsx';
 import api from './api/client.jsx';
 import { router } from './router.jsx';
 
@@ -113,7 +112,7 @@ function resolvePage(section) {
 
 // ── Main App Component ───────────────────────────────────────────────
 function App() {
-  const section = appStore.get('currentSection');
+  const section = useStoreKey(appStore, 'currentSection');
   const Page = resolvePage(section);
 
   return (

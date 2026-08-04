@@ -30,6 +30,13 @@ class AuthGate extends Component {
   componentDidMount() {
     window.addEventListener('inkdrop:session-expired', this._onSessionExpired);
     window.addEventListener('inkdrop-auth-state', this._onAuthState);
+    // Re-render when auth-related store keys change
+    this._unsubs = [
+      appStore.subscribeKey('authenticated', () => this.forceUpdate()),
+      appStore.subscribeKey('authReady', () => this.forceUpdate()),
+      appStore.subscribeKey('setupRequired', () => this.forceUpdate()),
+      appStore.subscribeKey('bootstrapRequired', () => this.forceUpdate()),
+    ];
     // Start session polling if authenticated
     this._startSessionPoll();
   }
@@ -37,6 +44,7 @@ class AuthGate extends Component {
   componentWillUnmount() {
     window.removeEventListener('inkdrop:session-expired', this._onSessionExpired);
     window.removeEventListener('inkdrop-auth-state', this._onAuthState);
+    if (this._unsubs) this._unsubs.forEach(fn => fn());
     this._stopSessionPoll();
   }
 

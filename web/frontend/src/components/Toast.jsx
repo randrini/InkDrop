@@ -6,6 +6,12 @@ import { h, Component } from 'preact';
 import { appStore } from '../stores/app-store.jsx';
 
 class ToastContainer extends Component {
+  componentDidMount() {
+    this._unsub = appStore.subscribeKey('toasts', () => this.forceUpdate());
+  }
+  componentWillUnmount() {
+    if (this._unsub) this._unsub();
+  }
   render() {
     const toasts = appStore.get('toasts') || [];
     return (
