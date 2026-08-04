@@ -1000,6 +1000,55 @@
   margin-top: 12px;
 }
 
+/* Settings path map */
+.settings-path-map {
+  padding: 8px 0;
+  display: grid;
+  gap: 8px;
+}
+.settings-path-map-note {
+  margin: 0;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.settings-path-map-table {
+  display: grid;
+  gap: 2px;
+}
+.settings-path-map-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr 2fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+.settings-path-map-row.head {
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.settings-path-map-row span[role="cell"] {
+  color: var(--text);
+}
+.settings-path-map-action {
+  display: flex;
+  gap: 4px;
+}
+
+/* Settings form section */
+.settings-form-section {
+  padding: 12px 0;
+  display: grid;
+  gap: 8px;
+}
+
 /* Settings plugin card */
 .settings-plugin-card {
   padding: 12px;

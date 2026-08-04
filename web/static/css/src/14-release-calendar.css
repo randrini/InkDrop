@@ -917,8 +917,16 @@
   align-items: center;
 }
 .torrent-cleanup-facts {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
+}
+.torrent-cleanup-facts span {
+  font-size: var(--font-xs);
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
 }
 .archive-conversion-inline-progress {
   height: 4px;

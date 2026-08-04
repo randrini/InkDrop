@@ -355,9 +355,9 @@
   padding: 8px 0;
 }
 .download-client-torrent-status {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 999px;
+  display: grid;
+  gap: 8px;
+  padding: 8px 0;
 }
 .download-client-cleanup-actions {
   display: flex;
