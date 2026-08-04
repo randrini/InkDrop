@@ -871,15 +871,6 @@ HTML = r"""<!doctype html>
             </details>
 
             <section class="card source-health" id="inkdropCore" data-arr-page="series wanted queue activity history manual_review" hidden>
-              <div class="section-title core-shell-title" hidden aria-hidden="true">
-                <div>
-                  <h2>InkDrop Core</h2>
-                  <p class="mini">Wanted items, queue movement, source attempts, imports, and history.</p>
-                </div>
-                <div class="workflow-actions">
-                  <button id="inkdropCoreSyncBtn" type="button" data-arr-control-label="Sync State" aria-label="Sync State">Sync State</button>
-                </div>
-              </div>
               <details class="core-overview-drawer" id="inkdropCoreOverview" hidden aria-hidden="true">
                 <summary>
                   <div>
