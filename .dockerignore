@@ -39,15 +39,16 @@
 # frontend-builder stage installs its own via `npm ci` from the lockfile).
 /web/frontend/node_modules/
 /web/frontend/dist/
-!/inkdrop-completion-identity-audit-diff-alert.sh
-!/inkdrop-completion-identity-audit-diff-check.sh
-!/inkdrop-import-ready-worker.sh
-!/inkdrop-series-autopilot-cron.sh
-!/inkdrop-source-worker-mangadex-cron.sh
-!/inkdrop-source-worker-suwayomi-cron.sh
-!/inkdrop-source-worker.sh
-!/inkdrop-state-path-contract-sync-regression-alert.sh
-!/inkdrop-state-path-contract-sync-regression-check.sh
+!/scripts/
+!/scripts/inkdrop-completion-identity-audit-diff-alert.sh
+!/scripts/inkdrop-completion-identity-audit-diff-check.sh
+!/scripts/inkdrop-import-ready-worker.sh
+!/scripts/inkdrop-series-autopilot-cron.sh
+!/scripts/inkdrop-source-worker-mangadex-cron.sh
+!/scripts/inkdrop-source-worker-suwayomi-cron.sh
+!/scripts/inkdrop-source-worker.sh
+!/scripts/inkdrop-state-path-contract-sync-regression-alert.sh
+!/scripts/inkdrop-state-path-contract-sync-regression-check.sh
 !/inkdrop_acquire_adapter.py
 !/inkdrop_archive_conversion.py
 !/inkdrop_acquire.py
@@ -104,7 +105,6 @@
 !/inkdrop_operator_contracts.py
 !/inkdrop_opds.py
 !/inkdrop_log_export.py
-!/inkdrop_support_bundle.py
 !/inkdrop_portability_export.py
 !/inkdrop_process_lifecycle.py
 !/inkdrop_preflight.py
