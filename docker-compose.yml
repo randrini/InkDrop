@@ -2,48 +2,62 @@
 #
 # Path layout inside the InkDrop container (set by Dockerfile ENV):
 #   /config                       database, logs, cache, backups, quarantine
-#   /downloads                    parent of the staging area (bind mount)
 #   /downloads/staging            InkDrop working directory for in-flight downloads
-#   /downloads/staging/slskd     where InkDrop expects slskd completed files
+#   /downloads/staging/slskd     default slskd download root (env var override below)
 #   /data/comics                  your comic library
 #   /data/manga                   your manga library
+#   /data/downloads              slskd downloads (shared volume with slskd)
 #
 # Path layout inside the slskd container:
-#   /downloads                    where slskd writes completed downloads
+#   /downloads                    where slskd writes completed downloads (SLSKD_DOWNLOAD_DIR)
 #   /downloads/incomplete         where slskd stores partial downloads (InkDrop skips this)
+#   /data                         shared with InkDrop for download staging
 #   /app/config                   slskd configuration and API key
 #
-# The critical shared path: both containers mount the SAME host directory
-# (./downloads/staging/slskd). slskd writes completed files there; InkDrop's
-# staging sweep reads them from there. This is the only way slskd downloads
-# reach InkDrop's import pipeline.
+# The critical shared volume: both containers mount the SAME host directory
+# for /data. slskd's SLSKD_DOWNLOAD_DIR is set to /data/downloads so completed
+# files land in the shared volume where InkDrop's staging sweep can find them
+# at /data/downloads (configured in Settings -> Paths -> SLSKD Download Root).
+#
+# InkDrop's SLSKD Download Root can be configured three ways (in priority order):
+#   1. Settings -> Download Clients -> slskd instance -> Download Root (highest)
+#   2. Settings -> Paths -> SLSKD Download Root
+#   3. INKDROP_SLSKD_DOWNLOAD_ROOT env var
+#   4. Default: /downloads/staging/slskd (inside container)
+#
+# The recommended setup is option 1 or 2 set to /data/downloads so slskd files
+# land on the shared /data volume. The env var below overrides the default to
+# match this expected layout.
 #
 # Before starting:
-#   1. Copy .env.example to .env and fill in the values.
-#   2. Create the shared download directory:
-#        mkdir -p downloads/staging/slskd
+#   1. Copy this file and adjust the volume paths for your host.
+#   2. Create the required directories on the host (see mkdir commands below).
+#   3. Set SLSKD_USERNAME, SLSKD_PASSWORD, and SLSKD_API_KEY in .env.
+#
+# mkdir -p /path/to/inkdrop/{config,data/downloads,data/comics,data/manga,data/inbox/comics}
+
 services:
   inkdrop:
     image: ghcr.io/jaredbahr/inkdrop:latest
     container_name: inkdrop
     environment:
       INKDROP_QUEUE_RUNNER_AUTOPILOT_ENABLED: "1"
-      # slskd API URL — uses Docker DNS since both services share the default
-      # network. If you changed the slskd service name, update this too.
+      # Override the Dockerfile default (/downloads/staging/slskd) so InkDrop
+      # looks for slskd downloads on the shared /data volume instead.
+      INKDROP_SLSKD_DOWNLOAD_ROOT: /data/downloads
+      # slskd API URL — uses Docker DNS on the default network.
       # InkDrop appends /api/v0 automatically.
       INKDROP_SLSKD_API_BASE_URL: "http://slskd:5030"
     ports:
       - "8796:8796"
     volumes:
-      - ./config:/config
-      - ./downloads:/downloads
-      - /path/to/your/Comics:/data/comics
-      - /path/to/your/Manga:/data/manga
+      - /path/to/inkdrop/config:/config
+      - /path/to/inkdrop/data:/data
     restart: unless-stopped
 
   # slskd — Soulseek file sharing daemon.
-  # Completed downloads land in ./downloads/staging/slskd on the host,
-  # which is where InkDrop's staging sweep looks for them.
+  # Completed downloads land in /data/downloads inside the container, which
+  # is the same host directory InkDrop reads from via its shared /data volume.
   # InkDrop skips the "incomplete" subdirectory where partial transfers live.
   slskd:
     image: slskd/slskd:latest
@@ -53,11 +67,13 @@ services:
       SLSKD_SLSK_USERNAME: ${SLSKD_USERNAME}
       SLSKD_SLSK_PASSWORD: ${SLSKD_PASSWORD}
       SLSKD_API_KEY: ${SLSKD_API_KEY:-inkdrop}
+      # Tell slskd to write downloads into the shared /data volume.
+      SLSKD_DOWNLOAD_DIR: /data/downloads
     ports:
       - "5030:5030"
     volumes:
-      - ./downloads/staging/slskd:/downloads
-      - ./slskd-config:/app/config
+      - /path/to/inkdrop/data:/data
+      - /path/to/inkdrop/slskd-config:/app/config
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5030/api/v0/status"]
