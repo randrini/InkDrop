@@ -346,6 +346,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 .inkdrop-topbar {
   display: flex;
@@ -389,6 +390,8 @@ a:hover {
   max-width: 1400px;
   width: 100%;
   margin: 0 auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 .inkdrop-page-description {
   color: var(--muted);
@@ -984,6 +987,7 @@ header {
 .arr-content-shell {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 .arr-nav-shell {
   display: flex;
@@ -2839,12 +2843,15 @@ details[open] .open-label {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  min-width: 0;
 }
 .core-columns .core-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   padding: 12px;
   background: var(--bg-alt);
+  min-width: 0;
+  overflow: hidden;
 }
 .core-columns .core-panel h3 {
   font-family: "DM Sans", system-ui, sans-serif;
@@ -2870,6 +2877,8 @@ details[open] .open-label {
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
 }
 .core-row:hover {
   background: var(--surface-2);
@@ -7308,6 +7317,8 @@ details[open] .open-label {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
   transition:
     border-color var(--transition),
     background var(--transition);
@@ -7319,9 +7330,45 @@ details[open] .open-label {
 .history-event {
   font-size: var(--font-sm);
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .history-event strong {
   color: var(--text);
+}
+.history-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  margin-bottom: 4px;
+}
+.history-search-box input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-sm);
+  outline: none;
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+.history-search-box input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+.history-search-box input::placeholder {
+  color: var(--text-muted);
+}
+.history-search-note {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  padding: 4px 0;
 }
 
 /* Blocklist items */

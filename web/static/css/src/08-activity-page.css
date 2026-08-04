@@ -299,6 +299,8 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
   transition:
     border-color var(--transition),
     background var(--transition);
@@ -310,9 +312,45 @@
 .history-event {
   font-size: var(--font-sm);
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .history-event strong {
   color: var(--text);
+}
+.history-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  margin-bottom: 4px;
+}
+.history-search-box input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-sm);
+  outline: none;
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+.history-search-box input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+.history-search-box input::placeholder {
+  color: var(--text-muted);
+}
+.history-search-note {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  padding: 4px 0;
 }
 
 /* Blocklist items */

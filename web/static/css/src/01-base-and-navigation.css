@@ -346,6 +346,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 .inkdrop-topbar {
   display: flex;
@@ -389,6 +390,8 @@ a:hover {
   max-width: 1400px;
   width: 100%;
   margin: 0 auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 .inkdrop-page-description {
   color: var(--muted);
@@ -984,6 +987,7 @@ header {
 .arr-content-shell {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 .arr-nav-shell {
   display: flex;

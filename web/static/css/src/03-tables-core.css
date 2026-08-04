@@ -176,12 +176,15 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  min-width: 0;
 }
 .core-columns .core-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   padding: 12px;
   background: var(--bg-alt);
+  min-width: 0;
+  overflow: hidden;
 }
 .core-columns .core-panel h3 {
   font-family: "DM Sans", system-ui, sans-serif;
@@ -207,6 +210,8 @@
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
 }
 .core-row:hover {
   background: var(--surface-2);
