@@ -763,11 +763,32 @@ header {
 .activity-status:hover {
   border-color: var(--accent-dim);
 }
+.activity-status.warn {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.06);
+}
+.activity-status.bad {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.06);
+}
+.activity-status.good {
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.05);
+}
 .activity-status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+.activity-status-dot.warn {
+  background: var(--warn);
+}
+.activity-status-dot.bad {
+  background: var(--bad);
+}
+.activity-status-dot.good {
+  background: var(--good);
 }
 .activity-status-text {
   display: flex;
@@ -831,6 +852,7 @@ header {
 
 /* ===== Toast ===== */
 .toast {
+  display: none;
   position: fixed;
   bottom: 24px;
   right: 24px;
@@ -848,6 +870,9 @@ header {
   animation: toastIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+}
+.toast:not(:empty) {
+  display: block;
 }
 .toast.err {
   border-color: var(--bad);
@@ -7672,8 +7697,26 @@ details[open] .open-label {
   min-width: 0;
 }
 .activity-status-action {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color var(--transition),
+    color var(--transition),
+    background var(--transition);
+}
+.activity-status-action:hover {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+  background: var(--accent-warm);
 }
 .activity-subview-action {
   padding: 3px 7px;
@@ -8419,7 +8462,7 @@ details[open] .open-label {
   position: fixed;
   inset: 0;
   z-index: 950;
-  display: grid;
+  display: none;
   place-items: center;
   padding: 20px;
   background: rgba(0, 0, 0, 0.65);
@@ -8427,8 +8470,8 @@ details[open] .open-label {
   -webkit-backdrop-filter: blur(6px);
   animation: modalFadeIn 0.2s ease;
 }
-.download-client-dialog[hidden] {
-  display: none;
+.download-client-dialog:not([hidden]) {
+  display: grid;
 }
 .download-client-dialog-shell {
   background: var(--surface);
