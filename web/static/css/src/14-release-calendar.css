@@ -938,6 +938,33 @@
   display: grid;
   gap: 8px;
 }
+.archive-conversion-panel p {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.archive-conversion-panel button {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  min-height: auto;
+  justify-self: start;
+}
+.archive-conversion-panel button:hover {
+  border-color: var(--accent-dim);
+  color: var(--text);
+  background: var(--accent-warm);
+}
+.archive-conversion-panel button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .archive-conversion-progress-modal {
   position: fixed;
   inset: 0;
@@ -1358,6 +1385,57 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-alt);
+  display: grid;
+  gap: 8px;
+}
+.library-adoption-panel p {
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.library-adoption-panel button {
+  padding: 6px 14px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-sm);
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  min-height: auto;
+  justify-self: start;
+}
+.library-adoption-panel button:hover {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.library-adoption-panel button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.library-adoption-form label {
+  display: grid;
+  gap: 4px;
+  font-size: var(--font-sm);
+  color: var(--muted);
+}
+.library-adoption-form input[type="text"],
+.library-adoption-form select {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-sm);
+  outline: none;
+  transition: border-color var(--transition);
+}
+.library-adoption-form input:focus,
+.library-adoption-form select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .library-adoption-results {
   display: grid;
