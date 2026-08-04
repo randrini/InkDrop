@@ -5617,6 +5617,9 @@ details[open] .open-label {
 .settings-provider-form-control select {
   width: 100%;
 }
+.settings-provider-form-control input[type="number"] {
+  max-width: 160px;
+}
 .settings-provider-form-control p {
   margin: 0;
   font-size: var(--font-sm);
@@ -5825,6 +5828,40 @@ details[open] .open-label {
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px 0;
+}
+
+/* Settings mini facts */
+.settings-mini-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+}
+.settings-mini-fact {
+  display: inline-grid;
+  gap: 2px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  font-size: var(--font-sm);
+}
+.settings-mini-fact strong {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+}
+.settings-mini-fact span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* Settings area subhead */
+.settings-area-subhead {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text);
+  padding: 8px 0 4px;
 }
 
 /* Settings available/hidden sources drawers */
