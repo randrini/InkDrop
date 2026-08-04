@@ -462,6 +462,71 @@ const styles = `
     display: none;
   }
 }
+
+/* ── Modal Overlay ──────────────────────────────────────────────────── */
+.series-detail-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  animation: ink-fade-in 150ms ease-out;
+}
+
+.series-detail-modal {
+  background: var(--ink-bg-surface);
+  border: 1px solid var(--ink-border-subtle);
+  border-radius: var(--ink-radius-lg);
+  padding: var(--ink-space-lg);
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.series-detail-modal-title {
+  font-family: var(--ink-font-display);
+  font-size: var(--ink-text-lg);
+  font-weight: 600;
+  margin-bottom: var(--ink-space-md);
+}
+
+.series-detail-modal-body {
+  font-size: var(--ink-text-sm);
+  color: var(--ink-text-primary);
+  line-height: 1.5;
+}
+
+.series-detail-modal-impact {
+  font-size: var(--ink-text-xs);
+  color: var(--ink-text-muted);
+  font-style: italic;
+  margin: var(--ink-space-sm) 0 0 0;
+}
+
+.series-detail-modal-actions {
+  display: flex;
+  gap: var(--ink-space-sm);
+  justify-content: flex-end;
+  margin-top: var(--ink-space-lg);
+}
+
+.series-detail-modal-select {
+  width: 100%;
+  padding: var(--ink-space-sm) var(--ink-space-md);
+  font-size: var(--ink-text-sm);
+  border: 1px solid var(--ink-border-subtle);
+  border-radius: var(--ink-radius-sm);
+  background: var(--ink-bg-elevated);
+  color: var(--ink-text-primary);
+  outline: none;
+  transition: border-color var(--ink-transition-fast);
+}
+
+.series-detail-modal-select:focus {
+  border-color: var(--ink-accent-gold);
+}
 `;
 
 /* ── SeriesDetailPage Component ──────────────────────────────────────── */
@@ -482,6 +547,12 @@ export class SeriesDetailPage extends Component {
       runningSearch: false,
       refreshingCovers: false,
       deleting: false,
+      showDeleteModal: false,
+      showLibraryModal: false,
+      libraryMigrating: false,
+      selectedLibraryRoot: "",
+      clearingAttempts: false,
+      syncingReader: false,
       // Issues panel state
       issues: [],
       issuesLoading: false,
@@ -776,6 +847,153 @@ export class SeriesDetailPage extends Component {
     }
   }
 
+  /* ── Delete Modal ──────────────────────────────────────────────────── */
+  _handleDeleteClick() {
+    this.setState({ showDeleteModal: true });
+  }
+
+  _handleDeleteCancel() {
+    this.setState({ showDeleteModal: false });
+  }
+
+  async _handleDeleteConfirm() {
+    const id = this.state.series?.series_id || this.state.series?.id;
+    if (!id || this.state.deleting) return;
+
+    this.setState({ deleting: true, showDeleteModal: false });
+
+    try {
+      const data = await api.state.seriesRemove({ series_id: id });
+
+      if (!this._mounted) return;
+
+      if (!data.ok) {
+        throw new Error(data.error || "Delete failed");
+      }
+
+      toast("Series deleted", "success");
+      router.navigateToSection("series");
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({ deleting: false });
+      toast(err.message || "Failed to delete series", "error");
+    }
+  }
+
+  /* ── Library Migration ─────────────────────────────────────────────── */
+  _handleLibraryClick() {
+    const { series } = this.state;
+    const allowedRoots = series?.library_info?.allowed_roots || [];
+    this.setState({
+      showLibraryModal: true,
+      selectedLibraryRoot: allowedRoots.length > 0 ? allowedRoots[0] : "",
+    });
+  }
+
+  _handleLibraryCancel() {
+    this.setState({ showLibraryModal: false, selectedLibraryRoot: "" });
+  }
+
+  async _handleLibraryConfirm() {
+    const id = this.state.series?.series_id || this.state.series?.id;
+    const { selectedLibraryRoot } = this.state;
+    if (!id || !selectedLibraryRoot || this.state.libraryMigrating) return;
+
+    this.setState({ libraryMigrating: true, showLibraryModal: false });
+
+    try {
+      const data = await api.state.seriesLibraryMigrate({ series_id: id, root: selectedLibraryRoot });
+
+      if (!this._mounted) return;
+
+      if (!data.ok) {
+        throw new Error(data.error || "Library migration failed");
+      }
+
+      toast("Library moved successfully", "success");
+      this._loadLibrary(id);
+    } catch (err) {
+      if (!this._mounted) return;
+      this.setState({ libraryMigrating: false });
+      toast(err.message || "Failed to move library", "error");
+    }
+  }
+
+  /* ── Clear Source Attempts ─────────────────────────────────────────── */
+  async _handleClearAttempts() {
+    const id = this.state.series?.series_id || this.state.series?.id;
+    if (!id || this.state.clearingAttempts) return;
+
+    this.setState({ clearingAttempts: true });
+
+    try {
+      const data = await api.state.sourceAttemptsClear({ series_id: id });
+
+      if (!this._mounted) return;
+
+      if (!data.ok) {
+        throw new Error(data.error || "Clear attempts failed");
+      }
+
+      toast("Source attempts cleared", "success");
+    } catch (err) {
+      if (!this._mounted) return;
+      toast(err.message || "Failed to clear source attempts", "error");
+    } finally {
+      if (this._mounted) {
+        this.setState({ clearingAttempts: false });
+      }
+    }
+  }
+
+  /* ── Sync Reader ──────────────────────────────────────────────────── */
+  async _handleSyncReader() {
+    if (this.state.syncingReader) return;
+
+    this.setState({ syncingReader: true });
+
+    try {
+      const data = await api.state.libraryFrontendsSync();
+
+      if (!this._mounted) return;
+
+      if (!data.ok) {
+        throw new Error(data.error || "Sync reader failed");
+      }
+
+      toast("Reader synced successfully", "success");
+    } catch (err) {
+      if (!this._mounted) return;
+      toast(err.message || "Failed to sync reader", "error");
+    } finally {
+      if (this._mounted) {
+        this.setState({ syncingReader: false });
+      }
+    }
+  }
+
+  /* ── Restore ───────────────────────────────────────────────────────── */
+  async _handleRestore() {
+    const id = this.state.series?.series_id || this.state.series?.id;
+    if (!id) return;
+
+    try {
+      const data = await api.state.seriesUpdate({ series_id: id, removed_by_user: false });
+
+      if (!this._mounted) return;
+
+      if (!data.ok) {
+        throw new Error(data.error || "Restore failed");
+      }
+
+      toast("Series restored", "success");
+      this._loadData();
+    } catch (err) {
+      if (!this._mounted) return;
+      toast(err.message || "Failed to restore series", "error");
+    }
+  }
+
   /* ── Issue Actions ────────────────────────────────────────────────── */
   async _handleIssueMonitorToggle(issue, newValue) {
     if (this.state.togglingIssue === issue.id) return;
@@ -939,25 +1157,31 @@ export class SeriesDetailPage extends Component {
   }
 
   _renderActions() {
-    const { runningSearch, refreshingCovers, deleting, series } = this.state;
+    const { runningSearch, refreshingCovers, deleting, clearingAttempts, syncingReader, series } = this.state;
     const isMonitored = !!series?.monitored;
+    const allowed = series?.allowed_actions || {};
+
+    // Helper: show button unless explicitly disabled
+    const can = (key) => allowed[key] !== false;
 
     return (
       <div class="series-detail-actions">
-        <button
-          class="ink-btn-primary ink-btn-sm"
-          onClick={() => this._handleRunSearch()}
-          disabled={runningSearch}
-          type="button"
-        >
-          {runningSearch ? (
-            <>
-              <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Searching
-            </>
-          ) : (
-            "Search"
-          )}
-        </button>
+        {can("search") && (
+          <button
+            class="ink-btn-primary ink-btn-sm"
+            onClick={() => this._handleRunSearch()}
+            disabled={runningSearch}
+            type="button"
+          >
+            {runningSearch ? (
+              <>
+                <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Searching
+              </>
+            ) : (
+              "Search"
+            )}
+          </button>
+        )}
 
         <button
           class="ink-btn-ghost ink-btn-sm"
@@ -978,28 +1202,32 @@ export class SeriesDetailPage extends Component {
           🔍 Manual Search
         </button>
 
-        <button
-          class="ink-btn-ghost ink-btn-sm"
-          onClick={() => this._handleRefreshMetadata()}
-          disabled={refreshingCovers}
-          type="button"
-        >
-          {refreshingCovers ? (
-            <>
-              <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Refreshing
-            </>
-          ) : (
-            "Refresh Metadata"
-          )}
-        </button>
+        {can("refresh_metadata") && (
+          <button
+            class="ink-btn-ghost ink-btn-sm"
+            onClick={() => this._handleRefreshMetadata()}
+            disabled={refreshingCovers}
+            type="button"
+          >
+            {refreshingCovers ? (
+              <>
+                <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Refreshing
+              </>
+            ) : (
+              "Refresh Metadata"
+            )}
+          </button>
+        )}
 
-        <button
-          class={`ink-btn-ghost ink-btn-sm ${isMonitored ? "ink-pill-success" : ""}`}
-          onClick={() => this._handleToggleMonitored()}
-          type="button"
-        >
-          {isMonitored ? "Unmonitor" : "Monitor"}
-        </button>
+        {can("set_monitored") && (
+          <button
+            class={`ink-btn-ghost ink-btn-sm ${isMonitored ? "ink-pill-success" : ""}`}
+            onClick={() => this._handleToggleMonitored()}
+            type="button"
+          >
+            {isMonitored ? "Unmonitor" : "Monitor"}
+          </button>
+        )}
 
         <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._handleNavigateWanted()} type="button">
           Wanted
@@ -1013,20 +1241,64 @@ export class SeriesDetailPage extends Component {
           {this.state.showEdit ? "Cancel" : "Edit"}
         </button>
 
+        <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._handleLibraryClick()} type="button">
+          Move Library
+        </button>
+
         <button
-          class="ink-btn-danger ink-btn-sm"
-          onClick={() => this._handleDelete()}
-          disabled={deleting}
+          class="ink-btn-ghost ink-btn-sm"
+          onClick={() => this._handleClearAttempts()}
+          disabled={clearingAttempts}
           type="button"
         >
-          {deleting ? (
+          {clearingAttempts ? (
             <>
-              <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Deleting
+              <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Clearing
             </>
           ) : (
-            "Delete"
+            "Clear Attempts"
           )}
         </button>
+
+        {can("sync_reader") && (
+          <button
+            class="ink-btn-ghost ink-btn-sm"
+            onClick={() => this._handleSyncReader()}
+            disabled={syncingReader}
+            type="button"
+          >
+            {syncingReader ? (
+              <>
+                <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Syncing
+              </>
+            ) : (
+              "Sync Reader"
+            )}
+          </button>
+        )}
+
+        {allowed.restore === true && (
+          <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._handleRestore()} type="button">
+            Restore
+          </button>
+        )}
+
+        {can("remove") && (
+          <button
+            class="ink-btn-danger ink-btn-sm"
+            onClick={() => this._handleDeleteClick()}
+            disabled={deleting}
+            type="button"
+          >
+            {deleting ? (
+              <>
+                <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Deleting
+              </>
+            ) : (
+              "Delete"
+            )}
+          </button>
+        )}
       </div>
     );
   }
@@ -1307,6 +1579,108 @@ export class SeriesDetailPage extends Component {
     );
   }
 
+  /* ── Modals ─────────────────────────────────────────────────────────── */
+  _renderDeleteModal() {
+    const { series, showDeleteModal } = this.state;
+    if (!showDeleteModal || !series) return null;
+
+    const name = series.title || series.name;
+    const publisher = series.metadata?.publisher;
+    const source = series.metadata?.source;
+    const year = series.metadata?.year || series.start_year || series.year;
+
+    return (
+      <div class="series-detail-modal-overlay" onClick={() => this._handleDeleteCancel()}>
+        <div class="series-detail-modal" onClick={(e) => e.stopPropagation()}>
+          <div class="series-detail-modal-title">Remove Series</div>
+          <div class="series-detail-modal-body">
+            <p style="margin:0 0 var(--ink-space-sm) 0;">
+              <strong>{name}</strong>
+            </p>
+            <p style="margin:0 0 var(--ink-space-sm) 0;font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">
+              {[publisher, source, year].filter(Boolean).join(" · ") || "No additional metadata"}
+            </p>
+            <p class="series-detail-modal-impact">
+              This will remove all series data, including issues and library references. This action cannot be undone.
+            </p>
+          </div>
+          <div class="series-detail-modal-actions">
+            <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._handleDeleteCancel()} type="button">
+              Cancel
+            </button>
+            <button class="ink-btn-danger ink-btn-sm" onClick={() => this._handleDeleteConfirm()} type="button">
+              Remove from InkDrop
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  _renderLibraryModal() {
+    const { series, showLibraryModal, libraryMigrating, selectedLibraryRoot } = this.state;
+    if (!showLibraryModal || !series) return null;
+
+    const name = series.title || series.name;
+    const allowedRoots = series.library_info?.allowed_roots || [];
+    const currentRoot = series.library_info?.root || series.library_info?.library_root || "";
+
+    return (
+      <div class="series-detail-modal-overlay" onClick={() => this._handleLibraryCancel()}>
+        <div class="series-detail-modal" onClick={(e) => e.stopPropagation()}>
+          <div class="series-detail-modal-title">Move Library</div>
+          <div class="series-detail-modal-body">
+            <p style="margin:0 0 var(--ink-space-sm) 0;">
+              <strong>{name}</strong>
+            </p>
+            {currentRoot && (
+              <p style="margin:0 0 var(--ink-space-sm) 0;font-size:var(--ink-text-sm);color:var(--ink-text-secondary);">
+                Current path: {currentRoot}
+              </p>
+            )}
+            <p style="margin:0 0 var(--ink-space-sm) 0;font-size:var(--ink-text-sm);font-weight:500;">
+              New library root:
+            </p>
+            <select
+              class="series-detail-modal-select"
+              value={selectedLibraryRoot}
+              onChange={(e) => this.setState({ selectedLibraryRoot: e.target.value })}
+            >
+              {allowedRoots.length === 0 && <option value="">No roots available</option>}
+              {allowedRoots.map((root) => (
+                <option key={root} value={root}>
+                  {root}
+                </option>
+              ))}
+            </select>
+            <p class="series-detail-modal-impact" style="margin-top:var(--ink-space-md);">
+              This will move the series files to the selected library root. Existing library references will be updated.
+            </p>
+          </div>
+          <div class="series-detail-modal-actions">
+            <button class="ink-btn-ghost ink-btn-sm" onClick={() => this._handleLibraryCancel()} type="button">
+              Cancel
+            </button>
+            <button
+              class="ink-btn-primary ink-btn-sm"
+              onClick={() => this._handleLibraryConfirm()}
+              disabled={libraryMigrating || !selectedLibraryRoot}
+              type="button"
+            >
+              {libraryMigrating ? (
+                <>
+                  <span class="ink-spinner" style="width:14px;height:14px;border-width:2px;" /> Moving
+                </>
+              ) : (
+                "Move Library"
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   /* ── Main Render ─────────────────────────────────────────────────── */
   render() {
     const { loading, error, series } = this.state;
@@ -1336,6 +1710,10 @@ export class SeriesDetailPage extends Component {
             {this._renderLibrary()}
           </>
         )}
+
+        {/* ── Modals ──────────────────────────────────────────────── */}
+        {this._renderDeleteModal()}
+        {this._renderLibraryModal()}
       </div>
     );
   }
