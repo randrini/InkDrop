@@ -948,7 +948,8 @@
   color: var(--text-muted);
 }
 .series-library-table {
-  --series-library-columns: 3fr minmax(70px, 1fr) minmax(80px, 1.2fr) minmax(60px, 1fr) minmax(70px, 1fr) minmax(80px, 1fr) auto;
+  --series-library-columns: 3fr minmax(70px, 1fr) minmax(80px, 1.2fr) minmax(60px, 1fr) minmax(70px, 1fr)
+    minmax(80px, 1fr) auto;
   width: 100%;
   border-collapse: collapse;
 }

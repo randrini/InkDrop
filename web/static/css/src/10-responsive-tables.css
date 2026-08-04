@@ -251,11 +251,21 @@
     letter-spacing: 0.04em;
     min-width: 70px;
   }
-  .series-library-cell-year::before { content: "Year"; }
-  .series-library-cell-monitor::before { content: "Status"; }
-  .series-library-cell-wanted::before { content: "Missing"; }
-  .series-library-cell-queue::before { content: "Queue"; }
-  .series-library-cell-dates::before { content: "Updated"; }
+  .series-library-cell-year::before {
+    content: "Year";
+  }
+  .series-library-cell-monitor::before {
+    content: "Status";
+  }
+  .series-library-cell-wanted::before {
+    content: "Missing";
+  }
+  .series-library-cell-queue::before {
+    content: "Queue";
+  }
+  .series-library-cell-dates::before {
+    content: "Updated";
+  }
 
   /* Section table rows: full card layout */
   .section-table-row {
