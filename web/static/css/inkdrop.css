@@ -6440,12 +6440,29 @@ details[open] .open-label {
   gap: 8px;
 }
 
-/* Settings plugin card */
+/* Settings plugin grid and card */
+.settings-plugin-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
 .settings-plugin-card {
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-alt);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.settings-plugin-card strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.settings-plugin-card .status-badge {
+  flex-shrink: 0;
 }
 
 /* ===== Unstyled HTML IDs — Settings ===== */
