@@ -143,9 +143,11 @@
   function focusAuthCard(host) {
     const card = host?.querySelector(".inkdrop-auth-card");
     if (!card) return;
-    const target = card.querySelector("input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex='-1'])");
+    const target = card.querySelector(
+      "input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex='-1'])",
+    );
     if (!target) card.tabIndex = -1;
-    (target || card).focus({preventScroll: true});
+    (target || card).focus({ preventScroll: true });
   }
 
   function authCard(title, copy, formHtml) {
