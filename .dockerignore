@@ -140,6 +140,7 @@
 !/inkdrop_transfer.py
 !/inkdrop_suwayomi_managed_folder.py
 !/inkdrop_version.py
+!/inkdrop_support_bundle.py
 !/inkdrop_web_config.py
 !/inkdrop_web_state_views.py
 !/inkdrop_web.py
