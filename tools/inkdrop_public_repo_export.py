@@ -29,6 +29,7 @@ from tools import inkdrop_docker_context_manifest
 
 PUBLIC_REPO_EXTRA_PATHS = (
     "README.md",
+    "LICENSE",
     ".dockerignore",
     ".env.example",
     ".github/workflows/inkdrop-public-release.yml",

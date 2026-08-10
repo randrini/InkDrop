@@ -15,6 +15,7 @@ from tools import inkdrop_public_repo_export
 
 REQUIRED_EXPORT_FILES = {
     "README.md",
+    "LICENSE",
     "Dockerfile",
     "docker-compose.yml",
     ".env.example",

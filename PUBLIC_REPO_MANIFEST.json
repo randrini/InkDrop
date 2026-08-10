@@ -1,5 +1,5 @@
 {
-  "file_count": 344,
+  "file_count": 345,
   "files": [
     {
       "path": ".dockerignore",
@@ -25,6 +25,11 @@
       "path": "Dockerfile",
       "sha256": "1819f2723aeb8c260d70d36fa2af1ef9a8f2a5069a72428fc3fe4e939fba5b91",
       "size_bytes": 3807
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "60f350041b19cbe6e5f9cef1bd3aaa48c8fa12892c055bc3e58541fa165e285f",
+      "size_bytes": 35802
     },
     {
       "path": "README.md",
@@ -1013,8 +1018,8 @@
     },
     {
       "path": "tests/inkdrop-public-repo-export-smoke.py",
-      "sha256": "3cc56fc237a2a806ccd0baaa0626a60ca7510dd8c015a4fca6b82850a968a424",
-      "size_bytes": 25274
+      "sha256": "0b0dd7f4905aa033491ba39ce57f8b8ba33a6589de00b778ceb9dc151523df33",
+      "size_bytes": 25290
     },
     {
       "path": "tests/inkdrop-public-security-smoke.py",
@@ -1363,8 +1368,8 @@
     },
     {
       "path": "tools/inkdrop_public_repo_export.py",
-      "sha256": "9eeb19ec961c9379342e2c857778d467643a9b92d190b8e60025f407cbcd50bb",
-      "size_bytes": 32766
+      "sha256": "b6df332cf8c80cf5092b730b77c788e7878b38a9c41b611a91a575a86c9229c8",
+      "size_bytes": 32782
     },
     {
       "path": "tools/inkdrop_qa_candidate_manifest.py",
@@ -1724,5 +1729,5 @@
   ],
   "schema": "inkdrop.public_repo_export.v1",
   "schema_version": 1,
-  "total_size_bytes": 18888070
+  "total_size_bytes": 18923904
 }
