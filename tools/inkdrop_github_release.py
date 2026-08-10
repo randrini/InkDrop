@@ -354,7 +354,12 @@ def build_update_manifest(candidate_path, validation_path, contract, repository,
     evidence = load_verified_evidence(candidate_path, validation_path, contract, repository, commit, workflow_run_id, image_repository=image_repository)
     candidate = json.loads(Path(candidate_path).read_text(encoding="utf-8"))
     validation = json.loads(Path(validation_path).read_text(encoding="utf-8"))
-    notes_summary = " ".join(line.strip("# ") for line in contract["notes"].splitlines() if line.strip())[:2000]
+    # _bounded_manifest_text() strips whatever we hand it before validating the
+    # manifest's identity hash, so a truncation that happens to land on a space
+    # must be stripped here too -- otherwise the raw payload we hash and the
+    # normalized payload validate_update_manifest() re-hashes disagree by one
+    # trailing space and every build fails with "identity mismatch".
+    notes_summary = " ".join(line.strip("# ") for line in contract["notes"].splitlines() if line.strip())[:2000].strip()
     payload = {
         "schema_version": inkdrop_version.UPDATE_MANIFEST_SCHEMA_VERSION,
         "product": "InkDrop",

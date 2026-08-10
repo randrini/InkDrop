@@ -1622,10 +1622,14 @@ def _resolve_sab_handoff_by_stable_key(task, result, settings):
     from core import inkdrop_acquire
 
     unique_tag = _task_handoff_unique_tag(task)
-    handoff_key = str(payload.get("handoff_key") or "").strip() or inkdrop_acquire.sab_handoff_key(
-        task.get("title"),
-        inkdrop_acquire.prowlarr_download_url_for_client(_task_download_locator(task)),
-        unique_tag=unique_tag,
+    handoff_key = (
+        str(payload.get("handoff_key") or "").strip()
+        or _task_persisted_handoff_key(task)
+        or inkdrop_acquire.sab_handoff_key(
+            task.get("title"),
+            inkdrop_acquire.prowlarr_download_url_for_client(_task_download_locator(task)),
+            unique_tag=unique_tag,
+        )
     )
     payload["handoff_key"] = handoff_key
     payload["stable_handoff_lookup_attempted"] = True
@@ -1656,10 +1660,82 @@ def _resolve_sab_handoff_by_stable_key(task, result, settings):
     return resolved
 
 
+def _task_persisted_handoff_key(task):
+    """sab_add()/qbit_add()'s send-time handoff_key/handoff_tag, if a prior
+    pass captured and persisted it. A locally-derived hash of title+URL, not
+    credential-bearing -- unlike the real download URL, safe to keep."""
+    raw = _dict(_dict(task).get("raw_json"))
+    for key in ("handoff_key", "handoff_tag"):
+        value = str(raw.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _stable_handoff_lookup_without_locator(task, client):
+    """The last resort when the real download URL is gone (deliberately
+    never persisted) and the original send never captured a confirmed
+    client job id: look up the job by its send-time handoff_key/tag instead.
+
+    Returns None -- not a result dict -- when there's nothing to look up
+    with (no persisted key, or the lookup itself fails), so the caller falls
+    through to its prior download_locator_missing behavior unchanged. A task
+    whose attempt predates this fix (no persisted key) behaves exactly as it
+    did before; nothing regresses for it.
+    """
+    handoff_key = _task_persisted_handoff_key(task)
+    if not handoff_key:
+        return None
+    from core import inkdrop_acquire
+
+    try:
+        http = inkdrop_acquire.require_requests()
+    except Exception:
+        return None
+    if client == "sabnzbd":
+        try:
+            settings = inkdrop_acquire.load_sab_settings()
+            job = inkdrop_acquire.sab_find_existing_job(http, settings, handoff_key)
+        except Exception:
+            return None
+        if not job:
+            return None
+        return inkdrop_acquire.sab_existing_result(
+            job,
+            category=settings.get("category") or settings.get("comics_category"),
+            handoff_key=handoff_key,
+            settings_source=settings.get("source"),
+        )
+    if client == "qbittorrent":
+        try:
+            from core import inkdrop_qbittorrent_auth
+
+            settings = inkdrop_acquire.load_qbit_settings()
+            session = http.Session()
+            inkdrop_qbittorrent_auth.authenticate_settings(session, settings, timeout=20)
+            torrents = inkdrop_acquire.qbit_visible_torrents(session, settings["host"], tag=handoff_key)
+        except Exception:
+            return None
+        if not torrents:
+            return None
+        return inkdrop_acquire.qbit_existing_result(
+            torrents[0],
+            category=settings.get("comics_category"),
+            save_path=settings.get("comics_save_path"),
+            handoff_tag=handoff_key,
+            settings_source=settings.get("source"),
+        )
+    return None
+
+
 def _default_download_client_adder(task):
     task = _dict(task)
     locator = _task_download_locator(task)
     if not locator:
+        client = _normalize_handoff_client(task.get("download_client") or task.get("protocol"))
+        stable = _stable_handoff_lookup_without_locator(task, client)
+        if stable is not None:
+            return stable
         return {
             "ok": False,
             "status": "failed_download",

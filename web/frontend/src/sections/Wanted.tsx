@@ -41,6 +41,31 @@ function buildEndpoint(offset: number, wantedFilter: string): string {
   return `/api/inkdrop-state/wanted?${params.toString()}`;
 }
 
+function canSelectRow(row: WantedRow): boolean {
+  return Boolean(row.id) && row.status !== "satisfied";
+}
+
+// The vanilla shell's own "Search Selected"/"Manual Search" toolbar
+// (appendArrTableButton in inkdrop_web.py, requiresSelection: true) never
+// actually renders for this view -- window.InkDropReact.mount() early-
+// returns renderInkdropSection() before that code path is ever reached, for
+// every React-owned section, not just this one. Confirmed live against a
+// real running instance: no .arr-table-controlbar-wanted node exists in the
+// DOM at all. So this isn't reconnecting a disabled button to a live wire;
+// there is no wire, and no button. The toolbar has to live here.
+const shell = window as unknown as {
+  InkDropWantedNav?: {
+    runSelectedSearches?: (rows: WantedRow[]) => Promise<void>;
+  };
+  InkDropSeriesNav?: {
+    // openManualSearchForRow (inkdrop_web.py) only reads series_id/issue_id/
+    // unit_id/edition_id/series/title/issue_number off the row it's given --
+    // it doesn't care which view's row shape called it. Reused as-is here,
+    // same reasoning SeriesDetail.tsx already applies to this same bridge.
+    openManualSearch?: (row: WantedRow) => boolean;
+  };
+};
+
 export function Wanted({ payload }: { payload: WantedViewPayload }) {
   const [rows, setRows] = useState<WantedRow[]>(payload.rows || []);
   const [offset, setOffset] = useState(payload.offset || 0);
@@ -49,6 +74,8 @@ export function Wanted({ payload }: { payload: WantedViewPayload }) {
   const [wantedFilter, setWantedFilter] = useState(payload.wanted_filter || "active");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [runningSelected, setRunningSelected] = useState(false);
   const { pendingIds, doneIds, actionError, clearActionError, runRowAction } = useRowActions(() => loadPage(offset));
 
   // A fresh `payload` reference only arrives when the surrounding shell
@@ -62,6 +89,10 @@ export function Wanted({ payload }: { payload: WantedViewPayload }) {
     setWantedFilter(payload.wanted_filter || "active");
     setError(null);
     clearActionError();
+    // A fresh payload means the previously selected rows may no longer be on
+    // this page -- stale ids left checked would silently no-op on the next
+    // bulk action. Same reasoning as ManualReview.tsx.
+    setSelectedIds(new Set());
   }, [payload]);
 
   async function loadPage(nextOffset: number) {
@@ -94,6 +125,47 @@ export function Wanted({ payload }: { payload: WantedViewPayload }) {
     });
   }
 
+  const selectableRows = rows.filter(canSelectRow);
+  const selectedCount = selectedIds.size;
+  const allSelectableSelected = selectableRows.length > 0 && selectableRows.every((row) => selectedIds.has(row.id));
+
+  function toggleRowSelected(rowId: string, checked: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(rowId);
+      else next.delete(rowId);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(checked: boolean) {
+    setSelectedIds(checked ? new Set(selectableRows.map((row) => row.id)) : new Set());
+  }
+
+  // The confirm-free loop, the quiet per-item queueing, the single summary
+  // toast, and the final loadInkdropSection("wanted", ...) refresh all
+  // already live in the vanilla shell's runSelectedWantedSearches() (also
+  // used before this table existed) -- reused as-is via the bridge rather
+  // than reimplemented, same reasoning ManualReview.tsx's bulkIgnore bridge
+  // documents. That refresh re-mounts this island with fresh rows, so no
+  // extra loadPage() call is needed here once it resolves.
+  async function runSelectedSearches() {
+    const selected = rows.filter((row) => selectedIds.has(row.id));
+    if (!selected.length || !shell.InkDropWantedNav?.runSelectedSearches) return;
+    setRunningSelected(true);
+    try {
+      await shell.InkDropWantedNav.runSelectedSearches(selected);
+    } finally {
+      setRunningSelected(false);
+    }
+  }
+
+  function manualSearchSelected() {
+    const selected = rows.filter((row) => selectedIds.has(row.id));
+    if (selected.length !== 1) return;
+    shell.InkDropSeriesNav?.openManualSearch?.(selected[0]);
+  }
+
   const pageStart = totalCount === 0 ? 0 : offset + 1;
   const pageEnd = offset + rows.length;
 
@@ -104,9 +176,39 @@ export function Wanted({ payload }: { payload: WantedViewPayload }) {
           {error || actionError}
         </div>
       )}
+      <div className="arr-table-controlbar arr-table-controlbar-wanted">
+        <div className="arr-table-controlbar-left">
+          <button
+            type="button"
+            disabled={selectedCount < 1 || runningSelected}
+            onClick={() => void runSelectedSearches()}
+            title={selectedCount < 1 ? "Select one or more visible rows first." : "Queue searches for selected visible Wanted rows"}
+          >
+            {runningSelected ? "Queuing…" : "Search Selected"}
+          </button>
+          <button
+            type="button"
+            disabled={selectedCount !== 1}
+            onClick={manualSearchSelected}
+            title={selectedCount !== 1 ? "Select exactly one Wanted row for Manual Search." : "Search providers for the single selected Wanted row"}
+          >
+            Manual Search
+          </button>
+          <span className="arr-table-selection-count">{selectedCount} selected</span>
+        </div>
+      </div>
       <table className="arr-table wanted-table">
         <thead>
           <tr>
+            <th>
+              <input
+                type="checkbox"
+                aria-label="Select all visible rows"
+                checked={allSelectableSelected}
+                disabled={selectableRows.length === 0}
+                onChange={(event) => toggleSelectAll(event.target.checked)}
+              />
+            </th>
             <th>Series / Issue</th>
             <th>Current stage</th>
             <th>Source</th>
@@ -116,10 +218,21 @@ export function Wanted({ payload }: { payload: WantedViewPayload }) {
         </thead>
         <tbody>
           {rows.map((row) => {
-            const canAct = Boolean(row.id) && row.status !== "satisfied";
+            const canAct = canSelectRow(row);
             const label = row.queue_state === "downloading" || row.queue_state === "importing" ? "Refresh" : "Search";
             return (
               <tr key={row.id}>
+                <td data-label="Select">
+                  {canAct && (
+                    <input
+                      type="checkbox"
+                      data-arr-row-id={row.id}
+                      aria-label={`Select ${rowTitle(row)}`}
+                      checked={selectedIds.has(row.id)}
+                      onChange={(event) => toggleRowSelected(row.id, event.target.checked)}
+                    />
+                  )}
+                </td>
                 <td data-label="Series / Issue">{rowTitle(row)}</td>
                 <td data-label="Current stage">{stageLabel(row)}</td>
                 <td data-label="Source">{sourceLabel(row)}</td>
@@ -141,7 +254,7 @@ export function Wanted({ payload }: { payload: WantedViewPayload }) {
           })}
           {rows.length === 0 && !loading && (
             <tr>
-              <td colSpan={5}>Nothing wanted in this view.</td>
+              <td colSpan={6}>Nothing wanted in this view.</td>
             </tr>
           )}
         </tbody>

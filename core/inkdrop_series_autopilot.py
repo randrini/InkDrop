@@ -12631,10 +12631,17 @@ def slskd_hot_retry_limit(queue, args, now=None):
     ]
     if not hot_rows:
         return 0
-    # Cached candidates have already paid the discovery and safety-gate cost.
-    # Let a six-series pass advance two of them while retaining a two-thirds
-    # majority of slots (and the explicit runtime reservation) for broad work.
-    reserved_limit = max(1, max_series // 3)
+    # Cached candidates have already paid the discovery and safety-gate cost,
+    # so a grab is one bounded probe_budget_seconds call (<=220s incl. margin
+    # today), not a fresh broad search. A 720s pass has room for 3-4 of those
+    # sequentially. The old one-third share (2 of 6) left that headroom
+    # unused: measured live 2026-08-09, the cached-safe backlog was 493 rows
+    # deep and only ~2 advanced per pass -- individual rows (The League of
+    # Extraordinary Gentlemen: Black Dossier among them) sat for days despite
+    # already holding a safety-gated candidate. A one-half share still keeps
+    # broad work's majority guarantee (hot_capacity below always leaves it at
+    # least one slot) while roughly matching what a pass can actually fit.
+    reserved_limit = max(1, max_series // 2)
     return min(configured, reserved_limit, hot_capacity)
 
 
@@ -13278,7 +13285,12 @@ def select_missing_recovery_groups(buckets, *, max_groups, max_per_cohort, now=N
         return len(selected) + len(recovery_selected)
 
     if broad_exists:
-        recovery_capacity = max(1, max_groups // 3)
+        # Matches slskd_hot_retry_limit's share: a cached/reprobe grab is one
+        # bounded probe call, not a fresh broad search, and a 720s pass has
+        # room for several of those sequentially. See that function for the
+        # 2026-08-09 live measurement (493-deep backlog, ~2/pass under the
+        # old one-third share) that justified moving to one-half.
+        recovery_capacity = max(1, max_groups // 2)
         recovery_lanes = {
             bucket: [
                 (missing_recovery_cohort_for_rows(group[1], bucket=bucket, now=now), group)

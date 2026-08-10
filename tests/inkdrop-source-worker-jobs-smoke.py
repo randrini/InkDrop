@@ -37,6 +37,33 @@ def by_id(rows):
     return {row["provider_id"]: row for row in rows or []}
 
 
+def assert_shared_file_host_resolver_gate():
+    """rss_getcomics' registry row must carry the live Pixeldrain resolver's
+    enabled state so downstream candidate parsing can gate on it -- looked
+    up from sibling registry rows already in memory here, not a fresh DB
+    read, and other providers must pass through untouched."""
+    rows = [
+        {"provider_id": "rss_getcomics", "provider_type": "direct_download"},
+        {"provider_id": "pixeldrain", "provider_type": "direct_download", "enabled": False},
+        {"provider_id": "comicscodes", "provider_type": "direct_download"},
+    ]
+    gated = by_id(jobs._rows_with_shared_file_host_resolver_gates(rows))
+    assert_equal(gated["rss_getcomics"].get("pixeldrain_resolver_enabled"), False, "rss_getcomics picks up a disabled Pixeldrain resolver from its sibling row")
+    assert_true("pixeldrain_resolver_enabled" not in gated["comicscodes"], "a provider with no shared-file-host dependency is untouched")
+    assert_true("pixeldrain_resolver_enabled" not in gated["pixeldrain"], "Pixeldrain's own row is untouched by its own gate")
+
+    rows_enabled = [
+        {"provider_id": "rss_getcomics", "provider_type": "direct_download"},
+        {"provider_id": "pixeldrain", "provider_type": "direct_download", "enabled": True},
+    ]
+    gated_enabled = by_id(jobs._rows_with_shared_file_host_resolver_gates(rows_enabled))
+    assert_equal(gated_enabled["rss_getcomics"].get("pixeldrain_resolver_enabled"), True, "an enabled Pixeldrain resolver reads through as enabled")
+
+    rows_missing = [{"provider_id": "rss_getcomics", "provider_type": "direct_download"}]
+    gated_missing = by_id(jobs._rows_with_shared_file_host_resolver_gates(rows_missing))
+    assert_equal(gated_missing["rss_getcomics"].get("pixeldrain_resolver_enabled"), True, "no pixeldrain row at all defaults to enabled, matching pre-toggle behavior")
+
+
 def snapshot(db_path):
     return inkdrop_state.settings_snapshot(db_path)
 
@@ -1405,6 +1432,7 @@ def fake_http_get_nyaa_categoryless_fallback(request):
 
 
 def main():
+    assert_shared_file_host_resolver_gate()
     with tempfile.TemporaryDirectory(prefix="inkdrop-source-worker-jobs-") as tmp:
         db_path = Path(tmp) / "inkdrop-state.sqlite3"
         seed = catalog.settings_seed_payload()

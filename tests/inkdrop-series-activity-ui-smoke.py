@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WEB = (ROOT / "core" / "inkdrop_web.py").read_text(encoding="utf-8")
 CSS = (ROOT / "web" / "static" / "css" / "inkdrop.css").read_text(encoding="utf-8")
+SERIES_DETAIL_TSX = (ROOT / "web" / "frontend" / "src" / "sections" / "SeriesDetail.tsx").read_text(encoding="utf-8")
 
 
 def require(text: str, needle: str, label: str) -> None:
@@ -36,7 +37,10 @@ def main() -> None:
     forbid(WEB, 'validated backend update contract', "internal Series editing language")
     require(WEB, 'appendSeriesDetailAction(commandbar, "Search"', "working Series search action")
     require(WEB, 'appendSeriesDetailAction(commandbar, "Remove Series"', "working Series removal action")
-    require(WEB, 'function seriesDetailIssuesEndpoint(row={}, limit=80)', "bounded large-series request")
+    # The issues list migrated to the React island (SeriesDetail.tsx), which
+    # fetches its own bounded request directly rather than through a named
+    # seriesDetailIssuesEndpoint() helper.
+    require(SERIES_DETAIL_TSX, 'limit: "80"', "bounded large-series request")
     require(CSS, '.series-detail-not-found', "Series not-found styling")
     print("InkDrop Series/Activity UI smoke passed")
 

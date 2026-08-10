@@ -43,6 +43,18 @@ PORT = inkdrop_runtime_config.web_port(strict=False)
 WEB_RUNTIME_STARTED_AT = time.time()
 MANUAL_SEARCH_THREADS = {}
 MANUAL_SEARCH_THREADS_LOCK = threading.Lock()
+MANUAL_REVIEW_RETRY_THREADS = {}
+MANUAL_REVIEW_RETRY_THREADS_LOCK = threading.Lock()
+# Same contention this series autopilot lock causes for missing-recovery
+# (BULK-P1-01 / RECOVERY-P1-01): a single 5-second flock attempt inside
+# run_series_autopilot() loses to the worker's own routine autopilot sweep
+# (every INKDROP_SCHEDULER_SERIES_AUTOPILOT_INTERVAL_SECONDS, runs up to
+# 720s) far more often than it wins, so a Reject & Search Again click can
+# report "retry started" while the retry silently never actually searches.
+# Retry in a background thread (already off the HTTP response path) until
+# the lock frees or this deadline passes.
+MANUAL_REVIEW_RETRY_BUSY_RETRY_INTERVAL_SECONDS = 30
+MANUAL_REVIEW_RETRY_BUSY_RETRY_MAX_SECONDS = 1800
 ARCHIVE_CONVERSION_TASKS = {}
 ARCHIVE_CONVERSION_TASKS_LOCK = threading.Lock()
 SUPPORT_BUNDLE_BUILD_SLOT = threading.BoundedSemaphore(1)
@@ -110,6 +122,7 @@ BACKUP_DIR = inkdrop_runtime_config.backup_dir()
 STAGING_DIR = inkdrop_runtime_config.staging_dir()
 MANUAL_INBOX_DIR = inkdrop_runtime_config.manual_inbox_dir()
 QUARANTINE_DIR = inkdrop_runtime_config.quarantine_dir()
+MANUAL_REVIEW_REJECTED_ROOT = Path(env_value("INKDROP_MANUAL_REVIEW_REJECTED_ROOT", str(QUARANTINE_DIR / "manual_review_rejected")))
 ACQUIRE_LOG, LEGACY_ACQUIRE_LOG = inkdrop_runtime_config.compatible_log_paths(
     "inkdrop-acquire.log", "kavita-acquire.log"
 )
@@ -227,6 +240,12 @@ RSS_ALIASES_FILE = STATE_DIR / "rss-aliases.json"
 RSS_BAD_MATCHES_FILE = STATE_DIR / "rss-bad-matches.json"
 UNMATCHED_ACTION_LOG = STATE_DIR / "unmatched-download-actions.jsonl"
 GUARDED_DISCOVERY_SOURCES = {"rss_discovery", "comicscodes_discovery"}
+# inkdrop_missing_acquire.py tags a manual_review item with this source when
+# it surfaces a real, retained candidate (a genuine downloadUrl) for the
+# no_safe_source-family reasons (manga_no_safe_result, ambiguous_results) --
+# those reasons otherwise never carry an approvable candidate identity at all.
+MANUAL_REVIEW_CANDIDATE_SOURCE = "manual_review_candidate"
+APPROVABLE_REVIEW_SOURCES = GUARDED_DISCOVERY_SOURCES | {MANUAL_REVIEW_CANDIDATE_SOURCE}
 PACK_REVIEW_REASONS = {"pack_candidate_requires_review", "rss_pack_requires_review"}
 PACK_IMPORT_REVIEW_REASONS = {"pack_import_verification_failed", "pack_import_bad_archive"}
 PACK_ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
@@ -653,6 +672,7 @@ __all__ = [
     "ACQUIRE_SCRIPT",
     "ACTIVE_WEB_REQUESTS",
     "ACTIVE_WEB_REQUESTS_LOCK",
+    "APPROVABLE_REVIEW_SOURCES",
     "ARCHIVE_CONVERSION_TASKS",
     "ARCHIVE_CONVERSION_TASKS_LOCK",
     "AUTOPILOT_HARD_REVIEW_REASONS",
@@ -743,11 +763,17 @@ __all__ = [
     "MANUAL_INBOX_DIR",
     "MANUAL_INBOX_EXTS",
     "MANUAL_REVIEW_ACTIONS_FILE",
+    "MANUAL_REVIEW_CANDIDATE_SOURCE",
     "MANUAL_REVIEW_FILE",
     "MANUAL_REVIEW_NATIVE_SYNC_CACHE",
     "MANUAL_REVIEW_NATIVE_SYNC_LOCK",
     "MANUAL_REVIEW_NATIVE_SYNC_TTL_SECONDS",
     "MANUAL_REVIEW_RECONCILE_INTERVAL_SECONDS",
+    "MANUAL_REVIEW_REJECTED_ROOT",
+    "MANUAL_REVIEW_RETRY_THREADS",
+    "MANUAL_REVIEW_RETRY_BUSY_RETRY_INTERVAL_SECONDS",
+    "MANUAL_REVIEW_RETRY_BUSY_RETRY_MAX_SECONDS",
+    "MANUAL_REVIEW_RETRY_THREADS_LOCK",
     "MANUAL_SEARCH_THREADS",
     "MANUAL_SEARCH_THREADS_LOCK",
     "MANUAL_SOURCE_AUTORESOLVE_SCRIPT",

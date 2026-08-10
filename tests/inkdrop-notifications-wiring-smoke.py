@@ -20,6 +20,7 @@ from core import inkdrop_completed_import
 from core import inkdrop_pack_import
 from core import inkdrop_notifications
 from core import inkdrop_notification_store as store
+from core import inkdrop_notification_events
 
 
 def require(condition, message):
@@ -59,8 +60,20 @@ with tempfile.TemporaryDirectory() as temp_dir:
         )
         con.commit()
 
-    # 1. settle_queue_items_with_verified_imports calls notify_wanted_cleared
-    #    with the right series/issue/path data when a queue item settles.
+    # 1. settle_queue_items_with_verified_imports() itself no longer calls
+    #    notify_wanted_cleared inline -- that call site (and the matching one
+    #    in settle_queue_items_with_optional_folder_imports) was 1 of ~11
+    #    places that can mark a queue item state='verified', and only 2 of
+    #    them ever notified. import_verified is now covered uniformly by
+    #    inkdrop_notification_events.scan_import_verified(), a watermark scan
+    #    over queue_items.state='verified' that doesn't care which code path
+    #    got it there. This proves the real, unmocked wiring end to end:
+    #    settlement actually writes state='verified' (mark_queue_verified_for_
+    #    import is NOT mocked here, unlike before), then the scan picks that
+    #    row up and calls notify_wanted_cleared with the right data --
+    #    preserving audit finding 2 (2026-08-06): series_id/issue_id must
+    #    thread through, or every channel's per-series filter is silently
+    #    defeated for this event type.
     fake_verified_import = {
         "id": "import-1",
         "created_at": NOW,
@@ -68,30 +81,45 @@ with tempfile.TemporaryDirectory() as temp_dir:
         "source_path": "/staging/issue1.cbz",
     }
     with inkdrop_state.connect(db_path) as con:
-        with mock.patch.object(inkdrop_state, "verified_import_for_queue", return_value=fake_verified_import), \
-             mock.patch.object(inkdrop_state, "mark_queue_verified_for_import", return_value=True), \
-             mock.patch.object(inkdrop_notifications, "notify_wanted_cleared") as notify_mock:
+        with mock.patch.object(inkdrop_state, "verified_import_for_queue", return_value=fake_verified_import):
             settled = inkdrop_state.settle_queue_items_with_verified_imports(con, NOW)
         require(settled == 1, f"expected 1 settled row, got {settled}")
-        require(notify_mock.call_count == 1, f"expected notify_wanted_cleared to be called once, got {notify_mock.call_count}")
-        call_kwargs = notify_mock.call_args.kwargs
-        require(call_kwargs.get("series") == "Series One", f"wrong series in notify call: {call_kwargs}")
-        require(call_kwargs.get("dest_path") == fake_verified_import["dest_path"], f"wrong dest_path in notify call: {call_kwargs}")
-        # Audit finding 2 (2026-08-06): series_id/issue_id were never threaded
-        # through, silently defeating any channel's per-series filter for this
-        # event type. Both are selected into `row` by the settlement query --
-        # this fails if a future edit stops forwarding them.
-        require(call_kwargs.get("series_id") == "series-1", f"series_id not threaded to notify_wanted_cleared: {call_kwargs}")
-        require(call_kwargs.get("issue_id") == "issue-1", f"issue_id not threaded to notify_wanted_cleared: {call_kwargs}")
+        row = con.execute("select state from queue_items where id='queue-1'").fetchone()
+        require(row["state"] == "verified", f"settlement should have actually written state='verified': {dict(row)}")
+        con.commit()
 
-    # 2. A settlement failure in inkdrop_notifications must not block the
-    #    transaction -- the try/except around the notify call is load-bearing.
+    with mock.patch.object(inkdrop_notifications, "notify_wanted_cleared") as notify_mock:
+        fired = inkdrop_notification_events.scan_import_verified(str(db_path))
+    require(fired == {"import_verified": 1}, f"the watermark scan should pick up the newly-verified row exactly once: {fired}")
+    require(notify_mock.call_count == 1, f"expected notify_wanted_cleared to be called once, got {notify_mock.call_count}")
+    call_kwargs = notify_mock.call_args.kwargs
+    require(call_kwargs.get("series") == "Series One", f"wrong series in notify call: {call_kwargs}")
+    require(call_kwargs.get("series_id") == "series-1", f"series_id not threaded to notify_wanted_cleared: {call_kwargs}")
+    require(call_kwargs.get("issue_id") == "issue-1", f"issue_id not threaded to notify_wanted_cleared: {call_kwargs}")
+
+    # 2. A notify_wanted_cleared failure must not corrupt the watermark --
+    #    notify() is documented to never raise (every failure is caught and
+    #    recorded to delivery history internally), so this proves that
+    #    contract holds even when a channel implementation misbehaves, rather
+    #    than assuming it. A raise here escaping notify_wanted_cleared would
+    #    abort scan_import_verified() mid-loop and never advance the
+    #    watermark, which would silently duplicate every already-succeeded
+    #    notification in this batch on the next pass.
     with inkdrop_state.connect(db_path) as con:
-        with mock.patch.object(inkdrop_state, "verified_import_for_queue", return_value=fake_verified_import), \
-             mock.patch.object(inkdrop_state, "mark_queue_verified_for_import", return_value=True), \
-             mock.patch.object(inkdrop_notifications, "notify_wanted_cleared", side_effect=RuntimeError("boom")):
-            settled = inkdrop_state.settle_queue_items_with_verified_imports(con, NOW)
-        require(settled == 1, f"a notification failure must not block settlement, got settled={settled}")
+        con.execute(
+            "insert into queue_items(id,wanted_id,series_id,issue_id,state,current_source,active,created_at,updated_at,raw_json) values(?,?,?,?,?,?,?,?,?,?)",
+            ("queue-2", None, "series-1", "issue-1", "verified", None, 0, NOW + 1, NOW + 1, "{}"),
+        )
+        con.commit()
+    with mock.patch.object(inkdrop_notifications, "notify_wanted_cleared", side_effect=RuntimeError("boom")):
+        try:
+            fired2 = inkdrop_notification_events.scan_import_verified(str(db_path))
+            raised = False
+        except RuntimeError:
+            fired2 = None
+            raised = True
+    require(not raised, "notify_wanted_cleared raising must not escape scan_import_verified (notify() is documented to never raise)")
+    require(fired2 == {"import_verified": 1}, f"the scan should still report the row as processed: {fired2}")
 
     # 3. append_manual_review (inkdrop_completed_import) calls notify_manual_review
     #    when it actually persists a record. Points the write-time dedup store at

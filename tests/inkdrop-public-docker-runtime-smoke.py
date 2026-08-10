@@ -33,6 +33,7 @@ PRIVATE_TOKENS = (
 
 IMPORT_PACKAGE_NAMES = {
     "bs4": "beautifulsoup4",
+    "cryptography": "cryptography",
     "lxml": "lxml",
     "PIL": "Pillow",
     "py7zr": "py7zr",

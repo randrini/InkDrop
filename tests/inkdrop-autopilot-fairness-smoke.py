@@ -193,8 +193,10 @@ with mock.patch.object(autopilot.time, "time", return_value=NOW), mock.patch.obj
         now=NOW,
     )
 
-require(hot_limit == 2, hot_limit)
-require(len(hot_rows) == 2, len(hot_rows))
+# One-half of max_series, not one-third -- see slskd_hot_retry_limit's
+# 2026-08-09 comment for the live-measured backlog that justified the change.
+require(hot_limit == 3, hot_limit)
+require(len(hot_rows) == 3, len(hot_rows))
 require(hot_args.max_series - hot_limit >= 1, (hot_args.max_series, hot_limit))
 require(due_names[0].startswith("Hot "), due_names)
 require(any(name.startswith("Due ") for name in due_names), due_names)

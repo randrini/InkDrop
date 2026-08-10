@@ -9266,6 +9266,14 @@
       outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
+    /* Keep result-row action buttons inside their cell on desktop too, not just the mobile rule below. */
+    #seriesSearchSection .series-result-row .actions {
+      min-width: 0;
+    }
+    #seriesSearchSection .series-result-row .actions button {
+      width: 100%;
+      box-sizing: border-box;
+    }
 
     @media (max-width: 520px) {
       #seriesSearchSection {
@@ -20728,6 +20736,30 @@ button.missing-recovery-metric:focus-visible {
     font-size: 12px !important;
   }
 }
+
+/* Test button: spinner in flight, check/X on the real result. */
+.provider-test-button { position: relative; }
+.provider-test-button[data-test-state="run"] { color: transparent; pointer-events: none; }
+.provider-test-button[data-test-state="run"]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: provider-test-spin .7s linear infinite;
+}
+.provider-test-button[data-test-state="ok"] { border-color: var(--good); color: var(--good); }
+.provider-test-button[data-test-state="err"] { border-color: var(--bad); color: var(--bad); }
+.provider-test-button[data-test-state="ok"]::before,
+.provider-test-button[data-test-state="err"]::before { margin-right: 6px; font-weight: 700; }
+.provider-test-button[data-test-state="ok"]::before { content: "\2713"; }
+.provider-test-button[data-test-state="err"]::before { content: "\2715"; }
+@keyframes provider-test-spin { to { transform: rotate(360deg); } }
     .calendar-page-head {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;

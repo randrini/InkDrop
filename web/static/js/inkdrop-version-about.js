@@ -49,6 +49,23 @@
   // complete release history without adding old entries to every page load.
   var DETAILED_RELEASES = Object.freeze([
     publicRelease({
+      version: "v0.1.09",
+      slug: "v0-1-09",
+      released_at: "2026-08-10",
+      title: "New direct-download sources, scheduled backups, and more reliable SLSKD matching",
+      summary: "Adds Pixeldrain, WeTransfer, and Buzzheavier as direct-download sources, scheduled full backups, and encrypted settings export. Also fixes SLSKD subseries matching, adds real Test-button feedback for every provider, and surfaces the real reason when a Settings restore fails.",
+      highlights: [
+        "SLSKD now rejects wrong-subseries matches before downloading instead of after, and recovery lanes get half of max_series instead of a third for faster backlog catch-up.",
+        "Added Pixeldrain, WeTransfer, and Buzzheavier as direct-download sources, and fixed GetComics to Pixeldrain redirect resolution.",
+        "Fixed Suwayomi's connection status being stuck on \"Unknown\" forever -- every provider's Test button now shows a real spinner and a pass/fail result tied to what was actually found.",
+        "Added scheduled full backups with automatic retention, and Settings export/import can now carry encrypted credentials.",
+        "Fixed Settings restore failures showing only a generic \"Bad Request\" -- the real reason (wrong passphrase, which setting failed) is now shown.",
+        "Manual Review's Reject and Search Again actually retries now, and accepts exact unresolved manga matches with a real approve path.",
+        "A verified collected trade now satisfies an individual issue want directly, and stale import claims auto-release after a timeout instead of blocking forever.",
+        "Added an OPDS catalog discoverability panel to Settings, and Series pages now render through the same fast, virtualized approach used elsewhere in InkDrop."
+      ]
+    }),
+    publicRelease({
       version: "v0.1.08",
       slug: "v0-1-08",
       released_at: "2026-08-07",
@@ -421,13 +438,10 @@
     container.replaceChildren();
     container.classList.add("inkdrop-about-version");
     var rows = [
-      row("Product", text(metadata.product, "InkDrop"), "Application name"),
       row("Version", productVersionLabel(metadata), "Product version"),
-      row("Build ID", displayVersion(metadata), "InkDrop release identifier"),
       metadata.qa_build_number !== undefined && metadata.qa_build_number !== null && text(metadata.qa_build_number)
         ? row("QA Build", text(metadata.qa_build_number), "QA candidate build number")
         : null,
-      row("Channel", releaseStageLabel(metadata), "Release stage"),
       copyableRow("Commit", text(metadata.short_commit_sha || metadata.commit_sha, "unknown"), "Source revision"),
       row("Built", text(metadata.build_date, "unknown"), "Build date"),
       metadata.image_digest || metadata.digest

@@ -23,18 +23,25 @@ if str(_ROOT) not in _sys.path:
 
 
 import argparse
+import base64
+import calendar
 import contextlib
 import hashlib
 import hmac
 import json
 import math
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
 import time
 import zipfile
 from pathlib import Path
+
+from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
 
 from core import inkdrop_runtime_config
 from core import inkdrop_auth
@@ -56,6 +63,9 @@ CONFIG_EXPORT_ARCHIVE_NAME = "config/inkdrop-config-export.json"
 SECRET_REFS_ARCHIVE_NAME = "config/inkdrop-secret-refs.json"
 MANIFEST_ARCHIVE_NAME = "manifest.json"
 SECRET_KEY_MARKERS = ("API_KEY", "PASSWORD", "TOKEN", "SECRET", "USERNAME")
+CREDENTIAL_PASSPHRASE_MIN_LENGTH = 8
+CREDENTIAL_KDF_ITERATIONS = 480_000
+CREDENTIAL_TABLES = ("provider_configs", "notification_connectors")
 # Naming-format templates hold tokens like "{Series Title} ({Year})", never
 # host paths; comic_issue_format already exports, this keeps its sibling from
 # being excluded for having FOLDER in its name.
@@ -228,6 +238,212 @@ def parse_portable_settings_document(raw):
     return parse_strict_json_object(raw, max_bytes=PORTABLE_SETTINGS_MAX_BYTES, label="settings backup")
 
 
+# --------------------------------------------------------------------------
+# Optional encrypted credentials, opt-in at export time. The portable
+# settings document above never carries these -- sanitized_provider_settings()
+# strips them the same way redact_provider_secrets() does for the full backup
+# archive. This is the one path that CAN include them, because a user
+# rebuilding a fresh install from a settings export otherwise has to manually
+# re-enter every download-client password and notification webhook by hand.
+# They're encrypted with a passphrase set at export time (never derived from
+# or stored alongside anything else InkDrop already knows), so the exported
+# file is only as sensitive as that passphrase -- not plaintext-sensitive on
+# its own, unlike everything else this module ever writes to disk.
+# --------------------------------------------------------------------------
+
+def _validate_credential_passphrase(passphrase):
+    text = str(passphrase or "")
+    if len(text) < CREDENTIAL_PASSPHRASE_MIN_LENGTH:
+        raise ValueError(f"credentials passphrase must be at least {CREDENTIAL_PASSPHRASE_MIN_LENGTH} characters")
+    return text
+
+
+def _credential_fernet(passphrase, salt, iterations=CREDENTIAL_KDF_ITERATIONS):
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=int(iterations))
+    return Fernet(base64.urlsafe_b64encode(kdf.derive(str(passphrase or "").encode("utf-8"))))
+
+
+def _gather_credential_secrets(con):
+    """{"provider_configs": {id: {field: value}}, "notification_connectors":
+    {id: {field: value}}} for every credential-shaped field
+    sanitized_provider_settings() (the same filter redact_provider_secrets()
+    applies to the full backup archive) would otherwise strip. Tables/rows/
+    fields with nothing secret are omitted entirely, not included empty.
+
+    notification_connectors is created lazily by inkdrop_notification_store
+    on first use, not by inkdrop_state.init_schema() -- an install that has
+    never opened notification settings genuinely has no such table yet.
+    Checking sqlite_master first (the same guard redact_provider_secrets()
+    already uses for the full backup archive) keeps that a normal "nothing to
+    gather" case instead of an unhandled OperationalError that would take the
+    whole export down with it.
+    """
+    tables = {row[0] for row in con.execute("select name from sqlite_master where type='table'")}
+    credentials = {}
+    provider_rows = con.execute("select id, settings_json from provider_configs").fetchall() if "provider_configs" in tables else []
+    provider_credentials = {}
+    for provider_id, settings_json in provider_rows:
+        try:
+            settings = json.loads(settings_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(settings, dict):
+            continue
+        _kept, removed = sanitized_provider_settings(settings)
+        fields = {name: settings[name] for name in removed if name in settings}
+        if fields:
+            provider_credentials[str(provider_id)] = fields
+    if provider_credentials:
+        credentials["provider_configs"] = provider_credentials
+
+    if "notification_connectors" not in tables:
+        return credentials
+    try:
+        from core import inkdrop_notifications as notifications
+    except Exception:
+        notifications = None
+    connector_credentials = {}
+    connector_rows = con.execute("select id, type, settings_json from notification_connectors").fetchall()
+    for connector_id, connector_type, settings_json in connector_rows:
+        try:
+            settings = json.loads(settings_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(settings, dict):
+            continue
+        cls = notifications.PROVIDER_CLASSES.get(connector_type) if notifications else None
+        declared = [field["key"] for field in cls.config_fields if field.get("secret")] if cls else []
+        settings_with_declared = dict(settings)
+        settings_with_declared["secret_fields"] = sorted(set(settings.get("secret_fields") or []) | set(declared))
+        _kept, removed = sanitized_provider_settings(settings_with_declared)
+        fields = {name: settings[name] for name in removed if name in settings}
+        if fields:
+            connector_credentials[str(connector_id)] = fields
+    if connector_credentials:
+        credentials["notification_connectors"] = connector_credentials
+    return credentials
+
+
+def _credential_count(credentials):
+    return sum(len(fields) for table in (credentials or {}).values() for fields in table.values())
+
+
+def encrypt_credentials_payload(credentials, passphrase):
+    passphrase = _validate_credential_passphrase(passphrase)
+    salt = os.urandom(16)
+    ciphertext = _credential_fernet(passphrase, salt).encrypt(_canonical_json(credentials).encode("utf-8"))
+    return {
+        "kdf": "pbkdf2-sha256",
+        "iterations": CREDENTIAL_KDF_ITERATIONS,
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "ciphertext": ciphertext.decode("ascii"),
+        "count": _credential_count(credentials),
+    }
+
+
+def decrypt_credentials_payload(blob, passphrase):
+    """Raises ValueError with a message safe to show the user directly --
+    never includes the passphrase, the ciphertext, or decrypted values."""
+    if not isinstance(blob, dict):
+        raise ValueError("credentials block is malformed")
+    try:
+        salt = base64.b64decode(str(blob.get("salt") or ""), validate=True)
+        ciphertext = str(blob.get("ciphertext") or "").encode("ascii")
+        iterations = int(blob.get("iterations") or 0)
+    except Exception as exc:
+        raise ValueError("credentials block is malformed") from exc
+    if not salt or not ciphertext or iterations <= 0:
+        raise ValueError("credentials block is malformed")
+    fernet = _credential_fernet(passphrase, salt, iterations=iterations)
+    try:
+        plaintext = fernet.decrypt(ciphertext)
+    except InvalidToken as exc:
+        raise ValueError("incorrect passphrase, or the credentials in this file are corrupted") from exc
+    try:
+        credentials = json.loads(plaintext.decode("utf-8"))
+    except (TypeError, ValueError, UnicodeDecodeError) as exc:
+        raise ValueError("decrypted credentials are not valid JSON") from exc
+    if not isinstance(credentials, dict) or any(table not in CREDENTIAL_TABLES for table in credentials):
+        raise ValueError("decrypted credentials have an unexpected shape")
+    return credentials
+
+
+def _credential_restore_plan(con, credentials):
+    """Never returns a decrypted value, only which provider/connector rows
+    and field names would change -- the plan is shown in a preview response
+    before Apply, and a plaintext credential has no business round-tripping
+    back out over the network once it's been encrypted."""
+    changes = []
+    unknown = []
+    existing_tables = _existing_credential_tables(con)
+    for table in CREDENTIAL_TABLES:
+        rows = credentials.get(table)
+        if not isinstance(rows, dict):
+            continue
+        if table not in existing_tables:
+            for row_id in rows:
+                unknown.append({"table": table, "id": str(row_id), "reason": "table_not_present_on_this_install"})
+            continue
+        for row_id, fields in rows.items():
+            if not isinstance(fields, dict):
+                continue
+            existing = con.execute(f"select settings_json from {table} where id=?", (str(row_id),)).fetchone()
+            if not existing:
+                unknown.append({"table": table, "id": str(row_id), "reason": "row_not_present_on_this_install"})
+                continue
+            try:
+                existing_settings = json.loads(existing[0] or "{}")
+            except (TypeError, ValueError):
+                existing_settings = {}
+            for field in sorted(fields):
+                if not isinstance(existing_settings, dict) or field not in existing_settings:
+                    unknown.append({"table": table, "id": str(row_id), "field": field, "reason": "field_not_present_on_this_install"})
+                    continue
+                changes.append({"table": table, "id": str(row_id), "field": field})
+    return {"changes": changes, "unknown": unknown}
+
+
+def _existing_credential_tables(con):
+    tables = {row[0] for row in con.execute("select name from sqlite_master where type='table'")}
+    return {table for table in CREDENTIAL_TABLES if table in tables}
+
+
+def _apply_credential_restore(con, credentials, now):
+    applied = 0
+    existing_tables = _existing_credential_tables(con)
+    for table in CREDENTIAL_TABLES:
+        if table not in existing_tables:
+            continue
+        rows = credentials.get(table)
+        if not isinstance(rows, dict):
+            continue
+        for row_id, fields in rows.items():
+            if not isinstance(fields, dict):
+                continue
+            existing = con.execute(f"select settings_json from {table} where id=?", (str(row_id),)).fetchone()
+            if not existing:
+                continue
+            try:
+                existing_settings = json.loads(existing[0] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(existing_settings, dict):
+                continue
+            changed = False
+            for field, value in fields.items():
+                if field not in existing_settings:
+                    continue
+                existing_settings[field] = value
+                changed = True
+                applied += 1
+            if changed:
+                con.execute(
+                    f"update {table} set settings_json=?, updated_at=? where id=?",
+                    (_canonical_json(existing_settings), now, str(row_id)),
+                )
+    return applied
+
+
 def _portable_exclusion_reason(key, value):
     key_text = str(key or "")
     if key_text.lower().startswith("auth."):
@@ -253,7 +469,7 @@ def _portable_rows(con):
     return con.execute("select key,value_json from app_settings order by key").fetchall()
 
 
-def _portable_document_from_rows(rows, *, now=None, version=None):
+def _portable_document_from_rows(rows, *, now=None, version=None, credentials_encrypted=None):
     now = time.time() if now is None else float(now)
     included = {}
     excluded = []
@@ -292,20 +508,26 @@ def _portable_document_from_rows(rows, *, now=None, version=None):
         "excluded": excluded,
         "contains": {
             "app_settings": True,
-            "provider_credentials": False,
+            "provider_credentials": bool(credentials_encrypted),
             "private_paths": False,
             "media": False,
             "tasks_history_users_sessions": False,
         },
     }
+    if credentials_encrypted:
+        document["credentials_encrypted"] = credentials_encrypted
     document["checksum"] = _settings_checksum(document)
     return document
 
 
-def export_portable_settings(db_path, *, now=None, version=None):
+def export_portable_settings(db_path, *, now=None, version=None, include_credentials=False, passphrase=None):
     with inkdrop_state.connect_read(db_path) as con:
         rows = _portable_rows(con)
-    return _portable_document_from_rows(rows, now=now, version=version)
+        credentials_encrypted = None
+        if include_credentials:
+            credentials = _gather_credential_secrets(con)
+            credentials_encrypted = encrypt_credentials_payload(credentials, passphrase)
+    return _portable_document_from_rows(rows, now=now, version=version, credentials_encrypted=credentials_encrypted)
 
 
 def portable_settings_filename(document):
@@ -463,15 +685,47 @@ def _apply_portable_setting(con, key, value, now):
     )
 
 
-def restore_portable_settings(db_path, raw_document, *, apply=False, backup_dir=None, now=None):
+def _credentials_plan_section(con, document, passphrase):
+    """Never touches the DB. Returns a plan section safe to send back to the
+    client as-is: counts and which rows/fields would change, never a
+    decrypted value. `ok` gates whether Apply may proceed when credentials
+    are present -- present-but-unverified must block Apply rather than
+    silently apply settings while skipping credentials with no signal that
+    anything was left out."""
+    blob = document.get("credentials_encrypted")
+    if not blob:
+        return {"present": False, "count": 0, "passphrase_provided": False, "verified": False, "ok": True}
+    count = int((blob or {}).get("count") or 0) if isinstance(blob, dict) else 0
+    if not passphrase:
+        return {"present": True, "count": count, "passphrase_provided": False, "verified": False, "ok": False}
+    try:
+        credentials = decrypt_credentials_payload(blob, passphrase)
+    except ValueError as exc:
+        return {"present": True, "count": count, "passphrase_provided": True, "verified": False, "ok": False, "error": str(exc)}
+    row_plan = _credential_restore_plan(con, credentials)
+    return {
+        "present": True,
+        "count": count,
+        "passphrase_provided": True,
+        "verified": True,
+        "ok": True,
+        "changes": row_plan["changes"],
+        "unknown": row_plan["unknown"],
+        "_credentials": credentials,
+    }
+
+
+def restore_portable_settings(db_path, raw_document, *, apply=False, backup_dir=None, now=None, passphrase=None):
     document = parse_portable_settings_document(raw_document)
     if not apply:
         with inkdrop_state.connect_read(db_path) as con:
             rows = _portable_rows(con)
+            credentials_plan = _credentials_plan_section(con, document, passphrase)
         plan = _portable_settings_plan(document, rows)
         public_plan = {key: value for key, value in plan.items() if key != "validated"}
+        public_plan["credentials"] = {key: value for key, value in credentials_plan.items() if key != "_credentials"}
         return {
-            "ok": bool(plan["ok"]),
+            "ok": bool(plan["ok"]) and bool(credentials_plan["ok"]),
             "applied": False,
             "dry_run": True,
             "source": {"product_version": document.get("product_version"), "exported_at": document.get("exported_at"), "checksum": document.get("checksum")},
@@ -482,15 +736,17 @@ def restore_portable_settings(db_path, raw_document, *, apply=False, backup_dir=
         con.execute("begin immediate")
         rows = _portable_rows(con)
         plan = _portable_settings_plan(document, rows)
+        credentials_plan = _credentials_plan_section(con, document, passphrase)
         public_plan = {key: value for key, value in plan.items() if key != "validated"}
+        public_plan["credentials"] = {key: value for key, value in credentials_plan.items() if key != "_credentials"}
         result = {
-            "ok": bool(plan["ok"]),
+            "ok": bool(plan["ok"]) and bool(credentials_plan["ok"]),
             "applied": False,
             "dry_run": False,
             "source": {"product_version": document.get("product_version"), "exported_at": document.get("exported_at"), "checksum": document.get("checksum")},
             "plan": public_plan,
         }
-        if not plan["ok"]:
+        if not plan["ok"] or not credentials_plan["ok"]:
             con.rollback()
             return result
         snapshot = _write_settings_snapshot(
@@ -501,20 +757,35 @@ def restore_portable_settings(db_path, raw_document, *, apply=False, backup_dir=
         changed_keys = [row["key"] for row in plan["changes"]]
         for key in changed_keys:
             _apply_portable_setting(con, key, plan["validated"][key], timestamp)
+        credentials_applied = 0
+        if credentials_plan.get("_credentials"):
+            credentials_applied = _apply_credential_restore(con, credentials_plan["_credentials"], timestamp)
         inkdrop_state.record_settings_history(
             con,
             "settings_restore",
             "settings_backup",
             str(document.get("checksum") or "")[-16:],
             "settings",
-            f"Restored {len(changed_keys)} portable setting(s)",
-            {"changed_keys": changed_keys, "changed_count": len(changed_keys), "unknown_count": len(plan["unknown"]), "source_schema": document.get("schema")},
+            f"Restored {len(changed_keys)} portable setting(s)" + (f", {credentials_applied} credential(s)" if credentials_applied else ""),
+            {
+                "changed_keys": changed_keys,
+                "changed_count": len(changed_keys),
+                "unknown_count": len(plan["unknown"]),
+                "source_schema": document.get("schema"),
+                "credentials_applied": credentials_applied,
+            },
             timestamp,
         )
         inkdrop_state.update_sync_meta(con, timestamp, "settings_restore")
         con.commit()
     inkdrop_state.clear_settings_caches()
-    result.update({"ok": True, "applied": True, "snapshot": path_text(snapshot), "changed_count": len(changed_keys)})
+    result.update({
+        "ok": True,
+        "applied": True,
+        "snapshot": path_text(snapshot),
+        "changed_count": len(changed_keys),
+        "credentials_applied": credentials_applied,
+    })
     return result
 
 
@@ -759,6 +1030,109 @@ def create_backup_archive(
     }
 
 
+# inkdrop-backup-{YYYYmmdd-HHMMSS}-{label}.zip, matching compact_stamp()'s own
+# format -- create_backup_archive() names every archive this way, so listing/
+# pruning read the timestamp back out of the filename itself rather than
+# keeping a separate index that could drift from what's actually on disk.
+BACKUP_ARCHIVE_NAME_RE = re.compile(r"^inkdrop-backup-(\d{8}-\d{6})-(.+)\.zip$")
+
+
+def _parsed_backup_archive(path):
+    match = BACKUP_ARCHIVE_NAME_RE.match(path.name)
+    if not match:
+        return None
+    try:
+        created_at = calendar.timegm(time.strptime(match.group(1), "%Y%m%d-%H%M%S"))
+    except ValueError:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return {
+        "name": path.name,
+        "label": match.group(2),
+        "created_at": created_at,
+        "created_at_iso": utc_stamp(created_at),
+        "bytes": stat.st_size,
+    }
+
+
+def list_backup_archives(backup_dir=None):
+    """Every recognized backup archive on disk, newest first.
+
+    Reads the directory rather than any stored index, so a file dropped in or
+    removed outside InkDrop (an operator's own cron, a manual scp) shows up
+    correctly on the next call -- there is nothing else to keep in sync.
+    """
+    backup_dir = Path(backup_dir or inkdrop_runtime_config.backup_dir())
+    if not backup_dir.is_dir():
+        return []
+    archives = []
+    for entry in backup_dir.iterdir():
+        if not entry.is_file():
+            continue
+        parsed = _parsed_backup_archive(entry)
+        if parsed:
+            archives.append(parsed)
+    archives.sort(key=lambda item: item["created_at"], reverse=True)
+    return archives
+
+
+def prune_backup_archives(backup_dir=None, *, retention_days=28, label=None, now=None):
+    """Delete archives older than retention_days, sonarr-style.
+
+    Always keeps at least the single newest archive matching `label` (or the
+    newest archive overall when label is None), even if it is itself past
+    retention -- a misconfigured retention window (0, or a clock that jumped)
+    must never delete every backup in the directory and leave none.
+    """
+    backup_dir = Path(backup_dir or inkdrop_runtime_config.backup_dir())
+    now = float(now if now is not None else time.time())
+    cutoff = now - max(0, int(retention_days)) * 86400
+    archives = list_backup_archives(backup_dir)
+    if label is not None:
+        scoped = [item for item in archives if item["label"] == label]
+    else:
+        scoped = archives
+    deleted = []
+    kept = []
+    for index, item in enumerate(scoped):
+        if index == 0 or item["created_at"] >= cutoff:
+            kept.append(item["name"])
+            continue
+        try:
+            (backup_dir / item["name"]).unlink()
+            deleted.append(item["name"])
+        except OSError as exc:
+            kept.append(item["name"])
+            item["prune_error"] = f"{type(exc).__name__}: {exc}"
+    return {"ok": True, "deleted": deleted, "kept": kept, "retention_days": int(retention_days)}
+
+
+def run_scheduled_backup(*, config_dir=None, state_db_path=None, backup_dir=None, environ=None, interval_days=7, retention_days=28, now=None):
+    """Create a new "scheduled" backup only once interval_days have passed
+    since the last one, then prune -- the interval check only ever looks at
+    prior "scheduled" archives, so a manual backup an operator triggers from
+    the UI never delays or resets the automatic cadence.
+    """
+    now = float(now if now is not None else time.time())
+    backup_dir = Path(backup_dir or inkdrop_runtime_config.backup_dir(environ if environ is not None else os.environ))
+    existing = [item for item in list_backup_archives(backup_dir) if item["label"] == "scheduled"]
+    due = not existing or (now - existing[0]["created_at"]) >= max(1, int(interval_days)) * 86400
+    created = None
+    if due:
+        created = create_backup_archive(
+            config_dir=config_dir,
+            state_db_path=state_db_path,
+            backup_dir=backup_dir,
+            environ=environ,
+            label="scheduled",
+        )
+    prune_result = prune_backup_archives(backup_dir, retention_days=retention_days, label="scheduled", now=now)
+    return {"ok": True, "due": due, "created": created, "prune": prune_result}
+
+
 def _safe_zip_members(zf):
     members = []
     for info in zf.infolist():
@@ -998,6 +1372,12 @@ def main(argv=None):
         action="store_true",
         help="Keep today's logins and API keys instead of the archive's. Default restores auth from the same point in time as the rest of the archive.",
     )
+    scheduled = sub.add_parser("scheduled-backup", help="Create a backup if the interval has elapsed, then prune by retention.")
+    scheduled.add_argument("--config-dir")
+    scheduled.add_argument("--state-db")
+    scheduled.add_argument("--backup-dir")
+    scheduled.add_argument("--interval-days", type=int, default=7)
+    scheduled.add_argument("--retention-days", type=int, default=28)
     args = parser.parse_args(argv)
     if args.command == "backup":
         result = create_backup_archive(
@@ -1005,6 +1385,14 @@ def main(argv=None):
             state_db_path=args.state_db,
             backup_dir=args.backup_dir,
             label=args.label,
+        )
+    elif args.command == "scheduled-backup":
+        result = run_scheduled_backup(
+            config_dir=args.config_dir,
+            state_db_path=args.state_db,
+            backup_dir=args.backup_dir,
+            interval_days=args.interval_days,
+            retention_days=args.retention_days,
         )
     else:
         result = restore_backup_archive(

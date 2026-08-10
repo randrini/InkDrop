@@ -6,6 +6,7 @@ import hashlib
 import html.parser
 import json
 import re
+import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import PurePosixPath
@@ -13,6 +14,7 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse
 
 from core import inkdrop_bencode
 from core import inkdrop_candidate_matching
+from core import inkdrop_runtime_config
 from core import inkdrop_sources
 
 
@@ -30,7 +32,10 @@ HTML_CONTENT_TYPES = {
 
 CONTENT_TYPES_BY_EXTENSION = {
     ".cbz": {"application/vnd.comicbook+zip", "application/zip", "application/octet-stream"},
-    ".cbr": {"application/vnd.comicbook-rar", "application/x-rar-compressed", "application/octet-stream"},
+    # application/vnd.rar is the IANA-registered RAR media type; confirmed
+    # live 2026-08-08 that Pixeldrain serves .cbr files with this content
+    # type, not application/vnd.comicbook-rar or application/octet-stream.
+    ".cbr": {"application/vnd.comicbook-rar", "application/x-rar-compressed", "application/vnd.rar", "application/octet-stream"},
     ".epub": {"application/epub+zip", "application/octet-stream", "binary/octet-stream"},
     ".pdf": {"application/pdf", "application/octet-stream", "binary/octet-stream"},
     ".txt": {"text/plain", "application/octet-stream"},
@@ -2083,6 +2088,60 @@ def _candidate_source_is_single_part_without_collection(candidate):
     return bool(SINGLE_PART_SOURCE_RE.search(source_norm)) and not COLLECTION_TARGET_RE.search(source_text)
 
 
+# TEMPORARY diagnostic instrumentation for the open Ascender #7 match_confidence
+# anomaly (2026-08-06 Prowlarr reaudit): an isolated replay of this function
+# against a real blocked row's series/issue/candidate-title returns the correct
+# "series_title_only", but production stored "mismatch" for that exact row.
+# Persisted source_attempts.raw_json is a trimmed projection that doesn't retain
+# the fields this function actually reads, so replay can't reconstruct the real
+# input. This logs the live wanted_item/candidate the moment "mismatch" is set,
+# so the next occurrence can be diagnosed from ground truth instead of a guess.
+# Remove this block (and its call site below) once the anomaly is captured and
+# root-caused.
+#
+# Revision (2026-08-10): a first real capture (50 rows, forced via a manual
+# search) all independently replayed as genuine "mismatch" -- confirmed by
+# calling _query_matches_result() directly against the logged fields, not
+# just by inspection. Not the anomaly; a real but boring case (wanted a
+# volume, every candidate was either a bare chapter or a volume range that
+# didn't cover it). The gap: this only logged series_query_aliases' presence
+# as a policy key, not the actual alias list _series_query_aliases() computed
+# at decision time -- and aliases are the one input here that can legitimately
+# drift between decision-time and any later replay (unlike the other logged
+# fields, which are just copied off wanted_item/candidate). Now logging the
+# real list plus the candidate's summary/description, since haystack is built
+# from title+summary+description and a difference there would otherwise look
+# identical to this bug from title alone.
+def _debug_log_match_confidence_mismatch(candidate, wanted_item=None, policy=None):
+    try:
+        candidate = candidate if isinstance(candidate, dict) else {}
+        wanted_item = wanted_item if isinstance(wanted_item, dict) else {}
+        path = inkdrop_runtime_config.log_dir() / "match-confidence-mismatch-debug.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "ts": time.time(),
+            "candidate_title": candidate.get("title"),
+            "candidate_summary": candidate.get("summary"),
+            "candidate_description": candidate.get("description"),
+            "candidate_series_query_aliases": candidate.get("series_query_aliases"),
+            "indexer": candidate.get("indexer"),
+            "wanted": {
+                key: wanted_item.get(key)
+                for key in (
+                    "series_title", "series", "manga_title", "title", "query",
+                    "issue_number", "chapter_number", "normalized_number",
+                    "media_type", "manual_search", "metadata_provider",
+                    "series_source", "publisher",
+                )
+            },
+            "policy_keys": sorted(policy.keys()) if isinstance(policy, dict) else None,
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+    except Exception:
+        pass
+
+
 def _indexer_match_confidence(candidate, wanted_item=None, policy=None):
     if not _query_matches_result(candidate, wanted_item, policy=policy):
         return "mismatch"
@@ -2454,6 +2513,8 @@ def prowlarr_candidate_from_result(result, registry_row=None, wanted_item=None):
     if aliases:
         candidate["series_query_aliases"] = aliases
     candidate["match_confidence"] = _indexer_match_confidence(candidate, wanted_item, policy=policy)
+    if candidate["match_confidence"] == "mismatch":
+        _debug_log_match_confidence_mismatch(candidate, wanted_item, policy=policy)
     manifest_match = indexer_manifest_pack_match(candidate)
     if manifest_match:
         candidate["pack_contents_match"] = manifest_match
@@ -5056,6 +5117,82 @@ def _pixeldrain_direct_download_url(url):
     return f"https://pixeldrain.com/api/file/{quote(file_id, safe='')}?download"
 
 
+WETRANSFER_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_-]{6,64}$")
+
+
+def _wetransfer_transfer_id_and_hash(url):
+    """Parse a wetransfer.com/downloads/<transfer_id>/<security_hash> share
+    URL into its two API parameters. Returns ("", "") for anything else,
+    including the we.tl/t-<code> shortened form -- that form 302-redirects
+    to the full downloads/ URL and isn't resolved here."""
+    parsed = urlparse(str(url or "").strip())
+    host = str(parsed.netloc or "").split(":", 1)[0].lower()
+    if host not in {"wetransfer.com", "www.wetransfer.com"}:
+        return "", ""
+    parts = [unquote(part).strip() for part in str(parsed.path or "").split("/") if part]
+    if len(parts) < 3 or parts[0].lower() != "downloads":
+        return "", ""
+    transfer_id, security_hash = parts[1], parts[2]
+    if not WETRANSFER_SEGMENT_RE.fullmatch(transfer_id) or not WETRANSFER_SEGMENT_RE.fullmatch(security_hash):
+        return "", ""
+    return transfer_id, security_hash
+
+
+def _wetransfer_direct_link_from_response(payload):
+    """Parse a wetransfer.com transfer-download API response body for the
+    real file URL. Rejects anything that isn't a well-formed http(s) URL so
+    an unexpected response shape fails closed rather than handing back a
+    garbage download target."""
+    if isinstance(payload, (str, bytes)):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return ""
+    if not isinstance(payload, dict):
+        return ""
+    direct_link = first_text(payload.get("direct_link"), payload.get("directLink"), payload.get("url"))
+    if not direct_link:
+        return ""
+    parsed = urlparse(direct_link)
+    if str(parsed.scheme or "").lower() not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return direct_link
+
+
+BUZZHEAVIER_FILE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{3,64}$")
+
+
+def _buzzheavier_file_id(url):
+    """Parse a buzzheavier.com/<file_id> (or already-suffixed .../download)
+    share URL into its bare file_id. Returns "" for anything else.
+
+    Unlike Pixeldrain, resolving the file_id into a real download is not a
+    plain URL rewrite -- buzzheavier.com/<file_id>/download only serves the
+    file for a request that looks like it came from a page load of the
+    share URL itself (htmx-style headers + a matching referer), so the
+    caller still needs buzzheavier_download_request()'s headers, not just
+    this URL. A cold, header-less request to the bare share path returns a
+    Cloudflare bot challenge; the same path with those headers reaches the
+    application layer (confirmed via a nonexistent file_id returning a
+    clean 404, not a challenge) -- but this has not been exercised against
+    a real, valid Buzzheavier share, since none was available to test
+    against.
+    """
+    parsed = urlparse(str(url or "").strip())
+    host = str(parsed.netloc or "").split(":", 1)[0].lower()
+    if host not in {"buzzheavier.com", "www.buzzheavier.com"}:
+        return ""
+    parts = [unquote(part).strip() for part in str(parsed.path or "").split("/") if part]
+    if not parts:
+        return ""
+    file_id = parts[0]
+    if len(parts) >= 2 and parts[1].lower() != "download":
+        return ""
+    if not BUZZHEAVIER_FILE_ID_RE.fullmatch(file_id):
+        return ""
+    return file_id
+
+
 def _shared_file_host_rule_match(url, shared_file_host_rules=None):
     parsed = urlparse(str(url or "").strip())
     host = _normalized_shared_file_host(parsed.netloc)
@@ -5410,6 +5547,7 @@ def _direct_file_probe_rows_from_html(
     context_title="",
     shared_file_hosts=None,
     shared_file_host_rules=None,
+    resolved_redirect_urls=None,
 ):
     parser = _LinkRowsFromHtml(source_url)
     try:
@@ -5418,6 +5556,7 @@ def _direct_file_probe_rows_from_html(
         return []
     allowed = set(normalized_extensions(allowed_extensions or GENERIC_DIRECT_FILE_EXTENSIONS))
     context_title = normalized_query(context_title)
+    resolved_redirect_urls = resolved_redirect_urls if isinstance(resolved_redirect_urls, dict) else {}
     rows = []
     seen = set()
     for row in parser.rows:
@@ -5429,6 +5568,14 @@ def _direct_file_probe_rows_from_html(
         if scheme and scheme not in {"http", "https"}:
             continue
         probe_url = _shared_file_host_direct_download_url(url, shared_file_hosts, shared_file_host_rules) or url
+        # A same-site redirect shortener (e.g. GetComics' /dls/ links) never
+        # rewrites via the rules above -- its host isn't the shared-file host
+        # itself. If the fetch stage already resolved this href to a real
+        # transport URL, that resolution is authoritative over any rewrite
+        # guess made from the raw href alone.
+        resolved_override = resolved_redirect_urls.get(url_hash(url))
+        if resolved_override:
+            probe_url = resolved_override
         ext = normalize_extension(probe_url)
         if ext and allowed and ext not in allowed:
             continue
@@ -6366,8 +6513,17 @@ def direct_file_probe_candidates_from_payload(payload, registry_row=None, wanted
         policy.get("shared_file_host_rewrite_rules"),
         policy.get("shared_file_hosts_rules"),
     )
+    # Pixeldrain has its own enable/disable toggle under Download Clients
+    # (it's a shared-file-host resolver other sources depend on, not a
+    # discovery source in its own right). GetComics' whole transport is
+    # Pixeldrain, and an *empty* transport_allowed_hosts means "no
+    # restriction" everywhere else in this function -- the opposite of what
+    # disabling the resolver should do -- so bail out with zero candidates
+    # outright instead of trying to express "disabled" as an empty allowlist.
+    if provider_id == "rss_getcomics" and not registry_row.get("pixeldrain_resolver_enabled", True):
+        return []
     if provider_id == "rss_getcomics":
-        allowed_extensions = [".cbz", ".zip"]
+        allowed_extensions = [".cbz", ".cbr", ".zip"]
         shared_file_hosts = ["pixeldrain"]
         shared_file_host_rules = None
     transport_allowed_hosts = {
@@ -6382,7 +6538,15 @@ def direct_file_probe_candidates_from_payload(payload, registry_row=None, wanted
     }
     if provider_id == "rss_getcomics":
         transport_allowed_hosts = {"pixeldrain.com", "www.pixeldrain.com"}
+    discovery_allowed_hosts = {
+        str(urlparse(str(value or "")).hostname or value or "").strip().lower().strip("[]")
+        for value in text_values(policy.get("feed_detail_allowed_hosts") or [])
+        if str(value or "").strip()
+    }
+    if provider_id == "rss_getcomics":
+        discovery_allowed_hosts = {"getcomics.org", "www.getcomics.org"}
     source_site = first_text(policy.get("source_site_label"), registry_row.get("display_name"), registry_row.get("provider_id"), "Direct file probe source")
+    resolved_redirect_urls = payload.get("resolved_redirect_urls") if isinstance(payload, dict) and isinstance(payload.get("resolved_redirect_urls"), dict) else {}
     pages = []
     if isinstance(payload, dict):
         pages.extend(page for page in payload.get("search_pages") or [] if isinstance(page, dict))
@@ -6403,13 +6567,21 @@ def direct_file_probe_candidates_from_payload(payload, registry_row=None, wanted
             context_title=context_title,
             shared_file_hosts=shared_file_hosts,
             shared_file_host_rules=shared_file_host_rules,
+            resolved_redirect_urls=resolved_redirect_urls,
         )
         for row in rows:
             download_url = first_text(row.get("download_url"), row.get("url"))
             if not download_url:
                 continue
             download_host = str(urlparse(download_url).hostname or "").strip().lower()
-            if transport_allowed_hosts and download_host not in transport_allowed_hosts:
+            # A same-site discovery-host link (e.g. GetComics' /dls/ redirect
+            # shortener) hasn't been resolved to its real transport host yet
+            # on the first pass -- let it through here so the fetch stage
+            # gets a chance to resolve it. Once resolved, its download_url
+            # is already the real transport URL and passes the check below
+            # unaided; an unresolved/failed one still ends up blocked later
+            # by direct_artifact_verdict for lacking probe evidence.
+            if transport_allowed_hosts and download_host not in transport_allowed_hosts and download_host not in discovery_allowed_hosts:
                 continue
             if row.get("download_url_hash") in seen:
                 continue

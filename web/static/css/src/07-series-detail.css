@@ -194,6 +194,14 @@
       outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
+    /* Keep result-row action buttons inside their cell on desktop too, not just the mobile rule below. */
+    #seriesSearchSection .series-result-row .actions {
+      min-width: 0;
+    }
+    #seriesSearchSection .series-result-row .actions button {
+      width: 100%;
+      box-sizing: border-box;
+    }
 
     @media (max-width: 520px) {
       #seriesSearchSection {

@@ -9,6 +9,7 @@ JS = (ROOT / "web/static/js/inkdrop-manual-search.js").read_text(encoding="utf-8
 CSS = (ROOT / "web/static/css/inkdrop.css").read_text(encoding="utf-8")
 FIXTURE = (ROOT / "web/tests/fixtures/manual-search.html").read_text(encoding="utf-8")
 BROWSER = (ROOT / "web/tests/manual-search-browser-smoke.js").read_text(encoding="utf-8")
+SERIES_DETAIL_TSX = (ROOT / "web" / "frontend" / "src" / "sections" / "SeriesDetail.tsx").read_text(encoding="utf-8")
 
 
 def require(haystack: str, needle: str, label: str) -> None:
@@ -20,7 +21,11 @@ require(WEB, '"inkdrop-manual-search.js"', "static asset registration")
 require(WEB, "openManualSearchForRow", "shared row entry point")
 require(WEB, "canonical issue or unit identity", "disabled-state explanation")
 require(WEB, 'label: "Manual Search"', "Wanted and Queue action")
-require(WEB, 'appendSeriesDetailIssueAction(actions, "Manual Search"', "Series Details action")
+# Series Details' per-issue-row actions migrated to the React island
+# (SeriesDetail.tsx), calling through to openManualSearchForRow via the
+# InkDropSeriesNav bridge rather than rendering the button in vanilla DOM.
+require(SERIES_DETAIL_TSX, 'label="Manual Search"', "Series Details action")
+require(SERIES_DETAIL_TSX, "nav?.openManualSearch?.(row)", "Series Details action calls the shared row entry point")
 require(JS, "window.InkDropApi", "authenticated API client dependency")
 require(JS, "/api/manual-search/runs", "Core run contract")
 require(JS, '"partial"', "partial terminal-state contract")

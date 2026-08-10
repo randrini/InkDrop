@@ -243,8 +243,275 @@ def assert_direct_download_gates():
         assert_equal(html.get("reason"), "html_or_login_response", "HTML/login response is blocked")
 
 
+def assert_pixeldrain_resolver_toggle_gates_getcomics():
+    """Pixeldrain has its own enable/disable toggle under Download Clients.
+    GetComics' entire transport is Pixeldrain, so disabling that toggle must
+    make GetComics unable to produce any candidate -- not just fail to
+    resolve one, since an empty transport_allowed_hosts otherwise means "no
+    restriction" everywhere else in this function."""
+    payload = {
+        "source_url": "https://getcomics.org/example-toggle-001/",
+        "detail_pages": [{
+            "source_url": "https://getcomics.org/example-toggle-001/",
+            "title": "Example Toggle 001",
+            "text": '<a href="https://pixeldrain.com/u/toggle001">Download</a>',
+        }],
+        "probe_headers": {
+            source_providers.url_hash("https://pixeldrain.com/api/file/toggle001?download"): {
+                "Content-Type": "application/zip",
+                "Content-Disposition": 'attachment; filename="Example Toggle 001.cbz"',
+                "Content-Length": "204800",
+            },
+        },
+        "probe_status": {source_providers.url_hash("https://pixeldrain.com/api/file/toggle001?download"): 200},
+    }
+    wanted_item = {"series_title": "Example Toggle", "issue_number": "1"}
+
+    enabled_row = {
+        "provider_id": "rss_getcomics",
+        "provider_type": "direct_download",
+        "source_kind": "rss_detail_probe_feed",
+        "registry_state": "assist",
+        "auto_search_allowed": True,
+        "pixeldrain_resolver_enabled": True,
+    }
+    enabled_candidates = source_providers.direct_file_probe_candidates_from_payload(payload, enabled_row, wanted_item)
+    assert_equal(len(enabled_candidates), 1, "GetComics resolves a Pixeldrain candidate while the resolver is enabled")
+
+    disabled_row = dict(enabled_row)
+    disabled_row["pixeldrain_resolver_enabled"] = False
+    disabled_candidates = source_providers.direct_file_probe_candidates_from_payload(payload, disabled_row, wanted_item)
+    assert_equal(len(disabled_candidates), 0, "disabling the Pixeldrain resolver leaves GetComics with no candidates, not an unrestricted transport")
+
+    # No explicit registry_row value at all (e.g. a fresh install that has
+    # never synced a "pixeldrain" provider_configs row) must behave like
+    # today's always-on resolution, not silently go dark.
+    default_row = {k: v for k, v in enabled_row.items() if k != "pixeldrain_resolver_enabled"}
+    default_candidates = source_providers.direct_file_probe_candidates_from_payload(payload, default_row, wanted_item)
+    assert_equal(len(default_candidates), 1, "an absent resolver-enabled flag defaults to enabled, matching pre-toggle behavior")
+
+
+def assert_wetransfer_resolver_parsing():
+    """WeTransfer resolution needs a live API call (transfer_id + security_hash
+    -> POST -> direct_link), so unlike Pixeldrain it can't be expressed as a
+    pure URL rewrite. No InkDrop source surfaces WeTransfer links yet, so
+    this only exercises the parsing/request-shape layer -- not a live
+    round-trip against a real share, which nothing here can provide."""
+    share_url = "https://wetransfer.com/downloads/abc123def456ghi789/jkl012mno345pqr678"
+    transfer_id, security_hash = source_providers._wetransfer_transfer_id_and_hash(share_url)
+    assert_equal(transfer_id, "abc123def456ghi789", "transfer_id parses out of a real-shaped share URL")
+    assert_equal(security_hash, "jkl012mno345pqr678", "security_hash parses out of a real-shaped share URL")
+
+    non_wetransfer = source_providers._wetransfer_transfer_id_and_hash("https://pixeldrain.com/u/abc123")
+    assert_equal(non_wetransfer, ("", ""), "a non-WeTransfer URL parses to nothing")
+
+    shortened = source_providers._wetransfer_transfer_id_and_hash("https://we.tl/t-abc123")
+    assert_equal(shortened, ("", ""), "the we.tl shortened form is not resolved here -- it needs a redirect hop first")
+
+    request = source_adapters.wetransfer_resolve_request(share_url)
+    assert_true(request is not None, "a valid WeTransfer share URL builds a resolve request")
+    assert_equal(request["method"], "POST", "the resolve request is a POST, not a GET")
+    assert_equal(request["url"], "https://wetransfer.com/api/v4/transfers/abc123def456ghi789/download", "the resolve request targets the transfer-specific download endpoint")
+    assert_equal(request.get("json", {}).get("security_hash"), "jkl012mno345pqr678", "the security_hash is carried in the request body")
+    assert_equal(request.get("allowed_hosts"), list(source_adapters.WETRANSFER_TRANSPORT_HOSTS), "the resolve request is scoped to wetransfer.com only")
+
+    no_request = source_adapters.wetransfer_resolve_request("https://example.test/not-wetransfer")
+    assert_true(no_request is None, "a non-WeTransfer URL builds no resolve request at all")
+
+    valid_response = source_providers._wetransfer_direct_link_from_response(
+        {"direct_link": "https://download.wetransfer.com/eugv/abc123?token=xyz"}
+    )
+    assert_equal(valid_response, "https://download.wetransfer.com/eugv/abc123?token=xyz", "a well-formed API response yields the real direct link")
+
+    assert_equal(source_providers._wetransfer_direct_link_from_response({}), "", "a response with no direct_link resolves to nothing")
+    assert_equal(source_providers._wetransfer_direct_link_from_response({"direct_link": "not a url"}), "", "a malformed direct_link is rejected, not passed through")
+    assert_equal(source_providers._wetransfer_direct_link_from_response(None), "", "a non-dict response resolves to nothing")
+
+
+def assert_buzzheavier_resolver_parsing():
+    """Buzzheavier has no documented "resolve a share link" API -- its
+    official API covers uploading/managing your own files. The real
+    download path (reverse-engineered from a real client, not ported --
+    see the PR description for the license note) is a GET to
+    <file_id>/download carrying htmx-style headers and a matching referer;
+    a bare/header-less request to that same path draws a Cloudflare bot
+    challenge. This exercises the parsing/request-shape layer only -- not
+    a live round-trip against a real share, since none was available to
+    test against."""
+    share_url = "https://buzzheavier.com/abc123XYZ"
+    file_id = source_providers._buzzheavier_file_id(share_url)
+    assert_equal(file_id, "abc123XYZ", "file_id parses out of a real-shaped share URL")
+
+    with_download_suffix = source_providers._buzzheavier_file_id("https://buzzheavier.com/abc123XYZ/download")
+    assert_equal(with_download_suffix, "abc123XYZ", "an already-suffixed /download URL parses the same file_id")
+
+    non_buzzheavier = source_providers._buzzheavier_file_id("https://pixeldrain.com/u/abc123")
+    assert_equal(non_buzzheavier, "", "a non-Buzzheavier URL parses to nothing")
+
+    wrong_suffix = source_providers._buzzheavier_file_id("https://buzzheavier.com/abc123XYZ/preview")
+    assert_equal(wrong_suffix, "", "a share URL with an unrecognized second path segment parses to nothing")
+
+    request = source_adapters.buzzheavier_download_request(share_url)
+    assert_true(request is not None, "a valid Buzzheavier share URL builds a download request")
+    assert_equal(request["method"], "GET", "the download request is a GET, not a POST")
+    assert_equal(request["url"], "https://buzzheavier.com/abc123XYZ/download", "the download request targets the file-specific download endpoint")
+    assert_equal(request.get("headers", {}).get("hx-request"), "true", "the download request carries the htmx request marker")
+    assert_equal(request.get("headers", {}).get("referer"), "https://buzzheavier.com/abc123XYZ", "the download request's referer matches the share page, not the download endpoint")
+    assert_equal(request.get("allowed_hosts"), list(source_adapters.BUZZHEAVIER_TRANSPORT_HOSTS), "the download request is scoped to buzzheavier.com only")
+
+    no_request = source_adapters.buzzheavier_download_request("https://example.test/not-buzzheavier")
+    assert_true(no_request is None, "a non-Buzzheavier URL builds no download request at all")
+
+
+def assert_getcomics_dls_shortener_resolution():
+    """GetComics wraps every mirror link -- including Pixeldrain -- behind a
+    same-site /dls/ redirect shortener. The raw href never carries an
+    approved transport host, so it must be resolved before the transport
+    allowlist means anything. Modeled on a real GetComics post captured
+    2026-08-08 (getcomics.org/other-comics/white-sky-5-2026/)."""
+    detail_url = "https://getcomics.org/example-shortener-002/"
+    dls_url = "https://getcomics.org/dls/token002"
+    pixeldrain_share_url = "https://pixeldrain.com/u/short002"
+    pixeldrain_api_url = "https://pixeldrain.com/api/file/short002?download"
+    detail_html = (
+        f'<div class="aio-button-center"><div class="aio-pulse">'
+        f'<a rel="nofollow" href="{dls_url}" class="aio-orange" title="PIXELDRAIN">'
+        f'<i class="glyphicons glyphicons-ok"></i>PIXELDRAIN</a></div></div>'
+    )
+    feed_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><item>'
+        f"<title>Example Shortener #2</title><link>{detail_url}</link><guid>{detail_url}</guid>"
+        "</item></channel></rss>"
+    )
+    row = {
+        "provider_id": "rss_getcomics",
+        "provider_type": "direct_download",
+        "source_kind": "rss_detail_probe_feed",
+        "registry_state": "assist",
+        "auto_search_allowed": True,
+        "policy": {
+            "allowed_extensions": [".cbz", ".cbr", ".zip"],
+            "shared_file_hosts": ["pixeldrain"],
+            "transport_allowed_hosts": ["pixeldrain.com", "www.pixeldrain.com"],
+            "feed_detail_allowed_hosts": ["getcomics.org", "www.getcomics.org"],
+            "max_detail_pages": 5,
+            "max_probe_links": 5,
+            "probe_method": "HEAD",
+            "max_redirects": 2,
+        },
+    }
+    plan = {"adapter_family": "rss_detail_probe_feed", "adapter_id": "generic_rss_detail_probe_feed"}
+    wanted_item = {"title": "Example Shortener #2", "series_title": "Example Shortener"}
+
+    def http_get(request):
+        url = request.get("url", "")
+        if url.rstrip("/") == "https://getcomics.org/feed":
+            return {"status_code": 200, "headers": {"content-type": "application/rss+xml"}, "text": feed_xml, "final_url": url}
+        if url == detail_url:
+            return {"status_code": 200, "headers": {"content-type": "text/html"}, "text": detail_html, "final_url": url}
+        if url == dls_url:
+            # Real observed GetComics behavior: a clean single-hop 302 to the
+            # Pixeldrain share page, no captcha or JS interstitial.
+            return {"status_code": 200, "headers": {"content-type": "text/html"}, "text": "", "final_url": pixeldrain_share_url}
+        if url == pixeldrain_api_url:
+            return {
+                "status_code": 200,
+                "headers": {
+                    "content-type": "application/octet-stream",
+                    "content-disposition": 'attachment; filename="Example Shortener 002.cbr"',
+                    # A real comic-sized declaration -- the fixture zip body itself
+                    # is never transmitted for a HEAD probe, only its headers are.
+                    "content-length": str(41 * 1024 * 1024),
+                },
+                "text": "",
+                "final_url": url,
+            }
+        raise AssertionError(f"unexpected probe URL: {url}")
+
+    result = source_adapters.fetch_payloads(row, plan, wanted_item, http_get=http_get, limit=5)
+    assert_true(result.get("ok"), "GetComics fetch with a dls-shortened Pixeldrain link succeeds")
+    payload = (result.get("payloads") or [{}])[0]
+    assert_equal(
+        payload.get("resolved_redirect_urls", {}).get(source_providers.url_hash(dls_url)),
+        pixeldrain_api_url,
+        "the dls redirect resolves to the real Pixeldrain file endpoint, not the share page",
+    )
+    candidates = source_providers.direct_file_probe_candidates_from_payload(payload, row, wanted_item, limit=5)
+    pixeldrain_candidates = [c for c in candidates if c.get("download_url") == pixeldrain_api_url]
+    assert_equal(len(pixeldrain_candidates), 1, "the resolved candidate carries the real Pixeldrain file endpoint")
+    headers = payload.get("probe_headers", {}).get(source_providers.url_hash(pixeldrain_api_url), {})
+    verdict = source_providers.direct_artifact_verdict(pixeldrain_candidates[0], row, headers=headers)
+    assert_equal(
+        verdict.get("block_reasons"),
+        ["auto_download_not_allowed"],
+        "a resolved GetComics->Pixeldrain candidate clears every safety gate except the manual-review gate",
+    )
+
+    # A dls link that resolves OFF the approved transport (e.g. a non-Pixeldrain
+    # mirror behind the same shortener) must still be rejected -- redirect
+    # resolution must not become a way to widen the certified transport.
+    hostile_dls_url = "https://getcomics.org/dls/hostile001"
+    hostile_html = f'<a rel="nofollow" href="{hostile_dls_url}" class="aio-blue" title="MEGA"><i></i>MEGA</a>'
+    hostile_feed_xml = feed_xml.replace(detail_url, "https://getcomics.org/example-hostile-001/")
+    hostile_detail_url = "https://getcomics.org/example-hostile-001/"
+
+    def hostile_http_get(request):
+        url = request.get("url", "")
+        if url.rstrip("/") == "https://getcomics.org/feed":
+            return {"status_code": 200, "headers": {"content-type": "application/rss+xml"}, "text": hostile_feed_xml, "final_url": url}
+        if url == hostile_detail_url:
+            return {"status_code": 200, "headers": {"content-type": "text/html"}, "text": hostile_html, "final_url": url}
+        if url == hostile_dls_url:
+            return {"status_code": 200, "headers": {"content-type": "text/html"}, "text": "", "final_url": "https://mega.example/file.cbz"}
+        raise AssertionError(f"unexpected hostile probe URL: {url}")
+
+    hostile_result = source_adapters.fetch_payloads(row, plan, {"title": "Example Hostile"}, http_get=hostile_http_get, limit=5)
+    hostile_payload = (hostile_result.get("payloads") or [{}])[0]
+    assert_false(
+        hostile_payload.get("resolved_redirect_urls"),
+        "a dls link resolving off Pixeldrain is never recorded as a resolved transport URL",
+    )
+    hostile_candidates = source_providers.direct_file_probe_candidates_from_payload(
+        hostile_payload, row, {"title": "Example Hostile"}, limit=5
+    )
+    assert_false(
+        any("mega.example" in (c.get("download_url") or "") for c in hostile_candidates),
+        "a dls link resolving to an unapproved host never becomes a candidate",
+    )
+
+
+def assert_rar_content_type_accepts_vnd_rar():
+    """Confirmed live 2026-08-08 against a real Pixeldrain-hosted .cbr file
+    (via getcomics.org/other-comics/white-sky-5-2026/): Pixeldrain serves it
+    with Content-Type: application/vnd.rar, not application/vnd.comicbook-rar
+    or application/octet-stream. application/vnd.rar is the IANA-registered
+    RAR media type; a real .cbr candidate must not be rejected for carrying
+    it."""
+    candidate = {
+        "download_url": "https://pixeldrain.com/api/file/liveverify?download",
+        "extension": ".cbr",
+        "provider_id": "rss_getcomics",
+    }
+    headers = {
+        "Content-Type": "application/vnd.rar",
+        "Content-Disposition": 'attachment; filename="White Sky 005 (2026).cbr"',
+        "Content-Length": "41673397",
+    }
+    row = {"provider_id": "rss_getcomics", "registry_state": "assist", "auto_search_allowed": True}
+    verdict = source_providers.direct_artifact_verdict(candidate, row, headers=headers)
+    assert_false(
+        "content_type_mismatch" in (verdict.get("block_reasons") or []),
+        f"application/vnd.rar must be an accepted .cbr content type: {verdict.get('block_reasons')}",
+    )
+
+
 def main():
     assert_direct_redirect_caps()
+    assert_pixeldrain_resolver_toggle_gates_getcomics()
+    assert_wetransfer_resolver_parsing()
+    assert_buzzheavier_resolver_parsing()
+    assert_getcomics_dls_shortener_resolution()
+    assert_rar_content_type_accepts_vnd_rar()
     providers = by_id(catalog.provider_candidates())
     seed_providers = {row["id"]: row for row in catalog.settings_seed_payload()["providers"]}
     assert_equal(set(catalog.PRODUCT_DIRECT_SOURCE_IDS), {

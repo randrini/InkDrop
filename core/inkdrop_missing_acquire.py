@@ -2367,6 +2367,18 @@ def record_inkdrop_queue_attempt(
     client_hashes = outcome.get("hashes")
     client_hash = outcome.get("client_hash") or outcome.get("hash") or (client_hashes[0] if isinstance(client_hashes, list) and client_hashes else None)
     client_id = outcome.get("client_id") or client_hash or nzo_id
+    # sab_add()/qbit_add() already compute and return this on every call --
+    # a locally-derived hash of title+URL, not credential-bearing -- but it
+    # was never captured here. When the download client's own confirmed job
+    # id isn't available yet (SABnzbd can accept an addurl request and
+    # return status=true before its async URL fetch resolves into a real
+    # nzo_id; a torrent can be visible with an empty hash moments after
+    # adding), this handoff_key is the only durable thing left for a later
+    # retry/reconciliation pass to look up -- the real download URL is
+    # deliberately never persisted. Root-caused 2026-08-08 against 15 real
+    # download_locator_missing failures across 11 unrelated series and both
+    # SABnzbd and qBittorrent.
+    handoff_key = outcome.get("handoff_key") or outcome.get("handoff_tag")
     attempt = {
         "source": source,
         "provider": candidate.get("indexer") or candidate.get("indexerId") or source,
@@ -2376,6 +2388,7 @@ def record_inkdrop_queue_attempt(
         "client_id": client_id,
         "client_hash": client_hash,
         "nzo_id": nzo_id,
+        "handoff_key": handoff_key,
         "category": outcome.get("category"),
         "save_path": outcome.get("save_path"),
         "download_url_hash": result_download_url_hash(candidate),
@@ -5250,9 +5263,13 @@ def result_quality(
         re.I,
     )
     repeated_volume_marker = len(re.findall(r"\b(?:v|vol(?:ume)?\.?)\s*0*\d+\b", match_raw, re.I)) > 1
-    exact_single_volume = bool(
+    # "structurally_exact_*" is the strict single-unit grammar check alone, with
+    # no dependency on unit_model already being resolved to that unit -- reused
+    # below both for the model-agrees case (exact_single_*, unchanged) and for
+    # the unresolved-model fallback that lets an unambiguous match through on
+    # its own strength.
+    structurally_exact_volume = bool(
         is_manga
-        and unit_model in {"volume", "pack", "mixed_volume_preferred"}
         and target_volume_match
         and not multi_volume_suffix
         and not repeated_volume_marker
@@ -5263,20 +5280,21 @@ def result_quality(
             re.I,
         )
     )
+    exact_single_volume = bool(structurally_exact_volume and unit_model in {"volume", "pack", "mixed_volume_preferred"})
     target_chapter_match = re.search(
         rf"^\s*{series_pattern}[\W_]+(?:chapter[\W_]+|ch\.?[\W_]+|c)0*{n}(?=[^0-9]|$)",
         match_raw,
         re.I,
     )
     target_chapter_suffix = match_raw[target_chapter_match.end() :] if target_chapter_match else ""
-    exact_single_chapter = bool(
+    structurally_exact_chapter = bool(
         is_manga
-        and (unit_model == "chapter" or mixed_chapter_target)
         and target_chapter_match
         # A chapter release may carry a "(v01)"-style collected-volume reference
         # tag alongside it -- that's not evidence of a multi-item pack.
         and _safe_exact_unit_suffix(target_chapter_suffix, allow_volume_reference=True)
     )
+    exact_single_chapter = bool(structurally_exact_chapter and (unit_model == "chapter" or mixed_chapter_target))
 
     # Single-issue matching stays strict; pack automation evaluates pack
     # coverage separately so useful ranges can fill multiple missing rows.
@@ -5284,8 +5302,10 @@ def result_quality(
     # volume, and likewise a single cNN release is not a pack when the trusted
     # target is that manga chapter.  The broad historical pack detector
     # intentionally still catches it for comics and for range/omnibus/collection
-    # targets.
-    if is_pack_result(raw) and not exact_single_volume and not exact_single_chapter:
+    # targets. Checked against the structural (model-independent) exactness so
+    # an unresolved-model series isn't rejected here before ever reaching the
+    # unresolved-model fallback below.
+    if is_pack_result(raw) and not structurally_exact_volume and not structurally_exact_chapter:
         return {"acceptable": False, "score": 72, "reason": "pack/range candidate", "english_confidence": english}
 
     if title.lower() == "saga":
@@ -5325,12 +5345,25 @@ def result_quality(
         # regex after strict validation rejects an ambiguous suffix.
         title_issue_patterns = volume_patterns if exact_single_volume else []
     elif is_manga:
-        return {
-            "acceptable": False,
-            "score": 0,
-            "reason": "manga unit model is not an explicit chapter or volume target",
-            "english_confidence": english,
-        }
+        # No learned or overridden unit model for this series yet -- but policy
+        # uncertainty about volume vs. chapter should not reject a release whose
+        # title is unambiguously and exclusively one exact single-unit match for
+        # the requested number (the same strict grammar the resolved-model
+        # branches above already require, just without needing the model to
+        # agree first). A real import of this candidate lets
+        # auto_set_unit_model() (inkdrop_completed_import.py) learn the model
+        # for next time, so this is a one-time fallback, not a standing gap.
+        if structurally_exact_volume and not structurally_exact_chapter:
+            title_issue_patterns = volume_patterns
+        elif structurally_exact_chapter and not structurally_exact_volume:
+            title_issue_patterns = chapter_patterns
+        else:
+            return {
+                "acceptable": False,
+                "score": 0,
+                "reason": "manga unit model is not an explicit chapter or volume target",
+                "english_confidence": english,
+            }
     else:
         title_issue_patterns = issue_patterns + volume_patterns + chapter_patterns
     if any(re.search(p, match_raw, re.I) for p in title_issue_patterns):
@@ -5346,10 +5379,27 @@ def result_quality(
             "acceptable": score >= 80,
             "score": min(100, score),
             "reason": "exact title and issue/volume match",
-            "source_unit": "chapter" if exact_single_chapter else "volume" if exact_single_volume else "issue",
+            "source_unit": "chapter" if structurally_exact_chapter else "volume" if structurally_exact_volume else "issue",
             "english_confidence": english,
         }
     return {"acceptable": False, "score": 45, "reason": "not an exact single issue/volume match", "english_confidence": english}
+
+
+FORMAT_PREFERENCE_TERMS = (
+    (re.compile(r"\.cbz\b", re.I), 500),
+    (re.compile(r"[(\[]digital[)\]]", re.I), 300),
+    (re.compile(r"\.cbr\b", re.I), -400),
+    (re.compile(r"\.rar\b", re.I), -400),
+)
+
+
+def format_preference_score(title):
+    """Keyword-weighted tiebreak among candidates that already passed every
+    identity/safety gate for the same wanted item -- never changes what's
+    acceptable, only which already-acceptable release wins when more than
+    one is available (e.g. a .cbz release over a same-issue .cbr scan)."""
+    text = str(title or "")
+    return sum(weight for pattern, weight in FORMAT_PREFERENCE_TERMS if pattern.search(text))
 
 
 def acceptable_result(title, issue_number, result, is_manga=False, unit_model=None, quality_rules=None, wanted_unit_type=None):
@@ -5377,6 +5427,7 @@ def choose_acceptable(title, issue_number, results, is_manga=False, unit_model=N
         eligible,
         key=lambda r: (
             protocol_rank(r.get("protocol")),
+            -format_preference_score(r.get("title")),
             -(r.get("seeders") or 0) if normalize_protocol_name(r.get("protocol")) == "torrent" else 0,
             r.get("size") or 0,
         ),
@@ -5420,6 +5471,35 @@ def sample_result(title, issue_number, result, is_manga=False, unit_model=None, 
         "source_unit": quality.get("source_unit"),
         "english_confidence": quality.get("english_confidence") or english_confidence(result),
     }
+
+
+MANUAL_REVIEW_CANDIDATE_SOURCE = "manual_review_candidate"
+
+
+def review_candidate_payload(result):
+    """The subset of a raw search result Manual Review's approve flow needs.
+
+    Mirrors what candidate_with_download_url()/approve_manual_review() (in
+    inkdrop_web.py) read off a candidate -- title, protocol, and whichever
+    download-locator field the protocol uses -- plus the same display fields
+    sample_result() already shows. Approving this later reuses the identical
+    acquire.qbit_add()/sab_add() send path an unattended grab would have used.
+    """
+    result = result if isinstance(result, dict) else {}
+    payload = {
+        "title": result.get("title"),
+        "protocol": result.get("protocol"),
+        "indexer": result.get("indexer"),
+        "indexerId": result.get("indexerId"),
+        "seeders": result.get("seeders"),
+        "downloadUrl": result.get("downloadUrl"),
+    }
+    if str(result.get("protocol") or "").lower() == "torrent":
+        payload["magnetUrl"] = result.get("magnetUrl")
+        payload["guid"] = result.get("guid")
+    else:
+        payload["download_url"] = result.get("download_url")
+    return {key: value for key, value in payload.items() if value is not None}
 
 
 def quality_block_attempt_status(blocker):
@@ -6585,6 +6665,12 @@ def main():
         found_any_results = False
         sent_issue = False
         budget_stopped = False
+        # Best-scoring rejected candidate seen this pass, if any -- carried into
+        # an ambiguous_results/manga_no_safe_result review item (when one gets
+        # written below) so Manual Review has a real candidate to approve
+        # instead of only a descriptive sample nobody can act on.
+        best_review_candidate = None
+        best_review_candidate_score = -1
         if collected_edition_range_hint_for_row(row):
             pack_candidates.extend(
                 collect_series_pack_candidates(
@@ -6635,7 +6721,7 @@ def main():
                 # a zero to expand from" gate -- so it does NOT return early;
                 # the original loop's behavior of trying the remaining
                 # planned queries in that case is preserved exactly.
-                nonlocal budget_stopped, sent_issue, found_any_results
+                nonlocal budget_stopped, sent_issue, found_any_results, best_review_candidate, best_review_candidate_score
                 executed_any = False
                 found_any_candidate = False
                 for query in queries_to_try:
@@ -6730,6 +6816,10 @@ def main():
                                 )
                                 if sample not in sample_results:
                                     sample_results.append(sample)
+                                sample_score = sample.get("score") or 0
+                                if sample_score > best_review_candidate_score and result.get("downloadUrl"):
+                                    best_review_candidate = result
+                                    best_review_candidate_score = sample_score
                                 add_pack_candidate(
                                     pack_candidates,
                                     acquire,
@@ -7025,6 +7115,12 @@ def main():
                     "sample": sample_results[:8],
                     **row_context,
                 }
+                if best_review_candidate is not None:
+                    # Surface the best-scoring rejected candidate as a real,
+                    # approvable identity -- otherwise this reason only ever
+                    # carries descriptive samples nobody can act on.
+                    item["candidate"] = review_candidate_payload(best_review_candidate)
+                    item["source"] = MANUAL_REVIEW_CANDIDATE_SOURCE
                 summary["review"].append({"reason": "ambiguous_results", **item})
                 record_inkdrop_queue_attempt(
                     row,
@@ -7065,6 +7161,9 @@ def main():
                     "note": "Manga-style query variants found no safe exact result in this source pass; the watched queue will keep trying other sources and scheduled retries.",
                     **row_context,
                 }
+                if best_review_candidate is not None:
+                    item["candidate"] = review_candidate_payload(best_review_candidate)
+                    item["source"] = MANUAL_REVIEW_CANDIDATE_SOURCE
                 summary["review"].append({"reason": "manga_no_safe_result", **item})
                 record_inkdrop_queue_attempt(
                     row,

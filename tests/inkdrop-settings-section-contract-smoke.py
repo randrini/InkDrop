@@ -21,7 +21,7 @@ SETTINGS_SECTIONS = {
     "media_management": {"min_items": 1, "provider_ids": {"media_management"}},
     "language": {"min_items": 1, "provider_ids": {"quality_language_rules"}},
     "indexers": {"min_items": 1, "provider_ids": {"prowlarr"}},
-    "download_clients": {"min_items": 1, "provider_ids": {"sabnzbd", "qbittorrent", "slskd", "comicscodes"}},
+    "download_clients": {"min_items": 1, "provider_ids": {"sabnzbd", "qbittorrent", "slskd", "comicscodes", "pixeldrain", "wetransfer"}},
     "import_lists": {"min_items": 1, "setting_prefixes": ("import_lists.",)},
     "connect": {"min_items": 1, "provider_ids": {"kavita", "komga"}},
     "metadata_files": {"min_items": 1, "setting_prefixes": ("metadata_files.",)},
@@ -59,7 +59,9 @@ def main():
     require("/api/inkdrop-settings/backup/restore" in web.HTML, "General settings should expose confirmed merge restore")
     require("window.InkDropDownloadClients?.mount?.(providerTarget)" in web.HTML, "Download Clients settings should mount the instance manager")
     require("inkdrop-download-clients-ui.js" in web.HTML, "Download Clients settings asset should be loaded")
-    require("Credentials, private paths, media, history, users, sessions, and active work are never included" in web.HTML, "Settings backup scope should be explicit")
+    require("Private paths, media, history, users, sessions, and active work are never included" in web.HTML, "Settings backup scope should be explicit")
+    require("Include credentials (encrypted)" in web.HTML, "Settings backup should expose the opt-in encrypted-credentials export")
+    require("/opds/v1.2/catalog.xml" in web.HTML, "Connect settings should surface the OPDS catalog URL")
     require("Send Anonymous Usage Data" not in web.HTML, "Settings must not expose an anonymous usage control")
     require("privacy.analytics" not in web.HTML, "Settings must not expose the dead analytics placeholder key")
     require("logging and analytics" not in web.HTML, "General settings wording must not advertise analytics")
@@ -140,10 +142,24 @@ def main():
             dc_payload_after = web.inkdrop_settings_public(sync=False, area="download_clients")
             dc_ids_after = {str(row.get("id") or "").strip().lower() for row in payload_items(dc_payload_after)[0]}
             require(
-                {"comicscodes", "slskd", "sabnzbd", "qbittorrent"}.issubset(dc_ids_after)
+                {"comicscodes", "slskd", "sabnzbd", "qbittorrent", "pixeldrain", "wetransfer"}.issubset(dc_ids_after)
                 and ("rss" in dc_ids_after or "rss_direct" in dc_ids_after),
                 f"saving one provider must not hide its untouched siblings, got {sorted(dc_ids_after)}",
             )
+
+            # Pixeldrain and WeTransfer are shared-file-host resolvers, not
+            # discovery sources -- their enable toggle must still persist
+            # like any other Download Clients row.
+            pixeldrain_before = next(row for row in payload_items(dc_payload_after)[0] if row.get("id") == "pixeldrain")
+            require(pixeldrain_before.get("enabled") is True, "Pixeldrain is enabled by default, matching today's always-on shared-file-host resolution")
+            pixeldrain_save = web.update_inkdrop_provider_settings({"id": "pixeldrain", "enabled": False})
+            require(pixeldrain_save.get("ok") is not False, f"saving Pixeldrain should succeed: {pixeldrain_save}")
+            dc_payload_final = web.inkdrop_settings_public(sync=False, area="download_clients")
+            pixeldrain_after = next(row for row in payload_items(dc_payload_final)[0] if row.get("id") == "pixeldrain")
+            require(pixeldrain_after.get("enabled") is False, "disabling Pixeldrain must actually persist")
+
+            wetransfer_before = next(row for row in payload_items(dc_payload_after)[0] if row.get("id") == "wetransfer")
+            require(wetransfer_before.get("enabled") is False, "WeTransfer defaults to disabled -- no source is wired to use it yet")
         finally:
             web.INKDROP_STATE_DB = old_db
 

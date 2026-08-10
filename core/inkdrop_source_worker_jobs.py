@@ -2082,6 +2082,35 @@ def _by_provider_id(rows):
     return out
 
 
+# Providers whose transport depends on a shared-file-host resolver having its
+# own enable/disable toggle under Download Clients (e.g. Pixeldrain), rather
+# than on their own registry state. Resolver enablement is looked up here
+# rather than threaded through provider_policy(), because the discovery
+# providers below hardcode their transport host allowlist in code -- a
+# policy-level shared_file_hosts override would be silently ignored.
+SHARED_FILE_HOST_RESOLVER_DEPENDENTS = {
+    "rss_getcomics": "pixeldrain",
+}
+
+
+def _rows_with_shared_file_host_resolver_gates(rows):
+    rows = list(rows or [])
+    rows_by_id = _by_provider_id(rows)
+    out = []
+    for row in rows:
+        provider_id = str((row or {}).get("provider_id") or "").strip().lower()
+        resolver_id = SHARED_FILE_HOST_RESOLVER_DEPENDENTS.get(provider_id)
+        if not resolver_id:
+            out.append(row)
+            continue
+        resolver_row = rows_by_id.get(resolver_id)
+        resolver_enabled = bool(resolver_row.get("enabled", True)) if resolver_row else True
+        row = dict(row)
+        row[f"{resolver_id}_resolver_enabled"] = resolver_enabled
+        out.append(row)
+    return out
+
+
 def _job_status(plan, fetch_plan):
     schedule_state = str((plan or {}).get("schedule_state") or "").strip()
     payload_mode = str((fetch_plan or {}).get("payload_mode") or "").strip()
@@ -2159,7 +2188,7 @@ def source_job_for_row(row, plan=None, wanted_item=None, *, limit=20):
 
 
 def source_jobs_from_registry(rows, wanted_item=None, *, include_operator=True, include_blocked=False, limit=20):
-    rows = list(rows or [])
+    rows = _rows_with_shared_file_host_resolver_gates(rows)
     rows_by_id = _by_provider_id(rows)
     plans = worker_plan.source_worker_plan_from_registry(rows, include_blocked=True)
     jobs = []

@@ -1275,6 +1275,10 @@ def annotation_group_shape(value):
         return True
     if re.fullmatch(r"of\s+0*\d{1,3}", normalized):
         return True
+    # Which physical print run this copy is from -- "(2nd Printing)", "(3rd
+    # Printing)" -- standard reprint-cover metadata, not a different title.
+    if re.fullmatch(r"\d+(?:st|nd|rd|th)\s+print(?:ing)?", normalized):
+        return True
     if re.fullmatch(r"[a-z0-9 ]*\bimprint\b", normalized):
         return True
     if PUBLICATION_TYPE_RE.fullmatch(normalized):

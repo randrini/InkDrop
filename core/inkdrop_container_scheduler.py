@@ -529,6 +529,38 @@ def build_jobs() -> list[ScheduledJob]:
             critical=False,
         ),
         ScheduledJob(
+            "scheduled-backup",
+            # This is a check-in cadence, not the backup interval itself --
+            # run_scheduled_backup() only actually creates an archive once
+            # INKDROP_BACKUP_INTERVAL_DAYS has elapsed since the last
+            # "scheduled"-labeled one (real archive timestamps on disk, no
+            # separate state file to lose track of across a container
+            # restart). Checking every few hours costs nothing when nothing
+            # is due and means a missed window from downtime is caught soon
+            # after the container comes back, not a full interval late.
+            int_env("INKDROP_SCHEDULER_BACKUP_CHECK_INTERVAL_SECONDS", 14400),
+            (
+                py,
+                "-B",
+                _script("inkdrop_backup_restore.py"),
+                "scheduled-backup",
+                "--interval-days",
+                str(bounded_int_env("INKDROP_BACKUP_INTERVAL_DAYS", 7, 1, 90)),
+                "--retention-days",
+                str(bounded_int_env("INKDROP_BACKUP_RETENTION_DAYS", 28, 1, 365)),
+            ),
+            initial_delay_seconds=900,
+            # The state database is a full-library SQLite file (tens of GB on
+            # a real production install) and this backs the whole thing up
+            # with sqlite3's own WAL-safe backup API, not a fast raw copy.
+            # Generously sized rather than measured yet -- revisit once a
+            # real production run has a wall-clock number to size this
+            # against, the same discipline the comicvine-scan job's own
+            # timeout comment documents.
+            timeout_seconds=bounded_int_env("INKDROP_SCHEDULER_BACKUP_TIMEOUT_SECONDS", 3600, 300, 21600),
+            critical=False,
+        ),
+        ScheduledJob(
             "completed-import-ebooks",
             int_env("INKDROP_SCHEDULER_COMPLETED_IMPORT_EBOOKS_INTERVAL_SECONDS", 3600),
             (py, "-B", _script("inkdrop_completed_import.py"), "--kind", "ebooks"),

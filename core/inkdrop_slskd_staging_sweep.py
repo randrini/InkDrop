@@ -83,6 +83,16 @@ STATE_DB = os.environ.get("INKDROP_STATE_DB") or str(
 # they match a wanted item), give them first crack at the per-run budget
 # instead of leaving them to chance alongside the rest of the backlog.
 PRIORITY_LOOKBACK_SECONDS = int(os.environ.get("INKDROP_SLSKD_SWEEP_PRIORITY_LOOKBACK_SECONDS", 7 * 24 * 3600))
+# Deliberately much longer than PRIORITY_LOOKBACK_SECONDS above: a
+# transfer_succeeded_missing_stage download_task is a *stuck* item still
+# waiting to be found, not a fresh candidate -- the older it is, the more it
+# needs the priority boost, not less. Confirmed live: the real Frieren case
+# this priority path exists for was already 7.07 days old (i.e. already past
+# a 7-day cutoff) by the time it was found stuck -- a same-length lookback
+# here would have excluded the exact case it was written to fix.
+MISSING_STAGE_PRIORITY_LOOKBACK_SECONDS = int(
+    os.environ.get("INKDROP_SLSKD_SWEEP_MISSING_STAGE_PRIORITY_LOOKBACK_SECONDS", 90 * 24 * 3600)
+)
 ARCHIVE_EXT = {".cbz", ".cbr", ".zip", ".pdf"}
 CHECKPOINT_MAX_AGE_SECONDS = int(os.environ.get("INKDROP_SLSKD_SWEEP_CHECKPOINT_MAX_AGE_SECONDS", 7 * 24 * 3600))
 # A folder of loose scan pages (no archive at all -- real example: a peer
@@ -293,12 +303,16 @@ def load_checkpoints(con):
 def load_priority_paths():
     """Real file paths SLSKD's own matching already confirmed as a staged,
     ready-to-import candidate for some wanted item -- these are worth trying
-    before spending budget on the rest of the (mostly unmatched) backlog."""
+    before spending budget on the rest of the (mostly unmatched) backlog.
+    Returns (exact_paths, priority_filenames): exact_paths are matched
+    directly against enumerate_files() output; priority_filenames are
+    matched by basename, for the case below where only a filename (not a
+    full local path) was ever recorded."""
     try:
         con = sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=10)
         con.execute("pragma busy_timeout = 10000")
     except sqlite3.OperationalError:
-        return set()
+        return set(), set()
     try:
         cutoff = time.time() - PRIORITY_LOOKBACK_SECONDS
         rows = con.execute(
@@ -309,8 +323,34 @@ def load_priority_paths():
             """,
             (cutoff,),
         ).fetchall()
+        # recover_completed_slskd_candidate_task() already ran the real
+        # identity/collision checks (exact unit binding, locator digest,
+        # filename-safety gate) before marking a task
+        # transfer_succeeded_missing_stage/import_ready -- this is the exact
+        # same "confirmed real, just needs the file found" signal as
+        # source_attempts.staged_file_ready above, on a different table.
+        # Missing it here was the actual reason a real, present, fully
+        # downloaded file (confirmed live: Frieren - Beyond Journey's End
+        # v08.cbz, on disk complete since the transfer finished) never got
+        # picked up -- it fell into the ~1,350-file unprioritized backlog
+        # and lost the random shuffle for 7 days straight. Only a full local
+        # path is stored for source_attempts above; download_tasks only ever
+        # has the bare filename (SLSKD's own "directory" field is the
+        # *remote* peer's path, not a local one), so this has to match by
+        # basename instead of exact path.
+        missing_stage_cutoff = time.time() - MISSING_STAGE_PRIORITY_LOOKBACK_SECONDS
+        task_rows = con.execute(
+            """
+            select local_path, raw_json from download_tasks
+            where lower(coalesce(download_client,'')) = 'slskd'
+              and status = 'transfer_succeeded_missing_stage'
+              and state = 'import_ready'
+              and coalesce(completed_at, started_at, 0) > ?
+            """,
+            (missing_stage_cutoff,),
+        ).fetchall()
     except sqlite3.OperationalError:
-        return set()
+        return set(), set()
     finally:
         con.close()
 
@@ -325,7 +365,18 @@ def load_priority_paths():
         path = raw.get("staged_path") or raw.get("dest_path") or raw.get("path") or raw.get("local_path")
         if isinstance(path, str) and path.startswith("/") and os.path.exists(path):
             paths.add(path)
-    return paths
+
+    filenames = set()
+    for local_path, raw_json in task_rows:
+        try:
+            raw = json.loads(raw_json or "{}")
+        except (ValueError, TypeError):
+            raw = {}
+        raw = raw if isinstance(raw, dict) else {}
+        name = local_path or raw.get("filename") or raw.get("source_path") or raw.get("title")
+        if isinstance(name, str) and os.path.basename(name).strip():
+            filenames.add(os.path.basename(name))
+    return paths, filenames
 
 
 def process_one_file(path):
@@ -490,17 +541,20 @@ def main():
     # unprocessed for 12+ hours on pure shuffle bad luck against a ~1,350-file
     # backlog dominated by non-matching content. This doesn't change what
     # counts as a match, only which known-good files get tried first.
-    priority_paths = load_priority_paths()
-    if priority_paths:
-        priority_items = [item for item in to_process if item[0] in priority_paths]
-        rest_items = [item for item in to_process if item[0] not in priority_paths]
+    priority_paths, priority_filenames = load_priority_paths()
+    if priority_paths or priority_filenames:
+        def _is_priority(item):
+            path = item[0]
+            return path in priority_paths or os.path.basename(path) in priority_filenames
+        priority_items = [item for item in to_process if _is_priority(item)]
+        rest_items = [item for item in to_process if not _is_priority(item)]
         to_process = priority_items + rest_items
 
     summary = {
         "total_files_on_disk": len(all_files),
         "skipped_via_checkpoint": skipped_via_checkpoint,
         "skipped_via_error_cooldown": skipped_via_error_cooldown,
-        "priority_candidates_this_run": len(priority_paths),
+        "priority_candidates_this_run": len(priority_paths) + len(priority_filenames),
         "candidates_to_process_this_run": len(to_process),
         "processed_this_run": 0,
         "imported_this_run": 0,

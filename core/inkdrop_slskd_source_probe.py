@@ -54,6 +54,11 @@ try:
 except Exception:
     inkdrop_artifact_acceptance = None
 
+try:
+    from core import inkdrop_completed_import
+except Exception:
+    inkdrop_completed_import = None
+
 
 CONFIG_DIR = inkdrop_runtime_config.config_dir()
 STATE_DIR = inkdrop_runtime_config.state_dir()
@@ -6308,6 +6313,42 @@ def title_prefix_subseries_conflict(filename, item, title_details):
     return ""
 
 
+def related_subseries_tail_conflict(filename, item):
+    """Reject a candidate that carries a different book's subtitle after the
+    matched series phrase (a bare "- The Tempest" tail on a base-series
+    target, for example).
+
+    title_prefix_subseries_conflict and leaf_title_conflict above only ever
+    look at words *before* the matched title -- neither catches a franchise
+    spin-off whose distinguishing subtitle comes right after an otherwise
+    exact title match, so SLSKD would score, download, and stage the wrong
+    book, and only completed_import's related_subseries_source_blocker
+    caught it -- after a full transfer and verification cycle was already
+    spent on it. Reuse that same, already-tuned guard here instead of
+    re-deriving its vocabulary, so the reject happens before a slot is
+    wasted, not after.
+    """
+    if not inkdrop_completed_import:
+        return ""
+    item = item if isinstance(item, dict) else {}
+    series_title = item_series_title(item) or item.get("series") or item.get("query")
+    if not series_title:
+        return ""
+    try:
+        return inkdrop_completed_import.related_subseries_source_blocker(
+            series_title,
+            filename,
+            issue_title=item.get("issue_title") or item.get("issueTitle") or item.get("title"),
+            issue_number=item.get("issue_number") or item.get("issue") or item.get("number"),
+            publisher=item.get("publisher") or item.get("watch_publisher") or item.get("series_publisher"),
+            # Pre-download, only the bare-word tail defense applies -- see
+            # the strict_bracket_tail docstring note at its call site.
+            strict_bracket_tail=False,
+        ) or ""
+    except Exception:
+        return ""
+
+
 def item_match_details(filename, item, candidate=None):
     ext = extension_for(filename)
     reasons = []
@@ -6389,6 +6430,14 @@ def item_match_details(filename, item, candidate=None):
             "score": -55,
             "reasons": reasons,
             "penalties": [leaf_conflict],
+        }
+    tail_conflict = related_subseries_tail_conflict(filename, item)
+    if tail_conflict:
+        return {
+            "matched": False,
+            "score": -55,
+            "reasons": reasons,
+            "penalties": [tail_conflict],
         }
     edition_conflict = collected_singleton_edition_conflict(filename, item)
     if edition_conflict:
@@ -9798,11 +9847,16 @@ def active_auto_grab_user_load():
 
 def select_auto_grab_rows(rows, max_grabs):
     if max_grabs <= 0:
-        return [], []
+        return [], [], []
     user_load = active_auto_grab_user_load()
+    with inkdrop_state.connect_read(INKDROP_STATE_DB) as con:
+        transfer_slot_cap = inkdrop_state.slskd_concurrent_transfer_cap(con)
+        active_transfer_slot_count = inkdrop_state.slskd_active_transfer_slot_count(con)
     selected = []
     skipped_user_load = []
+    skipped_slot_cap = []
     selected_by_user = {}
+    globally_selected_count = 0
     for review_id, entry, candidate in rows or []:
         hydrated_candidate, hydration_available = hydrate_series_handoff_candidate(candidate, review_id=review_id)
         if (candidate or {}).get("series_directory_handoff_token") and not hydration_available:
@@ -9814,6 +9868,30 @@ def select_auto_grab_rows(rows, max_grabs):
                 "score": (candidate or {}).get("score"),
                 "reason": "fresh in-memory SLSKD handoff routing is unavailable; re-probing before enqueue",
             }, entry or {}))
+            continue
+        # Global admission control: how many SLSKD transfers InkDrop itself
+        # currently has open, across every peer combined -- distinct from
+        # the per-user check below, which only protects one busy peer from
+        # being hammered. Checked first so a burst that's already fine on a
+        # per-user basis (many different peers) still can't blow past the
+        # total slot cap.
+        if active_transfer_slot_count + globally_selected_count >= transfer_slot_cap:
+            slot_wait = copy_item_context({
+                "review_id": str(review_id),
+                "series": (entry or {}).get("series"),
+                "issue": (entry or {}).get("issue"),
+                "filename": filename_leaf((candidate or {}).get("filename")),
+                "score": (candidate or {}).get("score"),
+                "active_transfer_slot_count": active_transfer_slot_count,
+                "globally_selected_count": globally_selected_count,
+                "limit": transfer_slot_cap,
+                "reason": f"InkDrop already has {active_transfer_slot_count + globally_selected_count} SLSKD transfer(s) open (cap {transfer_slot_cap})",
+            }, entry or {})
+            slot_wait["_slot_entry"] = dict(entry or {})
+            slot_candidate = dict(hydrated_candidate or candidate or {})
+            slot_candidate.setdefault("auto_grab", (candidate or {}).get("auto_grab") or {})
+            slot_wait["_slot_candidate"] = slot_candidate
+            skipped_slot_cap.append(slot_wait)
             continue
         username = normalize((hydrated_candidate or {}).get("username") or "")
         active_count = user_load.get(username, 0) if username else 0
@@ -9837,26 +9915,19 @@ def select_auto_grab_rows(rows, max_grabs):
             skipped_user_load.append(slot_wait)
             continue
         selected.append((review_id, entry, candidate))
+        globally_selected_count += 1
         if username:
             selected_by_user[username] = selected_count + 1
         if len(selected) >= max_grabs:
             break
-    return selected, skipped_user_load
+    return selected, skipped_user_load, skipped_slot_cap
 
 
-def _run_auto_grab_with_ephemeral_candidates(args, result):
-    live = bool(args.auto_grab_live)
-    dry_run = not live
-    max_grabs = max(0, min(int(args.auto_grab_max or 0), 10))
-    transfer_identity_reconciliation = (
-        reconcile_slskd_transfer_identity_tasks() if live else
-        {"ok": True, "reason": "dry_run", "recovered": 0, "retired": 0}
-    )
-    state = load_auto_grab_state()
-    base_state = json.loads(json.dumps(state))
-    rows, skipped_attempt_limits, skipped_bad_candidates = auto_grab_review_rows(result, state=state)
-    selected, skipped_user_load = select_auto_grab_rows(rows, max_grabs)
-    for skipped in skipped_user_load:
+def _persist_slot_wait_skips(skipped_rows, live):
+    """Turn each admission-control skip (per-user load or global transfer-
+    slot cap) into a durable waiting_for_slot handoff, so the candidate is
+    retried automatically once room opens up instead of just being dropped."""
+    for skipped in skipped_rows:
         slot_entry = skipped.pop("_slot_entry", None)
         slot_candidate = skipped.pop("_slot_candidate", None)
         if not isinstance(slot_entry, dict) or not isinstance(slot_candidate, dict):
@@ -9892,6 +9963,22 @@ def _run_auto_grab_with_ephemeral_candidates(args, result):
             skipped["slot_request_retry_at"] = slot_result.get("slot_request_retry_at")
         if not slot_result.get("ok"):
             skipped["reason"] = "SLSKD transfer slot wait could not be saved; automatic retry scheduled"
+
+
+def _run_auto_grab_with_ephemeral_candidates(args, result):
+    live = bool(args.auto_grab_live)
+    dry_run = not live
+    max_grabs = max(0, min(int(args.auto_grab_max or 0), 10))
+    transfer_identity_reconciliation = (
+        reconcile_slskd_transfer_identity_tasks() if live else
+        {"ok": True, "reason": "dry_run", "recovered": 0, "retired": 0}
+    )
+    state = load_auto_grab_state()
+    base_state = json.loads(json.dumps(state))
+    rows, skipped_attempt_limits, skipped_bad_candidates = auto_grab_review_rows(result, state=state)
+    selected, skipped_user_load, skipped_slot_cap = select_auto_grab_rows(rows, max_grabs)
+    _persist_slot_wait_skips(skipped_user_load, live)
+    _persist_slot_wait_skips(skipped_slot_cap, live)
     outcome = {
         "enabled": bool(args.auto_grab_live or args.auto_grab_dry_run),
         "transfer_identity_reconciliation": transfer_identity_reconciliation,
@@ -9904,6 +9991,8 @@ def _run_auto_grab_with_ephemeral_candidates(args, result):
         "bad_candidate_skipped": skipped_bad_candidates[:100],
         "user_load_skipped_count": len(skipped_user_load),
         "user_load_skipped": skipped_user_load[:100],
+        "slot_cap_skipped_count": len(skipped_slot_cap),
+        "slot_cap_skipped": skipped_slot_cap[:100],
         "unsafe_candidate_skipped_count": 0,
         "unsafe_candidate_skipped": [],
         "selected_count": len(selected),
@@ -9920,6 +10009,8 @@ def _run_auto_grab_with_ephemeral_candidates(args, result):
         auto_grab_audit("bad_candidate_skipped", live=live, dry_run=dry_run, **skipped)
     for skipped in skipped_user_load[:100]:
         auto_grab_audit("user_load_skipped", live=live, dry_run=dry_run, **skipped)
+    for skipped in skipped_slot_cap[:100]:
+        auto_grab_audit("slot_cap_skipped", live=live, dry_run=dry_run, **skipped)
     for review_id, entry, first_candidate in selected:
         entry = dict(entry or {})
         entry.setdefault("review_id", review_id)

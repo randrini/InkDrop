@@ -8,6 +8,8 @@ export type WantedRow = {
   id: string;
   revision?: number;
   series?: string;
+  series_id?: string;
+  issue_id?: string;
   issue_number?: string;
   status?: string;
   display_state?: string;
@@ -22,6 +24,18 @@ export type WantedRow = {
   display_source?: string;
   current_source?: string;
   source_key?: string;
+  // Already sent by the server (linked_entities is part of
+  // QUEUE_TABLE_ROW_KEYS, inherited into WANTED_TABLE_ROW_KEYS) -- carries
+  // the canonical series_id/issue_id/wanted_id identity Manual Search needs
+  // (rowLinkedEntities() in inkdrop_web.py reads this same shape).
+  linked_entities?: {
+    series_id?: string;
+    issue_id?: string;
+    unit_id?: string;
+    edition_id?: string;
+    wanted_id?: string;
+    queue_id?: string;
+  };
 };
 
 export type StateViewFilter = {

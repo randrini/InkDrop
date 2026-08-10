@@ -305,7 +305,14 @@ def exact_numbered_series_title(title_pattern, value):
     ))
 
 
-def related_subseries_source_blocker(series_title, source_path, issue_title=None, issue_number=None, publisher=None):
+def related_subseries_source_blocker(
+    series_title,
+    source_path,
+    issue_title=None,
+    issue_number=None,
+    publisher=None,
+    strict_bracket_tail=True,
+):
     pattern = title_words_pattern(series_title)
     if not pattern:
         return ""
@@ -423,7 +430,19 @@ def related_subseries_source_blocker(series_title, source_path, issue_title=None
                 publisher=publisher,
             ):
                 continue
-            if re.search(r"[\[(][^\[\]()]+[\])]", tail_text):
+            # This blanket "any unrecognized bracket group is untrusted" rule
+            # is deliberately strict for its original, post-download call
+            # site: by the time it runs there, exactly one candidate already
+            # survived every other SLSKD-side match/score heuristic, so a
+            # false reject there just means re-attempting. Applied to every
+            # not-yet-downloaded candidate during scoring, the same rule
+            # rejects real scanlator/scene/printing-variant tags -- ordinary
+            # noise SLSKD's own matching is intentionally tolerant of -- on
+            # series that never even had a competing wrong-subseries file.
+            # The bare-word check below (a real, un-bracketed title word in
+            # the tail) is this guard's actual defense against a franchise
+            # spin-off; skip only this narrower bracket rule pre-download.
+            if strict_bracket_tail and re.search(r"[\[(][^\[\]()]+[\])]", tail_text):
                 return "related subseries or untrusted publication suffix"
         suspicious = []
         for index, word in enumerate(words):

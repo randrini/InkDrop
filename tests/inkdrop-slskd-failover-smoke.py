@@ -1266,6 +1266,180 @@ def durable_manga_volume_binding_smoke():
         )
 
 
+def _seed_global_slot_cap_scenario(db, *, cap):
+    """Two distinct series/units on purpose -- an unrelated "sibling active
+    owner" guard would otherwise also block queue:new once queue:existing
+    has an active task, muddying what's actually being tested here (the
+    global slot cap, not per-unit duplicate ownership)."""
+    seed_queue(db, queue_id="queue:existing")
+    with inkdrop_state.connect(db) as con:
+        con.execute(
+            "insert into series(id,title,media_type,monitored,created_at,updated_at,raw_json) values(?,?,?,?,?,?,?)",
+            ("series:2", "Series Two", "comic", 1, 100.0, 100.0, "{}"),
+        )
+        con.execute(
+            "insert into issues(id,series_id,issue_number,normalized_number,monitored,created_at,updated_at,raw_json) values(?,?,?,?,?,?,?,?)",
+            ("issue:2", "series:2", "12", "12", 1, 100.0, 100.0, json.dumps({"unit_type": "issue", "issue_number": "12"})),
+        )
+        con.execute(
+            "insert into wanted_items(id,series_id,issue_id,status,created_at,updated_at,raw_json) values(?,?,?,?,?,?,?)",
+            ("wanted:2", "series:2", "issue:2", "wanted", 100.0, 100.0, "{}"),
+        )
+        con.execute(
+            "insert into queue_items(id,wanted_id,series_id,issue_id,state,current_source,active,created_at,updated_at,raw_json) values(?,?,?,?,?,?,?,?,?,?)",
+            (
+                "queue:new", "wanted:2", "series:2", "issue:2", "queued", None, 1, 100.0, 100.0,
+                json.dumps({"series": "Series Two", "issue": "12", "queue_identity": "series:2", "unit_type": "issue", "issue_number": "12"}),
+            ),
+        )
+        con.commit()
+    with inkdrop_state.connect(db) as con:
+        inkdrop_state.sync_settings(db, settings=[{
+            "key": inkdrop_state.SLSKD_CONCURRENT_TRANSFER_CAP_SETTING_KEY,
+            "scope": "automation",
+            "label": "SLSKD Concurrent Transfer Cap",
+            "value": cap,
+            "description": "test",
+        }])
+        con.execute(
+            "update app_settings set source='user' where key=?",
+            (inkdrop_state.SLSKD_CONCURRENT_TRANSFER_CAP_SETTING_KEY,),
+        )
+        con.commit()
+
+
+_GLOBAL_SLOT_CAP_ENTRY = {
+    "review_id": "review:new-candidate",
+    "series": "Series Two",
+    "issue": "12",
+    "query": "Series Two 12",
+    "autopilot_queue": True,
+    "autopilot_queue_key": "queue:new",
+    "queue_identity": "series:2",
+}
+_GLOBAL_SLOT_CAP_CANDIDATE = {
+    "filename": "Series 12.cbz",
+    "username": "some-other-peer",
+    "size": 5000000,
+    "score": 91,
+    "auto_grab": {"verdict": "auto_grab_safe"},
+}
+
+
+def auto_grab_global_transfer_slot_cap_defers_at_cap_smoke():
+    """The global SLSKD concurrent-transfer cap must actually stop a new
+    grab from being enqueued once InkDrop already has `cap` transfers open
+    -- not just report a number. slskd_enqueue_candidate must never be
+    called while at cap, and the candidate must land in a durable
+    waiting_for_slot state so it retries automatically instead of being
+    silently dropped."""
+    with tempfile.TemporaryDirectory(prefix="inkdrop-slskd-global-slot-cap-at-cap-") as temp:
+        db = Path(temp) / "state.sqlite3"
+        _seed_global_slot_cap_scenario(db, cap=1)
+        with inkdrop_state.connect(db) as con:
+            con.execute(
+                "insert into download_tasks(id,queue_id,source,status,state,started_at,updated_at,raw_json)"
+                " values(?,?,?,?,?,?,?,?)",
+                ("task:existing", "queue:existing", "slskd", "downloading", "downloading", 100.0, 100.0, "{}"),
+            )
+            con.commit()
+        entry, candidate = _GLOBAL_SLOT_CAP_ENTRY, _GLOBAL_SLOT_CAP_CANDIDATE
+        original_db = probe.INKDROP_STATE_DB
+        original = {}
+        names = (
+            "load_auto_grab_state", "save_auto_grab_state", "auto_grab_review_rows",
+            "active_auto_grab_user_load", "auto_grab_audit", "log", "slskd_enqueue_candidate",
+        )
+        for name in names:
+            original[name] = getattr(probe, name)
+        enqueue_calls = []
+        try:
+            probe.INKDROP_STATE_DB = db
+            probe.load_auto_grab_state = lambda: {}
+            probe.save_auto_grab_state = lambda state: None
+            probe.auto_grab_review_rows = lambda result, state=None: ([
+                (entry["review_id"], entry, candidate)
+            ], [], [])
+            probe.active_auto_grab_user_load = lambda: {}
+            probe.auto_grab_audit = lambda event, **payload: None
+            probe.log = lambda *args, **kwargs: None
+            probe.slskd_enqueue_candidate = lambda cand, dry_run: enqueue_calls.append(cand) or {"transferred": []}
+            outcome_at_cap = probe._run_auto_grab_with_ephemeral_candidates(
+                SimpleNamespace(auto_grab_live=True, auto_grab_dry_run=False, auto_grab_max=1),
+                {"items": {entry["review_id"]: entry}},
+            )
+        finally:
+            probe.INKDROP_STATE_DB = original_db
+            for name, value in original.items():
+                setattr(probe, name, value)
+        require(
+            outcome_at_cap.get("slot_cap_skipped_count") == 1,
+            f"a candidate at an already-full global cap must be deferred, not selected: {outcome_at_cap}",
+        )
+        require(outcome_at_cap.get("selected_count") == 0, f"nothing should be selected while at cap: {outcome_at_cap}")
+        require(not enqueue_calls, f"slskd_enqueue_candidate must never be called while at the global cap: {enqueue_calls}")
+        skipped_row = outcome_at_cap["slot_cap_skipped"][0]
+        require(
+            skipped_row.get("status") == "waiting_for_slot",
+            f"a slot-cap skip must persist as a real, retryable waiting_for_slot record, not a silent drop: {skipped_row}",
+        )
+        require(
+            "cap 1" in (skipped_row.get("reason") or ""),
+            f"the skip reason should explain the actual cap that was hit: {skipped_row}",
+        )
+
+
+def auto_grab_global_transfer_slot_cap_allows_with_room_smoke():
+    """Positive control for the global slot cap, on its own fresh DB so it
+    can't be affected by anything the at-cap scenario's waiting_for_slot
+    handoff wrote: with no existing SLSKD transfers open, the identical
+    shape of candidate must proceed all the way to the real enqueue call --
+    proves the gate isn't unconditionally blocking every candidate
+    regardless of capacity."""
+    with tempfile.TemporaryDirectory(prefix="inkdrop-slskd-global-slot-cap-with-room-") as temp:
+        db = Path(temp) / "state.sqlite3"
+        _seed_global_slot_cap_scenario(db, cap=1)
+        entry, candidate = _GLOBAL_SLOT_CAP_ENTRY, _GLOBAL_SLOT_CAP_CANDIDATE
+        original_db = probe.INKDROP_STATE_DB
+        original = {}
+        names = (
+            "load_auto_grab_state", "save_auto_grab_state", "auto_grab_review_rows",
+            "active_auto_grab_user_load", "auto_grab_audit", "log", "slskd_enqueue_candidate",
+            "slskd_existing_download",
+        )
+        for name in names:
+            original[name] = getattr(probe, name)
+        enqueue_calls = []
+        try:
+            probe.INKDROP_STATE_DB = db
+            probe.load_auto_grab_state = lambda: {}
+            probe.save_auto_grab_state = lambda state: None
+            probe.auto_grab_review_rows = lambda result, state=None: ([
+                (entry["review_id"], entry, candidate)
+            ], [], [])
+            probe.active_auto_grab_user_load = lambda: {}
+            probe.auto_grab_audit = lambda event, **payload: None
+            probe.log = lambda *args, **kwargs: None
+            probe.slskd_enqueue_candidate = lambda cand, dry_run: enqueue_calls.append(cand) or {"transferred": []}
+            probe.slskd_existing_download = lambda row, *, strict_path=False: None
+            outcome_with_room = probe._run_auto_grab_with_ephemeral_candidates(
+                SimpleNamespace(auto_grab_live=True, auto_grab_dry_run=False, auto_grab_max=1),
+                {"items": {entry["review_id"]: entry}},
+            )
+        finally:
+            probe.INKDROP_STATE_DB = original_db
+            for name, value in original.items():
+                setattr(probe, name, value)
+        require(
+            outcome_with_room.get("slot_cap_skipped_count") == 0,
+            f"with room available the candidate must not be deferred: {outcome_with_room}",
+        )
+        require(
+            enqueue_calls,
+            f"with room available the candidate must reach the real slskd_enqueue_candidate call: {outcome_with_room}",
+        )
+
+
 def auto_grab_slot_request_bridge_smoke():
     with tempfile.TemporaryDirectory(prefix="inkdrop-slskd-slot-bridge-") as temp:
         db = Path(temp) / "state.sqlite3"
@@ -2032,7 +2206,7 @@ def direct_failover_smoke(with_alternate, delete_failure=False):
         probe.load_auto_grab_state = lambda: {}
         probe.save_auto_grab_state = lambda state: None
         probe.auto_grab_review_rows = lambda result, state=None: ([("review:1", entry, first)], [], [])
-        probe.select_auto_grab_rows = lambda rows, max_grabs: (rows, [])
+        probe.select_auto_grab_rows = lambda rows, max_grabs: (rows, [], [])
         probe.auto_grab_attempt_allowed = lambda state, review_id, candidate: (True, "", candidate["filename"])
         probe.bad_candidate_match = lambda review_id, candidate: None
         probe.mark_manual_source_waiting_local = lambda *args, **kwargs: {"record": {"review_id": "review:1"}}
@@ -2179,7 +2353,7 @@ def verified_before_handoff_smoke():
             probe.load_auto_grab_state = lambda: {}
             probe.save_auto_grab_state = lambda state: None
             probe.auto_grab_review_rows = lambda result, state=None: ([(entry["review_id"], entry, candidate)], [], [])
-            probe.select_auto_grab_rows = lambda rows, max_grabs: (rows, [])
+            probe.select_auto_grab_rows = lambda rows, max_grabs: (rows, [], [])
             probe.auto_grab_attempt_allowed = lambda state, review_id, row: (True, "", "candidate:1")
             probe.bad_candidate_match = lambda review_id, row: None
             probe.mark_manual_source_waiting_local = lambda *args, **kwargs: {
@@ -3769,6 +3943,8 @@ def main():
     durable_slot_request_lifecycle_smoke()
     durable_manga_volume_binding_smoke()
     auto_grab_slot_request_bridge_smoke()
+    auto_grab_global_transfer_slot_cap_defers_at_cap_smoke()
+    auto_grab_global_transfer_slot_cap_allows_with_room_smoke()
     staged_file_path_durability_smoke()
     stale_staged_match_memory_revalidation_smoke()
     late_event_fence_smoke()

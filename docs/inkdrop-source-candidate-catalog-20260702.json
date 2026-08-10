@@ -1111,8 +1111,8 @@
       "policy": {
         "rights_gate": "provider_specific_manual_or_allowlist_required",
         "direct_url_policy": "getcomics_detail_to_pixeldrain_header_verified_only",
-        "allowed_extensions": [".cbz", ".zip"],
-        "allowed_content_types": ["application/zip", "application/vnd.comicbook+zip", "application/octet-stream"],
+        "allowed_extensions": [".cbz", ".cbr", ".zip"],
+        "allowed_content_types": ["application/zip", "application/vnd.comicbook+zip", "application/vnd.comicbook-rar", "application/octet-stream"],
         "feed_detail_allowed_hosts": ["getcomics.org", "www.getcomics.org"],
         "shared_file_hosts": ["pixeldrain"],
         "transport_allowed_hosts": ["pixeldrain.com", "www.pixeldrain.com"],
@@ -1121,7 +1121,7 @@
         "requires_manual_confirm": true,
         "packs_allowed": false,
         "max_detail_pages": 5,
-        "max_probe_links": 3,
+        "max_probe_links": 5,
         "probe_method": "HEAD",
         "max_redirects": 2,
         "command_timeout_seconds": 120

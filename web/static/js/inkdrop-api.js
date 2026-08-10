@@ -202,6 +202,14 @@
         retry_after: Number(payload?.retry_after || response.headers.get("Retry-After") || 0),
         fields: payload?.fields || payload?.validation_fields || null,
         request_id: payload?.request_id || requestId,
+        // Endpoints that return their own richer failure shape nested under
+        // result (settings restore's plan/credentials breakdown, for one)
+        // had that detail silently discarded here -- detail/code/fields
+        // above only ever cover a flat {detail, code, fields} envelope, so
+        // a caller with a specific, better message to show (see
+        // describeRestoreFailure()) had no way to reach it and fell back to
+        // the raw HTTP status text ("Bad Request") every time.
+        payload,
       });
       error.retryAfter = error.retry_after;
       if (response.status === 401) window.dispatchEvent(new CustomEvent("inkdrop:session-expired", {detail: {path: location.hash || location.pathname}}));

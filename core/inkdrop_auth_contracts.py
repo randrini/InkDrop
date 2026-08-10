@@ -75,6 +75,12 @@ _add("POST", {
     "/api/inkdrop-settings/backup/restore",
 }, "settings_restore", "admin", admin=True, destructive=True, high_impact=True)
 _add("POST", {
+    "/api/inkdrop-settings/backup/archives/create",
+}, "full_backup_create", "admin", admin=True, high_impact=True)
+_add("POST", {
+    "/api/inkdrop-settings/backup/archives/delete",
+}, "full_backup_delete", "admin", admin=True, destructive=True, high_impact=True)
+_add("POST", {
     "/api/library-adoption/plan",
 }, "library_adoption_plan", "admin", admin=True, high_impact=True)
 _add("POST", {

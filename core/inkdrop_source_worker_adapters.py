@@ -49,6 +49,8 @@ SUWAYOMI_API_BASE = str(os.environ.get("INKDROP_SUWAYOMI_API_BASE_URL") or "").s
 GETCOMICS_FEED_URL = "https://getcomics.org/feed/"
 GETCOMICS_DISCOVERY_HOSTS = ("getcomics.org", "www.getcomics.org")
 PIXELDRAIN_TRANSPORT_HOSTS = ("pixeldrain.com", "www.pixeldrain.com")
+WETRANSFER_TRANSPORT_HOSTS = ("wetransfer.com", "www.wetransfer.com")
+BUZZHEAVIER_TRANSPORT_HOSTS = ("buzzheavier.com", "www.buzzheavier.com")
 COMICSCODES_FEED_URL = "https://comics.codes/feed/"
 COMICSCODES_LIST_URLS = (
     "https://comics.codes/all-comics-list/",
@@ -3526,6 +3528,62 @@ def direct_file_probe_request(url, index, method="HEAD", allowed_hosts=None):
     )
 
 
+def wetransfer_resolve_request(url, index=0):
+    """Build the API request that resolves a wetransfer.com share URL to a
+    real downloadable file, per WeTransfer's documented transfer-download
+    API (transfer_id + security_hash from the share URL, no auth). Returns
+    None for anything that doesn't parse as a WeTransfer share URL.
+
+    NOTE: this endpoint shape has not been exercised against a live
+    WeTransfer share -- no InkDrop source surfaces WeTransfer links today,
+    so there was nothing real to verify it against. Treat as unverified
+    until confirmed against an actual share.
+    """
+    transfer_id, security_hash = providers._wetransfer_transfer_id_and_hash(url)
+    if not transfer_id or not security_hash:
+        return None
+    return _request(
+        f"wetransfer_resolve_{index}",
+        "POST",
+        f"https://wetransfer.com/api/v4/transfers/{transfer_id}/download",
+        json_body={"security_hash": security_hash, "intent": "entire_transfer"},
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        allowed_hosts=WETRANSFER_TRANSPORT_HOSTS,
+        purpose="resolve_wetransfer_share_link",
+    )
+
+
+def buzzheavier_download_request(url, index=0):
+    """Build the request that resolves a buzzheavier.com share URL to a
+    real downloadable file. There is no documented "resolve this share
+    link" API -- Buzzheavier's official API covers uploading/managing your
+    own files, not fetching someone else's share. This mirrors the request
+    shape a real page load actually sends: a GET to <file_id>/download
+    carrying the htmx-style headers (hx-request, hx-current-url, referer)
+    that a live page visit would attach, since a bare/header-less request
+    to that same path draws a Cloudflare bot challenge.
+
+    NOTE: confirmed the header'd request reaches the application layer
+    (a made-up file_id returns a clean 404, not a challenge) but this has
+    not been exercised against a real, valid Buzzheavier share -- no
+    InkDrop source surfaces Buzzheavier links today, so there was nothing
+    real to verify it against. Treat as unverified until confirmed against
+    an actual share.
+    """
+    file_id = providers._buzzheavier_file_id(url)
+    if not file_id:
+        return None
+    share_url = f"https://buzzheavier.com/{file_id}"
+    return _request(
+        f"buzzheavier_resolve_{index}",
+        "GET",
+        f"{share_url}/download",
+        headers={"hx-request": "true", "hx-current-url": share_url, "referer": share_url},
+        allowed_hosts=BUZZHEAVIER_TRANSPORT_HOSTS,
+        purpose="resolve_buzzheavier_share_link",
+    )
+
+
 def direct_file_probe_head_request(url, index):
     return direct_file_probe_request(url, index, method="HEAD")
 
@@ -3802,11 +3860,23 @@ def adapter_fetch_plan(row, plan, wanted_item=None, limit=20):
             out["payload_mode"] = "configuration_required"
             out["reason"] = "missing_prowlarr_base_url"
     elif adapter_family == "indexer_discovery":
+        # Reuses prowlarr_search_requests() -- the exact same request builder
+        # the prowlarr_indexer branch above uses -- so it must reuse that
+        # branch's clean-zero query-variant expansion too, the same way. This
+        # adapter family (BitMagnet, Academic Torrents, local DHT) previously
+        # stopped after its first, single planned query: a zero-result
+        # response never triggered a later spelling variant the way
+        # prowlarr_indexer's own results already do, so InkDrop could report
+        # "not found" while a variant later in the pool held real supply.
         requests = prowlarr_search_requests(row, plan, wanted_item, limit=limit)
+        expansion_requests = prowlarr_search_expansion_requests(row, plan, wanted_item, limit=limit) if requests else []
         if requests:
-            out["payload_mode"] = "prowlarr_multi_search" if len(requests) > 1 else "single_payload"
+            out["payload_mode"] = "prowlarr_multi_search" if len(requests) > 1 or expansion_requests else "single_payload"
             out["requests"].extend(requests)
             out["query_variants"] = [request.get("params", {}).get("query") for request in requests]
+            if expansion_requests:
+                out["expansion_requests"] = expansion_requests
+                out["estimated_request_count"] = len(requests) + len(expansion_requests)
         else:
             out["payload_mode"] = "configuration_required"
             out["reason"] = "missing_indexer_discovery_base_url"
@@ -5813,12 +5883,20 @@ def fetch_payloads(row, plan, wanted_item=None, *, http_get=None, tool_runner=No
             limit=max_probe_links,
         )
         seen_probe_urls = set()
+        combined.setdefault("resolved_redirect_urls", {})
         for candidate in probe_candidates:
             probe_url = str(candidate.get("download_url") or "").strip()
             probe_hash = providers.url_hash(probe_url)
             if not probe_url or probe_hash in seen_probe_urls:
                 continue
-            if not _url_host_allowed(probe_url, transport_hosts):
+            is_direct_transport = _url_host_allowed(probe_url, transport_hosts)
+            # GetComics (and other rss_detail_probe_feed sources) wrap every
+            # mirror link -- including Pixeldrain -- behind a same-site
+            # redirect shortener, so the raw href never carries an allowed
+            # transport host. Resolve that one hop before giving up on it,
+            # instead of rejecting on the pre-redirect host.
+            is_discovery_redirect = (not is_direct_transport) and _url_host_allowed(probe_url, discovery_hosts)
+            if not is_direct_transport and not is_discovery_redirect:
                 _record_partial_fetch_error(
                     result,
                     combined,
@@ -5828,12 +5906,16 @@ def fetch_payloads(row, plan, wanted_item=None, *, http_get=None, tool_runner=No
                 )
                 continue
             seen_probe_urls.add(probe_hash)
+            probe_index = len(seen_probe_urls) - 1
+            resolve_allowed_hosts = transport_hosts if is_direct_transport else list(discovery_hosts) + list(transport_hosts)
             probe_request = direct_file_probe_request(
                 probe_url,
-                len(seen_probe_urls) - 1,
+                probe_index,
                 method=probe_method,
-                allowed_hosts=transport_hosts,
+                allowed_hosts=resolve_allowed_hosts,
             )
+            if is_discovery_redirect:
+                probe_request["max_redirects"] = max(1, min(providers.int_value(policy.get("max_redirects"), 2), 5))
             probe_response, probe_error = _safe_response_payload(http_get, probe_request)
             result["requests_made"].append(probe_request)
             if probe_error:
@@ -5845,9 +5927,53 @@ def fetch_payloads(row, plan, wanted_item=None, *, http_get=None, tool_runner=No
                     stage="rss_detail_probe_head",
                 )
                 continue
-            combined["probe_headers"][probe_hash] = probe_response["headers"]
-            combined["probe_status"][probe_hash] = probe_response.get("status")
-            result["response_headers"][f"probe_{len(seen_probe_urls) - 1}"] = probe_response["headers"]
+            if not is_discovery_redirect:
+                combined["probe_headers"][probe_hash] = probe_response["headers"]
+                combined["probe_status"][probe_hash] = probe_response.get("status")
+                result["response_headers"][f"probe_{probe_index}"] = probe_response["headers"]
+                continue
+            # The redirect landed somewhere -- confirm it's actually an
+            # allowed transport host before trusting it, then convert the
+            # human share-page URL to the real downloadable endpoint the
+            # same way a direct Pixeldrain link would be (that conversion
+            # is what makes the follow-up probe below fetch real file
+            # evidence instead of an HTML landing page).
+            redirect_target = str(probe_response["headers"].get("X-InkDrop-Final-Url") or "").strip() or probe_url
+            if not _url_host_allowed(redirect_target, transport_hosts):
+                _record_partial_fetch_error(
+                    result,
+                    combined,
+                    {"request_id": "rss_detail_probe_head", "url": redirect_target},
+                    "disallowed_transport_host",
+                    stage="rss_detail_probe_head",
+                )
+                continue
+            resolved_download_url = providers._pixeldrain_direct_download_url(redirect_target) or redirect_target
+            resolved_hash = providers.url_hash(resolved_download_url)
+            if resolved_hash in seen_probe_urls:
+                continue
+            seen_probe_urls.add(resolved_hash)
+            transport_probe_request = direct_file_probe_request(
+                resolved_download_url,
+                len(seen_probe_urls) - 1,
+                method=probe_method,
+                allowed_hosts=transport_hosts,
+            )
+            transport_response, transport_error = _safe_response_payload(http_get, transport_probe_request)
+            result["requests_made"].append(transport_probe_request)
+            if transport_error:
+                _record_partial_fetch_error(
+                    result,
+                    combined,
+                    transport_probe_request,
+                    transport_error,
+                    stage="rss_detail_probe_head",
+                )
+                continue
+            combined["probe_headers"][resolved_hash] = transport_response["headers"]
+            combined["probe_status"][resolved_hash] = transport_response.get("status")
+            combined["resolved_redirect_urls"][probe_hash] = resolved_download_url
+            result["response_headers"][f"probe_{len(seen_probe_urls) - 1}"] = transport_response["headers"]
         result["payloads"].append(combined)
         result["ok"] = True
         return result

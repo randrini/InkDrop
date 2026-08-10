@@ -27,6 +27,7 @@ dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 gaps = (ROOT / "docs/inkdrop/UI_BACKEND_GAPS.md").read_text(encoding="utf-8")
 bootstrap = (ROOT / "web/static/js/inkdrop-operational-bootstrap.js").read_text(encoding="utf-8")
 about = (ROOT / "web/static/js/inkdrop-version-about.js").read_text(encoding="utf-8")
+wanted_tsx = (ROOT / "web/frontend/src/sections/Wanted.tsx").read_text(encoding="utf-8")
 
 checks = {
     "release history keeps ten detailed updates and leaves older notes on GitHub": "DETAILED_RELEASE_LIMIT = 10" in about
@@ -167,9 +168,17 @@ checks = {
     and '["Enter", " "].includes(event.key)' in web,
     "default sort status is not duplicated": 'if (sort.key === "endpoint") return null;' in web,
     "no placeholder columns": "Column selection is not exposed yet" not in web,
-    "wanted batch search stays visible": 'appendArrTableButton(left, "Search Selected"' in web
-    and '.arr-table-controlbar[data-arr-selected-count="0"] [data-arr-requires-selection="1"]' in css
-    and "display: inline-flex" in css,
+    # Search Selected / Manual Search moved into Wanted.tsx (the React
+    # island owns row selection now -- the vanilla toolbar that used to
+    # create these buttons is unreachable for this view, confirmed live
+    # against a running instance). The button always renders; disabled state
+    # comes from the native `disabled` attribute driven by selectedCount, not
+    # a CSS selector keyed on a vanilla data-attribute that no longer exists
+    # on these buttons.
+    "wanted batch search stays visible": '"Search Selected"' in wanted_tsx
+    and '"Manual Search"' in wanted_tsx
+    and "disabled={selectedCount < 1" in wanted_tsx
+    and "disabled={selectedCount !== 1}" in wanted_tsx,
     "wanted rows expose queue and open with a labeled evidence drawer": 'if (view === "wanted") {' in web
     and 'label: "Queue"' in web
     and 'label: "Open"' in web

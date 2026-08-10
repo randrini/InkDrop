@@ -780,6 +780,23 @@ def init_schema_uncached(con):
         );
         create index if not exists idx_manga_companion_jobs_due
             on manga_companion_jobs(status, next_retry_at, lease_expires_at, created_at);
+        create table if not exists collected_edition_links (
+            id text primary key,
+            collection_series_id text not null,
+            source_series_id text not null,
+            source_issue_start text not null,
+            source_issue_end text not null,
+            discovery_source text not null,
+            status text not null default 'linked',
+            created_at real not null,
+            updated_at real not null,
+            raw_json text,
+            unique(collection_series_id, source_series_id),
+            foreign key(collection_series_id) references series(id),
+            foreign key(source_series_id) references series(id)
+        );
+        create index if not exists idx_collected_edition_links_source
+            on collected_edition_links(source_series_id) where status='linked';
         create table if not exists queue_items (
             id text primary key,
             wanted_id text,
@@ -1301,6 +1318,11 @@ def init_schema_uncached(con):
     # Older additive schemas can have import_results without the source-attempt
     # linkage. Reconcile the dependency before schema-17 creates its focus index.
     ensure_columns(con, "import_results", {"source_attempt_id": "text"})
+    # Nullable, no default: a row that predates this upgrade reads back as
+    # NULL and cleanup_expired_import_claims() falls back to started_at for
+    # it, the same as before this column existed -- see
+    # trg_download_tasks_progress_at_* below for what actually maintains it.
+    ensure_columns(con, "download_tasks", {"progress_at": "real"})
     history_bucket_marker = con.execute(
         "select value from schema_meta where key='history_bucket_v2_complete'"
     ).fetchone()
@@ -1415,6 +1437,34 @@ def init_schema_uncached(con):
                 else 'diagnostic' end
             where id=new.id;
         end;
+
+        -- cleanup_expired_import_claims() needs to tell "this import is
+        -- genuinely still working" apart from "something touched this row's
+        -- updated_at without any real progress happening" (PASS18-CORE-P2-01
+        -- was the opposite failure mode: a liveness check too coarse to ever
+        -- exempt a fresh row). progress_at only moves when state, status, or
+        -- lifecycle_phase actually change value -- a routine heartbeat write
+        -- that re-sets the same values leaves it untouched, so a genuinely
+        -- stuck import can no longer hide behind unrelated polling. This
+        -- covers every download_tasks writer automatically; nothing in the
+        -- many call sites that update this table needs to know it exists.
+        create trigger if not exists trg_download_tasks_progress_at_insert
+        after insert on download_tasks
+        begin
+            update download_tasks
+            set progress_at=coalesce(new.updated_at, new.started_at, new.completed_at)
+            where id=new.id and progress_at is null;
+        end;
+        create trigger if not exists trg_download_tasks_progress_at_update
+        after update on download_tasks
+        when new.state is not old.state
+             or new.status is not old.status
+             or new.lifecycle_phase is not old.lifecycle_phase
+        begin
+            update download_tasks
+            set progress_at=coalesce(new.updated_at, progress_at)
+            where id=new.id;
+        end;
         """
     )
     if history_bucket_needs_backfill:
@@ -1445,6 +1495,38 @@ def init_schema_uncached(con):
         )
         con.execute(
             "insert into schema_meta(key,value) values('history_source_attribution_v1_complete','1') "
+            "on conflict(key) do update set value='1'"
+        )
+    template_instance_marker = con.execute(
+        "select value from schema_meta where key='provider_source_template_instance_v1_complete'"
+    ).fetchone()
+    if not template_instance_marker or str(template_instance_marker["value"] or "") != "1":
+        # A row seeded with source_template:True only ever loses that
+        # classification via add_provider_config_from_template()'s clone
+        # path -- a single-instance template a user enabled/configured in
+        # place through update_provider_config() never went through that
+        # path, so it stayed misclassified as an unconfigured template
+        # (hidden behind the Experimental/compatibility drawer) even
+        # though it was genuinely live. update_provider_config() now sets
+        # this going forward; heal rows already stuck in that state.
+        for row in con.execute(
+            "select id, settings_json from provider_configs where enabled=1 or source='user'"
+        ).fetchall():
+            try:
+                settings = json.loads(row["settings_json"] or "{}")
+            except ValueError:
+                continue
+            if not isinstance(settings, dict):
+                continue
+            if settings.get("source_template") is not True or settings.get("source_template_instance") is True:
+                continue
+            settings["source_template_instance"] = True
+            con.execute(
+                "update provider_configs set settings_json=? where id=?",
+                (json_dumps(settings), row["id"]),
+            )
+        con.execute(
+            "insert into schema_meta(key,value) values('provider_source_template_instance_v1_complete','1') "
             "on conflict(key) do update set value='1'"
         )
     upgrade_mangadex_default_content_ratings(con)
@@ -4980,6 +5062,76 @@ def upsert_manga_companion_link(
     }
 
 
+def upsert_collected_edition_link(
+    db_path,
+    *,
+    collection_series_id,
+    source_series_id,
+    source_issue_start,
+    source_issue_end,
+    discovery_source,
+    now=None,
+):
+    """Persist one ComicVine "collects" relationship idempotently.
+
+    collection_series_id is the trade/omnibus series (the fewer, larger
+    unit); source_series_id is the individual-issues series it collects.
+    Both series must already exist and be tracked in InkDrop -- this never
+    fetches or creates a series on the other side, so the link only forms
+    once both halves are already being watched, in either add order.
+    """
+    collection_series_id = str(collection_series_id or "").strip()
+    source_series_id = str(source_series_id or "").strip()
+    source_issue_start = str(source_issue_start or "").strip()
+    source_issue_end = str(source_issue_end or "").strip()
+    discovery_source = str(discovery_source or "").strip()
+    if not collection_series_id or not source_series_id or collection_series_id == source_series_id:
+        return {"ok": False, "error": "collection_series_id and source_series_id must both be set and distinct"}
+    if not source_issue_start or not source_issue_end or not discovery_source:
+        return {"ok": False, "error": "source_issue_start, source_issue_end, and discovery_source are required"}
+    now = float(now or time.time())
+    link_id = stable_id("collected_edition", collection_series_id, source_series_id)
+    with connect(Path(db_path)) as con:
+        init_schema(con)
+        existing_ids = {
+            str(row["id"])
+            for row in con.execute(
+                "select id from series where id in (?, ?)", (collection_series_id, source_series_id)
+            ).fetchall()
+        }
+        if collection_series_id not in existing_ids or source_series_id not in existing_ids:
+            return {"ok": False, "error": "both referenced series must exist", "code": "series_not_found"}
+        before = con.execute("select id from collected_edition_links where id=?", (link_id,)).fetchone()
+        con.execute(
+            """
+            insert into collected_edition_links(
+                id, collection_series_id, source_series_id,
+                source_issue_start, source_issue_end, discovery_source,
+                status, created_at, updated_at, raw_json
+            ) values(?,?,?,?,?,?,'linked',?,?,'{}')
+            on conflict(id) do update set
+                source_issue_start=excluded.source_issue_start,
+                source_issue_end=excluded.source_issue_end,
+                discovery_source=excluded.discovery_source,
+                status='linked',
+                updated_at=excluded.updated_at
+            """,
+            (
+                link_id, collection_series_id, source_series_id,
+                source_issue_start, source_issue_end, discovery_source,
+                now, now,
+            ),
+        )
+        con.commit()
+    return {
+        "ok": True,
+        "link_id": link_id,
+        "created": before is None,
+        "collection_series_id": collection_series_id,
+        "source_series_id": source_series_id,
+    }
+
+
 def schedule_manga_companion_job(
     db_path,
     *,
@@ -6941,6 +7093,31 @@ SLSKD_NEVER_STARTED_STALE_SECONDS = SLSKD_NEVER_STARTED_STALE_HOURS_DEFAULT * 60
 SLSKD_NEVER_STARTED_SETTING_KEY = "automation.queue_watchdog_slskd_never_started_hours"
 SLSKD_NEVER_STARTED_MIN_HOURS = 1
 SLSKD_NEVER_STARTED_MAX_HOURS = 336
+# No automatic expiry existed at all before this: a claim survived a crashed
+# or killed import worker forever, recoverable only via a manual,
+# worker-stopped operator tool (recover_active_import_authorities). 4 hours
+# is Jared's call (2026-08-08) -- comic-file imports realistically finish in
+# minutes, so this is already a generous safety margin, not a tight timeout.
+IMPORT_AUTHORITY_TTL_HOURS_DEFAULT = 4
+IMPORT_AUTHORITY_TTL_SETTING_KEY = "automation.import_authority_ttl_hours"
+IMPORT_AUTHORITY_TTL_MIN_HOURS = 1
+IMPORT_AUTHORITY_TTL_MAX_HOURS = 72
+# Real admission control for InkDrop's OWN concurrent SLSKD transfers -- not
+# a rate limiter and not about Soulseek protocol politeness (a peer's own
+# upload queue already handles remote fairness; that's not our concern
+# here). This is a purely local circuit breaker: it smooths a backlog-
+# catch-up burst (e.g. a whole franchise added at once) into a steady
+# stream instead of handing SLSKD dozens of simultaneous download requests
+# at once, and it caps the blast radius if a bug (a scheduler double-fire,
+# a retry loop misfiring) ever tries to grab far more than intended in one
+# pass. Deliberately high by default -- Soulseek clients routinely run
+# dozens of concurrent transfers without any protocol-level issue; this
+# exists for safety, not to throttle the common case. Jared's call
+# (2026-08-10).
+SLSKD_CONCURRENT_TRANSFER_CAP_SETTING_KEY = "automation.slskd_concurrent_transfer_cap"
+SLSKD_CONCURRENT_TRANSFER_CAP_DEFAULT = 20
+SLSKD_CONCURRENT_TRANSFER_CAP_MIN = 1
+SLSKD_CONCURRENT_TRANSFER_CAP_MAX = 100
 DOWNLOAD_TASK_QUEUE_SETTLE_SECONDS = 15 * 60
 DOWNLOAD_TASK_SENT_QUEUE_SETTLE_SECONDS = 24 * 60 * 60
 STAGED_TASK_QUEUE_SETTLE_SECONDS = 60 * 60
@@ -11843,6 +12020,29 @@ def _import_authority_from_raw(raw):
     return dict(authority) if isinstance(authority, dict) else {}
 
 
+# SLSKD staged/filesystem-recovered tasks legitimately have no live transfer
+# id (see the "staged-file recovery cannot be counted as a newly created
+# client job" comment in download_task_from_attempt()) -- there is no longer
+# a live job to reference, so requiring one here is a category mismatch, not
+# a meaningful check. A comic archive that size is not a realistic case; a
+# generous ceiling still fails closed instead of silently granting a claim
+# with no real identity behind it.
+IMPORT_CLAIM_CONTENT_HASH_MAX_BYTES = 8 * 1024 * 1024 * 1024
+
+
+def _import_claim_content_identity(local_path):
+    """Fresh content hash for a null-external_id claim's file identity.
+
+    Deliberately called before any database connection/transaction is open
+    (both call sites below) -- hashing a large archive can take real wall
+    time, and this codebase already learned once (PR #363, the SQLite
+    write-lock-during-archive-validation fix) that slow filesystem work must
+    never run while a write transaction is held.
+    """
+    result = media_file_sha256(str(local_path or "").strip(), max_bytes=IMPORT_CLAIM_CONTENT_HASH_MAX_BYTES)
+    return result.get("sha256") if result.get("ok") else None, result.get("reason") or "hash_unavailable"
+
+
 
 
 def _validate_import_authority(con, queue_id, authority, source_path=None):
@@ -11892,7 +12092,24 @@ def _validate_import_authority(con, queue_id, authority, source_path=None):
             return {"ok": False, "reason": f"import_authority_{field}_mismatch"}
     if not _import_authority_identity(task_row["source_attempt_id"]):
         return {"ok": False, "reason": "import_authority_source_attempt_missing"}
-    if not _import_authority_identity(task_row["external_id"]):
+    if task_row["external_id"] is None:
+        # None means "this task type genuinely has no external id" (staged/
+        # filesystem-recovered task -- see download_task_from_attempt()) --
+        # fall back to the content-hash identity claim_import_authority()
+        # must have minted for this exact case. A blank string ("") is a
+        # different, still-invalid case handled by the plain missing-check
+        # below, exactly like every other identity field. All three copies
+        # (what the caller now asserts, what the task itself persisted at
+        # claim time, and what the queue side persisted) must agree,
+        # mirroring exactly how every other identity_fields entry above is
+        # checked -- this is not a weaker path, just a different anchor for
+        # the one client shape that has no job id to anchor to.
+        content_sha256 = _import_authority_identity(authority.get("content_sha256"))
+        task_content_sha256 = _import_authority_identity(task_authority.get("content_sha256"))
+        queue_content_sha256 = _import_authority_identity(queue_authority.get("content_sha256"))
+        if not content_sha256 or content_sha256 != task_content_sha256 or content_sha256 != queue_content_sha256:
+            return {"ok": False, "reason": "import_authority_content_identity_mismatch"}
+    elif not _import_authority_identity(task_row["external_id"]):
         return {"ok": False, "reason": "import_authority_external_id_missing"}
     if not _import_authority_identity(task_row["candidate_identity"]):
         return {"ok": False, "reason": "import_authority_candidate_identity_missing"}
@@ -11944,6 +12161,23 @@ def claim_import_authority(
         "download_client": _import_authority_identity(download_client).lower(),
         "local_path": str(local_path or "").strip(),
     }
+    content_sha256 = ""
+    if external_id is None:
+        # None means "this task type genuinely has no external id" (SLSKD
+        # staged/filesystem-recovered tasks -- see download_task_from_attempt()).
+        # A caller-supplied blank string ("") is a different, still-invalid
+        # case -- a malformed claim asserting an identity it doesn't actually
+        # have -- and must still be rejected below, not silently substituted.
+        # Hash before opening any connection, so this never runs while a
+        # write transaction (or lock) is held.
+        content_sha256, content_hash_error = _import_claim_content_identity(expected["local_path"])
+        if not content_sha256:
+            return {
+                "ok": False,
+                "reason": "import_claim_content_identity_unavailable",
+                "detail": content_hash_error,
+            }
+    expected["content_sha256"] = content_sha256
     with connect(
         Path(db_path), timeout_seconds=lock_timeout_seconds, busy_timeout_ms=lock_busy_timeout_ms,
         configure_wal=lock_timeout_seconds is None and lock_busy_timeout_ms is None,
@@ -11990,7 +12224,7 @@ def claim_import_authority(
         client = _import_authority_identity(task_row["download_client"]).lower()
         if not expected["source_attempt_id"]:
             return {"ok": False, "reason": "import_claim_source_attempt_missing"}
-        if not expected["external_id"]:
+        if not expected["external_id"] and not expected["content_sha256"]:
             return {"ok": False, "reason": "import_claim_external_id_missing"}
         if not expected["candidate_identity"]:
             return {"ok": False, "reason": "import_claim_candidate_identity_missing"}
@@ -12109,6 +12343,56 @@ def recover_active_import_authorities(db_path, *, reason="rollback_precondition"
         "failures": failures,
         "remaining": remaining,
     }
+
+
+def sweep_expired_import_authorities(con, now, ttl_seconds, *, limit=50):
+    """Auto-release import_authority claims older than ttl_seconds.
+
+    recover_active_import_authorities() above is the only prior recovery
+    path, and it is explicitly manual and worker-stopped ("Callers must stop
+    the import worker before invoking this recovery") -- a claim held by an
+    import worker that crashed or was killed mid-import had no automatic
+    expiry at all before this, confirmed by reading claim_import_authority()/
+    active_import_authority() (2026-08-08 audit). This is the unattended
+    counterpart: gated purely on age, safe to run on every routine
+    maintenance pass, since a claim well under the TTL is never touched --
+    only one old enough that a real import would already be long done.
+
+    Runs on the caller's own already-open, already-schema-initialized
+    connection (matching every sibling reconcile_*/cleanup_*/settle_* pass
+    in this module), not a fresh one -- release_import_authority()'s con=
+    parameter exists specifically so this can share the connection instead
+    of nesting a second one mid-transaction.
+    """
+    if not ttl_seconds or ttl_seconds <= 0:
+        return 0
+    cutoff = now - ttl_seconds
+    rows = con.execute(
+        """
+        select id, raw_json from download_tasks
+        where state='importing' and raw_json like '%"import_authority"%'
+        order by updated_at asc limit ?
+        """,
+        (limit,),
+    ).fetchall()
+    released = 0
+    for row in rows:
+        task_raw = json_loads(row["raw_json"] or "{}", {})
+        authority = _import_authority_from_raw(task_raw)
+        claimed_at = safe_float(authority.get("claimed_at"), None)
+        if claimed_at is None or claimed_at > cutoff:
+            continue
+        result = release_import_authority(
+            None,
+            authority,
+            reason="import_authority_ttl_expired",
+            retry_staged=True,
+            released_at=now,
+            con=con,
+        )
+        if result.get("ok"):
+            released += 1
+    return released
 
 
 def retire_ready_task_for_completed_unit(
@@ -12270,147 +12554,167 @@ def release_import_authority(
     released_at=None,
     lock_timeout_seconds=None,
     lock_busy_timeout_ms=None,
+    con=None,
 ):
+    """Release a held import_authority claim, arbitrated against live state.
+
+    con: reuse an already-open, already-schema-initialized connection (for
+    callers already inside their own reconcile transaction, e.g. a
+    maintenance sweep) instead of opening a new one. Behavior is identical
+    either way -- this only changes which connection does the writing.
+    """
     authority = authority if isinstance(authority, dict) else {}
     queue_id = _import_authority_identity(authority.get("queue_id"))
     task_id = _import_authority_identity(authority.get("download_task_id"))
     now = float(released_at or time.time())
+    if con is not None:
+        return _release_import_authority_with_connection(
+            con, queue_id, task_id, authority, now,
+            reason=reason, retry_staged=retry_staged, artifact_retry_blocked=artifact_retry_blocked,
+        )
     with connect(
         Path(db_path), timeout_seconds=lock_timeout_seconds, busy_timeout_ms=lock_busy_timeout_ms,
         configure_wal=lock_timeout_seconds is None and lock_busy_timeout_ms is None,
     ) as con:
         init_schema(con)
-        validated = _validate_import_authority(con, queue_id, authority)
-        if not validated.get("ok"):
-            return {"ok": False, "reason": validated.get("reason") or "import_authority_not_active"}
-        task_raw = validated["task_raw"]
-        queue_raw = validated["queue_raw"]
-        task_raw.pop("import_authority", None)
-        queue_raw.pop("import_authority", None)
+        return _release_import_authority_with_connection(
+            con, queue_id, task_id, authority, now,
+            reason=reason, retry_staged=retry_staged, artifact_retry_blocked=artifact_retry_blocked,
+        )
+
+
+def _release_import_authority_with_connection(con, queue_id, task_id, authority, now, *, reason, retry_staged, artifact_retry_blocked):
+    validated = _validate_import_authority(con, queue_id, authority)
+    if not validated.get("ok"):
+        return {"ok": False, "reason": validated.get("reason") or "import_authority_not_active"}
+    task_raw = validated["task_raw"]
+    queue_raw = validated["queue_raw"]
+    task_raw.pop("import_authority", None)
+    queue_raw.pop("import_authority", None)
+    task_raw.update({
+        "import_authority_released_at": now,
+        "import_authority_released_at_iso": utc_stamp(now),
+        "import_authority_release_reason": str(reason or "import_failed"),
+    })
+    reason_text = str(reason or "import_failed").strip()
+    normalized_reason = reason_text.lower()
+    bad_archive = any(
+        token in normalized_reason
+        for token in ("bad_archive", "bad_zip_member", "cbr_extract_failed", "skip_bad_comic_archive")
+    )
+    if artifact_retry_blocked:
         task_raw.update({
-            "import_authority_released_at": now,
-            "import_authority_released_at_iso": utc_stamp(now),
-            "import_authority_release_reason": str(reason or "import_failed"),
+            "artifact_retry_blocked": True,
+            "artifact_retry_blocked_at": now,
+            "artifact_retry_blocked_at_iso": utc_stamp(now),
+            "artifact_retry_blocked_reason": reason_text,
         })
-        reason_text = str(reason or "import_failed").strip()
-        normalized_reason = reason_text.lower()
-        bad_archive = any(
-            token in normalized_reason
-            for token in ("bad_archive", "bad_zip_member", "cbr_extract_failed", "skip_bad_comic_archive")
-        )
-        if artifact_retry_blocked:
-            task_raw.update({
-                "artifact_retry_blocked": True,
-                "artifact_retry_blocked_at": now,
-                "artifact_retry_blocked_at_iso": utc_stamp(now),
-                "artifact_retry_blocked_reason": reason_text,
-            })
-        if retry_staged:
-            task_state, task_status, task_phase, retry_eligible = "import_ready", "staged_file_ready", "import_ready", 0
-        else:
-            task_state = "failed"
-            task_status = "bad_archive" if bad_archive else "failed_import"
-            task_phase = "failed_candidate"
-            retry_eligible = 0 if artifact_retry_blocked else 1
-        con.execute(
-            """
-            update download_tasks
-               set state=?, status=?, lifecycle_phase=?, failure_reason=?, retry_eligible=?,
-                   updated_at=?, completed_at=coalesce(completed_at, ?), raw_json=?
-             where id=? and queue_id=?
-            """,
-            (task_state, task_status, task_phase, reason_text, retry_eligible,
-             now, now, json_dumps(task_raw), task_id, queue_id),
-        )
-        source_attempt_id = _import_authority_identity(authority.get("source_attempt_id"))
-        if source_attempt_id:
-            attempt_row = con.execute(
-                "select raw_json from source_attempts where id=? and queue_id=? limit 1",
-                (source_attempt_id, queue_id),
-            ).fetchone()
-            if attempt_row:
-                attempt_raw = json_loads(attempt_row["raw_json"] or "{}", {})
-                attempt_raw = attempt_raw if isinstance(attempt_raw, dict) else {}
-                attempt_raw.update({
-                    "import_authority_released_at": now,
-                    "import_authority_release_reason": reason_text,
-                    "download_task_id": task_id,
-                })
-                con.execute(
-                    """
-                    update source_attempts
-                       set status=?, lifecycle_phase='failed_candidate', outcome='failed',
-                           display_phase='retry_later', failure_reason=?, retry_eligible=1,
-                           completed_at=coalesce(completed_at, ?), raw_json=?
-                     where id=? and queue_id=?
-                    """,
-                    (task_status, reason_text, now, json_dumps(attempt_raw), source_attempt_id, queue_id),
-                )
-        if bad_archive:
-            task = validated["task"]
-            record_bad_source_candidate_row(
-                con,
-                {
-                    "source": task.get("source") or task.get("download_client") or "download_client",
-                    "provider": task.get("provider"),
-                    "protocol": task.get("protocol"),
-                    "title": task.get("title"),
-                    "download_url_hash": task.get("candidate_identity"),
-                    "source_path": task.get("local_path"),
-                    "reason": reason_text,
-                    "raw": {
-                        "kind": "import_authority_bad_archive",
-                        "queue_id": queue_id,
-                        "download_task_id": task_id,
-                        "source_attempt_id": source_attempt_id,
-                        "external_id": task.get("external_id"),
-                    },
-                    "seen_at": now,
-                },
-                increment=False,
-            )
-        sibling = con.execute(
-            """
-            select id, state, status, download_client from download_tasks
-            where queue_id=? and id<>?
-              and lower(coalesce(state,'')) in ('queued','downloading','import_ready','importing')
-              and lower(coalesce(status,'')) not in ('failed','error','known_bad','wrong_unit','wrong_series')
-            order by coalesce(updated_at,started_at,0) desc limit 1
-            """,
-            (queue_id, task_id),
+    if retry_staged:
+        task_state, task_status, task_phase, retry_eligible = "import_ready", "staged_file_ready", "import_ready", 0
+    else:
+        task_state = "failed"
+        task_status = "bad_archive" if bad_archive else "failed_import"
+        task_phase = "failed_candidate"
+        retry_eligible = 0 if artifact_retry_blocked else 1
+    con.execute(
+        """
+        update download_tasks
+           set state=?, status=?, lifecycle_phase=?, failure_reason=?, retry_eligible=?,
+               updated_at=?, completed_at=coalesce(completed_at, ?), raw_json=?
+         where id=? and queue_id=?
+        """,
+        (task_state, task_status, task_phase, reason_text, retry_eligible,
+         now, now, json_dumps(task_raw), task_id, queue_id),
+    )
+    source_attempt_id = _import_authority_identity(authority.get("source_attempt_id"))
+    if source_attempt_id:
+        attempt_row = con.execute(
+            "select raw_json from source_attempts where id=? and queue_id=? limit 1",
+            (source_attempt_id, queue_id),
         ).fetchone()
-        queue_row = validated["queue"]
-        if retry_staged:
-            queue_state = "importing"
-            queue_source = _import_authority_identity(authority.get("download_client")) or "download_client"
-            event = "Completed transfer is ready for another import attempt"
-            wanted_status = "in_progress"
-        elif sibling:
-            sibling_state = str(sibling["state"] or "").strip().lower()
-            queue_state = "downloading" if sibling_state in {"queued", "downloading"} else "importing"
-            queue_source = str(sibling["download_client"] or "").strip().lower() or queue_row["current_source"]
-            event = "Another active download remains in progress"
-            wanted_status = "downloading" if queue_state == "downloading" else "in_progress"
-        else:
-            event = (
-                "The downloaded archive is invalid; Automatic Search will try another result"
-                if bad_archive
-                else "Import failed; Automatic Search will retry"
+        if attempt_row:
+            attempt_raw = json_loads(attempt_row["raw_json"] or "{}", {})
+            attempt_raw = attempt_raw if isinstance(attempt_raw, dict) else {}
+            attempt_raw.update({
+                "import_authority_released_at": now,
+                "import_authority_release_reason": reason_text,
+                "download_task_id": task_id,
+            })
+            con.execute(
+                """
+                update source_attempts
+                   set status=?, lifecycle_phase='failed_candidate', outcome='failed',
+                       display_phase='retry_later', failure_reason=?, retry_eligible=1,
+                       completed_at=coalesce(completed_at, ?), raw_json=?
+                 where id=? and queue_id=?
+                """,
+                (task_status, reason_text, now, json_dumps(attempt_raw), source_attempt_id, queue_id),
             )
-            queue_state, queue_source, wanted_status = "queued", None, "wanted"
-        con.execute(
-            """
-            update queue_items set state=?, current_source=?, last_event=?, active=1,
-                   outcome=?, display_phase=?, updated_at=?, raw_json=? where id=? and state<>'verified'
-            """,
-            (queue_state, queue_source, event, "in_progress" if sibling or retry_staged else "retryable",
-             "staged_or_importing" if retry_staged else "downloading" if sibling else "retry_later",
-             now, json_dumps(queue_raw), queue_id),
+    if bad_archive:
+        task = validated["task"]
+        record_bad_source_candidate_row(
+            con,
+            {
+                "source": task.get("source") or task.get("download_client") or "download_client",
+                "provider": task.get("provider"),
+                "protocol": task.get("protocol"),
+                "title": task.get("title"),
+                "download_url_hash": task.get("candidate_identity"),
+                "source_path": task.get("local_path"),
+                "reason": reason_text,
+                "raw": {
+                    "kind": "import_authority_bad_archive",
+                    "queue_id": queue_id,
+                    "download_task_id": task_id,
+                    "source_attempt_id": source_attempt_id,
+                    "external_id": task.get("external_id"),
+                },
+                "seen_at": now,
+            },
+            increment=False,
         )
-        if queue_row.get("wanted_id"):
-            con.execute("update wanted_items set status=?, updated_at=? where id=? and status<>'satisfied'", (wanted_status, now, queue_row["wanted_id"]))
-        update_sync_meta(con, now, "import_authority_released")
-        con.commit()
+    sibling = con.execute(
+        """
+        select id, state, status, download_client from download_tasks
+        where queue_id=? and id<>?
+          and lower(coalesce(state,'')) in ('queued','downloading','import_ready','importing')
+          and lower(coalesce(status,'')) not in ('failed','error','known_bad','wrong_unit','wrong_series')
+        order by coalesce(updated_at,started_at,0) desc limit 1
+        """,
+        (queue_id, task_id),
+    ).fetchone()
+    queue_row = validated["queue"]
+    if retry_staged:
+        queue_state = "importing"
+        queue_source = _import_authority_identity(authority.get("download_client")) or "download_client"
+        event = "Completed transfer is ready for another import attempt"
+        wanted_status = "in_progress"
+    elif sibling:
+        sibling_state = str(sibling["state"] or "").strip().lower()
+        queue_state = "downloading" if sibling_state in {"queued", "downloading"} else "importing"
+        queue_source = str(sibling["download_client"] or "").strip().lower() or queue_row["current_source"]
+        event = "Another active download remains in progress"
+        wanted_status = "downloading" if queue_state == "downloading" else "in_progress"
+    else:
+        event = (
+            "The downloaded archive is invalid; Automatic Search will try another result"
+            if bad_archive
+            else "Import failed; Automatic Search will retry"
+        )
+        queue_state, queue_source, wanted_status = "queued", None, "wanted"
+    con.execute(
+        """
+        update queue_items set state=?, current_source=?, last_event=?, active=1,
+               outcome=?, display_phase=?, updated_at=?, raw_json=? where id=? and state<>'verified'
+        """,
+        (queue_state, queue_source, event, "in_progress" if sibling or retry_staged else "retryable",
+         "staged_or_importing" if retry_staged else "downloading" if sibling else "retry_later",
+         now, json_dumps(queue_raw), queue_id),
+    )
+    if queue_row.get("wanted_id"):
+        con.execute("update wanted_items set status=?, updated_at=? where id=? and status<>'satisfied'", (wanted_status, now, queue_row["wanted_id"]))
+    update_sync_meta(con, now, "import_authority_released")
+    con.commit()
     return {
         "ok": True, "queue_id": queue_id, "download_task_id": task_id,
         "task_state": task_state, "queue_state": queue_state,
@@ -16749,6 +17053,29 @@ def normalized_download_client(value):
     return str(value or "").strip()
 
 
+# Same reasoning as BACKFILL_DOWNLOAD_TASK_BATCH below: this runs inside the
+# maintenance sweep's write transaction, so the cap is really "how long the
+# 180s scheduler job (and every writer contending with it) holds the lock."
+# Unlike the backfill cursor, no persisted resume position is needed here --
+# both callers below already select oldest-touched-first, so a capped pass
+# always looks at the rows most overdue for cleanup first; anything not
+# retired this pass (still too fresh to qualify) simply gets re-examined,
+# cheaply, on the next 180s pass. A large stuck-active-task backlog (e.g. a
+# ~1,350-file SLSKD staging backlog) used to mean one unbounded fetchall
+# plus a per-row extra query for every single one of those rows, every
+# maintenance pass -- this bounds that to a fixed, fast slice per pass.
+MAINTENANCE_SWEEP_BATCH_LIMIT = 500
+
+
+def maintenance_sweep_batch_limit(default=MAINTENANCE_SWEEP_BATCH_LIMIT):
+    raw = str(os.environ.get("INKDROP_MAINTENANCE_SWEEP_BATCH_LIMIT", "")).strip()
+    try:
+        value = int(raw) if raw else int(default)
+    except ValueError:
+        value = int(default)
+    return max(50, min(20000, value))
+
+
 # How many source attempts one backfill pass may examine. This runs inside the
 # single global write transaction, so the batch size is really "how long every
 # other writer in the app may be blocked" -- keep it small enough that a pass is
@@ -17950,7 +18277,7 @@ def cleanup_active_download_tasks_for_queue(con, queue_id, now):
     return retired
 
 
-def cleanup_superseded_active_download_tasks(con, now):
+def cleanup_superseded_active_download_tasks(con, now, limit=None):
     if not con:
         return 0
     rows = con.execute(
@@ -17973,8 +18300,10 @@ def cleanup_superseded_active_download_tasks(con, now):
             or lower(coalesce(dt.source, '')) in ('slskd', 'soulseek')
             or lower(coalesce(dt.protocol, '')) in ('slskd', 'soulseek')
           )
-        order by coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) desc
-        """
+        order by coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) asc
+        limit ?
+        """,
+        (max(1, int(limit)) if limit is not None else maintenance_sweep_batch_limit(),),
     ).fetchall()
     retired = 0
     for row in rows:
@@ -18206,6 +18535,7 @@ def cleanup_stale_active_slskd_download_tasks(
     now,
     stale_seconds=SLSKD_STALE_ACTIVE_TASK_SECONDS,
     never_started_stale_seconds=SLSKD_NEVER_STARTED_STALE_SECONDS,
+    limit=None,
 ):
     if not con:
         return 0
@@ -18230,8 +18560,10 @@ def cleanup_stale_active_slskd_download_tasks(
             or lower(coalesce(dt.source, '')) in ('slskd', 'soulseek')
             or lower(coalesce(dt.protocol, '')) in ('slskd', 'soulseek')
           )
-        order by coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) desc, dt.id desc
-        """
+        order by coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) asc, dt.id asc
+        limit ?
+        """,
+        (max(1, int(limit)) if limit is not None else maintenance_sweep_batch_limit(),),
     ).fetchall()
     retired = 0
     refreshed = set()
@@ -18427,8 +18759,14 @@ def cleanup_expired_import_claims(con, now):
                 )
                 -- The task itself must show life within the lease: a task
                 -- frozen in an import state alongside the dead claim would
-                -- otherwise immortalize it.
-                and coalesce(dt.updated_at, dt.started_at, 0) > ?
+                -- otherwise immortalize it. progress_at (trg_download_tasks_
+                -- progress_at_insert/_update) only moves on a real state/
+                -- status/lifecycle_phase transition, not on routine polling
+                -- that re-touches updated_at without any real progress --
+                -- updated_at alone let a genuinely stuck import hold its
+                -- claim open indefinitely as long as *something* kept
+                -- refreshing the row.
+                and coalesce(dt.progress_at, dt.started_at, 0) > ?
           )
         """,
         (now - IMPORT_CLAIM_LEASE_SECONDS, now - IMPORT_CLAIM_LEASE_SECONDS),
@@ -19585,11 +19923,33 @@ def download_client_bad_candidate_payload(record, task_payload, snapshot=None, *
     }
 
 
-def sync_stale_download_task_bad_candidates(con, now=None, limit=5000):
+STALE_BAD_CANDIDATES_WATERMARK_KEY = "stale_download_task_bad_candidates_watermark"
+
+
+def sync_stale_download_task_bad_candidates(con, now=None, limit=None):
+    """Every row this scans is already terminal (dt.state='failed' with one
+    of the four listed statuses) and, once seen, is recorded permanently in
+    bad_source_candidates via record_bad_source_candidate_row()'s upsert --
+    a "transient" classification correctly skips recording, but re-examining
+    that same static row later can never produce a different verdict either.
+    So unlike the SLSKD active-task cleanups elsewhere in this file (which
+    genuinely need to revisit not-yet-eligible rows on a later pass), this
+    one has nothing to gain from ever re-scanning a row it already reached a
+    verdict on. Before this watermark, every 180s maintenance pass re-
+    classified and re-upserted the ENTIRE historical backlog from scratch --
+    live on the production instance this examined 3,115 rows in a single
+    pass, every pass, forever. The watermark makes each pass cost only what
+    newly failed since the last one."""
     if not con:
         return 0
     now = float(now or time.time())
     from core import inkdrop_manual_source_autoresolve as manual_source_autoresolve
+    watermark_row = con.execute(
+        "select value from schema_meta where key=?",
+        (STALE_BAD_CANDIDATES_WATERMARK_KEY,),
+    ).fetchone()
+    watermark = safe_float(watermark_row[0], 0) if watermark_row else 0
+    batch_limit = max(1, int(limit)) if limit is not None else maintenance_sweep_batch_limit()
     rows = con.execute(
         """
         select dt.id as task_id, dt.queue_id, dt.wanted_id, dt.series_id, dt.issue_id,
@@ -19604,7 +19964,8 @@ def sync_stale_download_task_bad_candidates(con, now=None, limit=5000):
                dt.status as task_status, dt.state as task_state, dt.raw_json as task_raw_json,
                q.state as queue_state, q.current_source as queue_current_source,
                q.last_event as queue_last_event, q.updated_at as queue_updated_at,
-               s.title as series_title, i.issue_number
+               s.title as series_title, i.issue_number,
+               coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) as task_sort_ts
         from download_tasks dt
         left join queue_items q on q.id = dt.queue_id
         left join series s on s.id = dt.series_id
@@ -19617,14 +19978,17 @@ def sync_stale_download_task_bad_candidates(con, now=None, limit=5000):
               'wrong_series_or_subseries'
           )
           and nullif(trim(coalesce(dt.title, dt.local_path, dt.save_path, dt.candidate_identity, '')), '') is not null
-        order by coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) desc, dt.id desc
+          and coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) > ?
+        order by task_sort_ts asc, dt.id asc
         limit ?
         """,
-        (max(1, int(limit or 5000)),),
+        (watermark, batch_limit),
     ).fetchall()
     count = 0
+    max_seen = watermark
     for row in rows:
         record = dict(row)
+        max_seen = max(max_seen, safe_float(record.get("task_sort_ts"), 0) or 0)
         status_key = str(record.get("task_status") or "").strip().lower()
         raw = json_loads(record.get("task_raw_json") or "{}", {})
         raw = raw if isinstance(raw, dict) else {}
@@ -19701,6 +20065,14 @@ def sync_stale_download_task_bad_candidates(con, now=None, limit=5000):
         payload["raw"] = candidate_raw
         if record_bad_source_candidate_row(con, payload, increment=False):
             count += 1
+    if max_seen > watermark:
+        con.execute(
+            """
+            insert into schema_meta(key,value) values(?,?)
+            on conflict(key) do update set value=excluded.value
+            """,
+            (STALE_BAD_CANDIDATES_WATERMARK_KEY, repr(max_seen)),
+        )
     return count
 
 
@@ -24305,6 +24677,14 @@ def find_queue_for_import(con, row, series_id, issue_id, *, require_exact_queue_
             return None
 
     issue_number = row.get("canonical_issue_number") or row.get("normalized_number") or row.get("issue")
+    if not issue_number:
+        # Zero-touch/manual-inbox imports of an existing file never run
+        # canonical_comic_dest() (that only renames freshly-matched downloads),
+        # so they carry none of the fields above -- but artifact_acceptance()
+        # already computed and archive-member-validated a real issue number
+        # for every one of these rows. Confirmed live: 0/30 recent zero-touch
+        # imports had any of the fields above, 30/30 had this one.
+        issue_number = (row.get("artifact_acceptance") or {}).get("interpreted_artifact_number")
     issue_keys = sorted(issue_number_keys(issue_number))
     if not issue_keys and issue_id:
         issue_keys = sorted(issue_number_keys(str(issue_id).rsplit(":", 1)[-1]))
@@ -24560,6 +24940,126 @@ def reconcile_duplicate_issue_number_wanted_statuses(con, now, *, limit=500):
                     "issue_number": row["issue_number"],
                     "normalized_number": row["normalized_number"],
                     "verified_peer_issue_id": row["verified_peer_issue_id"],
+                    "queue_rows_settled": queue_changed,
+                },
+                source="inkdrop_state",
+                now=now,
+            )
+    return changed
+
+
+def series_id_for_comicvine_volume(db_path, comicvine_id):
+    cv_id = str(comicvine_id or "").strip()
+    if not cv_id:
+        return None
+    with connect(db_path) as con:
+        row = con.execute(
+            "select id from series where metadata_provider='comicvine' and metadata_id=? limit 1",
+            (cv_id,),
+        ).fetchone()
+    return row["id"] if row else None
+
+
+def reconcile_collected_edition_coverage(con, now, *, limit=500):
+    """Satisfy individual issue-wants once a linked collected edition verifies.
+
+    "accept either edition" v1 (Jared's decision, 2026-08-08): grabbing the
+    collected trade satisfies the individual issue-wants it covers -- no
+    separate re-acquisition. The link itself (collected_edition_links) is
+    only ever created from a real, structured ComicVine cross-reference (see
+    comicvine_collects_reference()), never a filename/title guess -- same
+    bar as the manga volume-supersedes-chapters precedent. v1 scope is
+    deliberately narrow: a source issue is satisfied only once the
+    collection's own wanted row has real, verified import evidence (not
+    just a status flag), and only when its issue number falls inside the
+    linked range. Partial-coverage cases (already own some issues, only the
+    trade covers the rest) are handled fine here since each issue is
+    checked independently -- what's explicitly out of scope for v1 is
+    anything requiring a second collected edition or overlapping ranges.
+    """
+    limit = max(1, min(int(limit or 500), 2000))
+    rows = con.execute(
+        """
+        select w.id as wanted_id, w.series_id, w.issue_id,
+               i.issue_number, i.normalized_number,
+               cel.id as link_id, cel.collection_series_id,
+               cel.source_issue_start, cel.source_issue_end,
+               (
+                   select cw.issue_id
+                   from wanted_items cw
+                   where cw.series_id = cel.collection_series_id
+                     and lower(coalesce(cw.status,'')) in ('satisfied','verified')
+                     and coalesce(cw.issue_id, '') <> ''
+                   limit 1
+               ) as collection_issue_id
+        from wanted_items w
+        join issues i on i.id = w.issue_id
+        join collected_edition_links cel
+          on cel.source_series_id = w.series_id and cel.status = 'linked'
+        where lower(coalesce(w.status,'')) in ('wanted','queued','searching','retry','missing','in_progress')
+          and coalesce(w.issue_id, '') <> ''
+          and cast(coalesce(nullif(i.normalized_number,''), i.issue_number) as real)
+              between cast(cel.source_issue_start as real) and cast(cel.source_issue_end as real)
+        limit ?
+        """,
+        (limit,),
+    ).fetchall()
+    changed = 0
+    for row in rows:
+        if not row["collection_issue_id"]:
+            continue
+        if not verified_import_for_queue(
+            con,
+            None,
+            row["collection_series_id"],
+            row["collection_issue_id"],
+            require_existing_destination=True,
+        ):
+            continue
+        message = "Satisfied by a verified collected edition covering this issue"
+        con.execute(
+            "update wanted_items set status='satisfied', updated_at=? where id=?",
+            (now, row["wanted_id"]),
+        )
+        wanted_changed = int(con.execute("select changes() as changed").fetchone()["changed"] or 0)
+        con.execute(
+            """
+            update queue_items
+               set state='verified',
+                   active=0,
+                   current_source='collected_edition_coverage',
+                   last_event=?,
+                   updated_at=?,
+                   outcome='complete',
+                   display_phase='verified'
+             where active=1
+               and (
+                   wanted_id=?
+                   or issue_id=?
+               )
+            """,
+            (message, now, row["wanted_id"], row["issue_id"]),
+        )
+        queue_changed = int(con.execute("select changes() as changed").fetchone()["changed"] or 0)
+        if wanted_changed or queue_changed:
+            changed += 1
+            _record_search_history(
+                con,
+                event_type="collected_edition_coverage_satisfied",
+                entity_type="wanted_item",
+                entity_id=row["wanted_id"],
+                series_id=row["series_id"],
+                issue_id=row["issue_id"],
+                message=message,
+                raw={
+                    "wanted_id": row["wanted_id"],
+                    "issue_id": row["issue_id"],
+                    "issue_number": row["issue_number"],
+                    "link_id": row["link_id"],
+                    "collection_series_id": row["collection_series_id"],
+                    "collection_issue_id": row["collection_issue_id"],
+                    "source_issue_start": row["source_issue_start"],
+                    "source_issue_end": row["source_issue_end"],
                     "queue_rows_settled": queue_changed,
                 },
                 source="inkdrop_state",
@@ -27700,22 +28200,13 @@ def settle_queue_items_with_verified_imports(
                 {},
             )
             settled += 1
-            try:
-                from core import inkdrop_notifications
-                db_path_row = con.execute("pragma database_list").fetchone()
-                notify_db_path = db_path_row[2] if db_path_row else None
-                inkdrop_notifications.notify_wanted_cleared(
-                    notify_db_path,
-                    series=row["series"],
-                    issue_title=row["issue_title"],
-                    issue_number=row["issue_number"],
-                    dest_path=row_value(verified_import, "dest_path"),
-                    source_path=row_value(verified_import, "source_path"),
-                    series_id=row["series_id"],
-                    issue_id=row["issue_id"],
-                )
-            except Exception:
-                pass
+            # import_verified notification: no longer fired inline here. A
+            # watermark scan over queue_items.state='verified' (inkdrop_
+            # notification_events.scan_import_verified, run every 180s by the
+            # notification-dispatch job) now covers this and every other
+            # mark_queue_verified_for_import() call site uniformly -- see
+            # that module for why (this call site was 1 of ~11, and only 2
+            # of them fired the notification before that fix).
             con.execute(
                 """
                 insert or ignore into history_events(
@@ -28293,22 +28784,9 @@ def settle_queue_items_with_optional_folder_imports(con, now):
             current_source=row["current_source"] or "importer",
         ):
             settled += 1
-            try:
-                from core import inkdrop_notifications
-                db_path_row = con.execute("pragma database_list").fetchone()
-                notify_db_path = db_path_row[2] if db_path_row else None
-                inkdrop_notifications.notify_wanted_cleared(
-                    notify_db_path,
-                    series=row["series"],
-                    issue_title=row["issue_title"],
-                    issue_number=row["issue_number"],
-                    dest_path=row["dest_path"],
-                    source_path=row["source_path"],
-                    series_id=row["series_id"],
-                    issue_id=row["issue_id"],
-                )
-            except Exception:
-                pass
+            # import_verified notification: see the comment at the other
+            # mark_queue_verified_for_import() call site above -- a watermark
+            # scan now covers this uniformly instead of an inline call here.
             con.execute(
                 """
                 insert or ignore into history_events(
@@ -32228,6 +32706,11 @@ def sync_state(state_dir, db_path=None, *, retire_absent_json=False):
             counts["verified_import_queue_settled"] = settle_queue_items_with_verified_imports(con, now)
             counts["verified_queue_wanted_reconciled"] = reconcile_verified_queue_wanted_statuses(con, now)
             counts["duplicate_issue_wanted_reconciled"] = reconcile_duplicate_issue_number_wanted_statuses(con, now)
+            counts["collected_edition_coverage_reconciled"] = reconcile_collected_edition_coverage(con, now)
+            counts["expired_import_authorities_released"] = (
+                sweep_expired_import_authorities(con, now, watchdog["import_authority_ttl_seconds"])
+                if watchdog["enabled"] else 0
+            )
             counts["queue_scheduler_evidence_backfilled"] = backfill_queue_scheduler_evidence_fields(con, now)
             counts["metadata_only_wanted_queued"] = reconcile_monitored_metadata_only_wanted(con, now)
             counts["retired_duplicate_wanted_reenrolled"] = reconcile_retired_duplicate_wanted_enrollment(con, now)
@@ -33640,6 +34123,14 @@ def sync_queue_state(
                 reconcile_duplicate_issue_number_wanted_statuses(con, now)
                 if sync_mode != "queue" else 0
             )
+            collected_edition_coverage_reconciled = (
+                reconcile_collected_edition_coverage(con, now)
+                if sync_mode != "queue" else 0
+            )
+            expired_import_authorities_released = (
+                sweep_expired_import_authorities(con, now, watchdog["import_authority_ttl_seconds"])
+                if sync_mode != "queue" and watchdog["enabled"] else 0
+            )
             queue_scheduler_evidence_backfilled = (
                 backfill_queue_scheduler_evidence_fields(con, now)
                 if sync_mode != "queue" else 0
@@ -33724,6 +34215,8 @@ def sync_queue_state(
                 "verified_import_queue_settled": verified_import_settled_count,
                 "verified_queue_wanted_reconciled": verified_queue_wanted_reconciled,
                 "duplicate_issue_wanted_reconciled": duplicate_issue_wanted_reconciled,
+                "collected_edition_coverage_reconciled": collected_edition_coverage_reconciled,
+                "expired_import_authorities_released": expired_import_authorities_released,
                 "queue_scheduler_evidence_backfilled": queue_scheduler_evidence_backfilled,
                 "metadata_only_wanted_queued": metadata_only_wanted_queued,
                 "retired_duplicate_wanted_reenrolled": retired_duplicate_wanted_reenrolled,
@@ -34036,6 +34529,14 @@ def sync_import_results(state_dir, db_path=None):
             con.commit()
             duplicate_issue_wanted_reconciled = reconcile_duplicate_issue_number_wanted_statuses(con, now)
             con.commit()
+            collected_edition_coverage_reconciled = reconcile_collected_edition_coverage(con, now)
+            con.commit()
+            watchdog = queue_watchdog_policy(con)
+            expired_import_authorities_released = (
+                sweep_expired_import_authorities(con, now, watchdog["import_authority_ttl_seconds"])
+                if watchdog["enabled"] else 0
+            )
+            con.commit()
             queue_scheduler_evidence_backfilled = backfill_queue_scheduler_evidence_fields(con, now)
             con.commit()
             optional_folder_import_settled_count = settle_queue_items_with_optional_folder_imports(con, now)
@@ -34080,7 +34581,7 @@ def sync_import_results(state_dir, db_path=None):
         retired_import_status_events = retire_import_status_events(import_status_sync["events"])
         summary = state_summary(path)
         summary.update(source)
-        summary.update({"ok": True, "db_path": str(path), "synced": {"imports": count, "import_status_events": retired_import_status_events, "download_reconciliation": reconciliation_count, "bad_source_candidates": bad_source_candidate_count, "stale_download_task_bad_candidates": stale_download_task_bad_candidates, "stale_slskd_wrong_title_bad_candidates": stale_slskd_wrong_title_bad_candidates, "download_tasks": download_task_count, "provider_contract_backfill": provider_contract_backfill, "superseded_download_tasks_retired": superseded_download_tasks_retired, "superseded_sent_download_tasks_retired": superseded_sent_download_tasks_retired, "local_pack_superseded_handoff_tasks_retired": local_pack_superseded_handoff_tasks_retired, "stale_download_client_handoff_tasks_retired": stale_download_client_handoff_tasks_retired, "wrong_title_active_slskd_download_tasks_retired": wrong_title_active_slskd_download_tasks_retired, "retired_download_queue_items_requeued": retired_download_queue_items_requeued, "superseded_slskd_queue_active_download_tasks_retired": superseded_slskd_queue_active_download_tasks_retired, "duplicate_active_handoff_tasks_retired": duplicate_active_handoff_tasks_retired, "inactive_download_tasks_retired": inactive_download_tasks_retired, "duplicate_download_tasks_removed": download_task_dupes_removed, "download_task_history": download_task_history_count, "legacy_folder_completion_backfill": legacy_folder_completion_backfill, "queue_verified_pending_scan_backfill": queue_verified_pending_scan_backfill, "optional_folder_scan_pending_promoted": optional_folder_scan_pending_promoted, "pending_pack_import_backfill": pending_pack_import_backfill, "direct_import_verification": direct_import_verification, "verified_queue_backfill": verified_backfill_count, "import_source_attempt_links": source_linked_count, "superseded_adapter_import_results": superseded_adapter_import_results, "missing_folder_import_proofs_retracted": missing_folder_import_proofs_retracted, "wrong_unit_page_pack_import_proofs_retracted": wrong_unit_page_pack_import_proofs_retracted, "active_download_queue_settled": active_download_queue_settled_count, "verified_import_queue_settled": verified_import_settled_count, "duplicate_issue_wanted_reconciled": duplicate_issue_wanted_reconciled, "queue_scheduler_evidence_backfilled": queue_scheduler_evidence_backfilled, "optional_folder_import_queue_settled": optional_folder_import_settled_count, "folder_presence_backfill": folder_presence_backfill, "folder_presence_wanted_backfill": folder_presence_wanted_backfill, "collection_single_part_verified_reopened": collection_single_part_verified_reopened, "superseded_duplicates": superseded_count, "duplicate_verified_activity_attempts_removed": verification_dupes_removed, "media_files": media_files}, "synced_at": now, "synced_at_iso": utc_stamp(now)})
+        summary.update({"ok": True, "db_path": str(path), "synced": {"imports": count, "import_status_events": retired_import_status_events, "download_reconciliation": reconciliation_count, "bad_source_candidates": bad_source_candidate_count, "stale_download_task_bad_candidates": stale_download_task_bad_candidates, "stale_slskd_wrong_title_bad_candidates": stale_slskd_wrong_title_bad_candidates, "download_tasks": download_task_count, "provider_contract_backfill": provider_contract_backfill, "superseded_download_tasks_retired": superseded_download_tasks_retired, "superseded_sent_download_tasks_retired": superseded_sent_download_tasks_retired, "local_pack_superseded_handoff_tasks_retired": local_pack_superseded_handoff_tasks_retired, "stale_download_client_handoff_tasks_retired": stale_download_client_handoff_tasks_retired, "wrong_title_active_slskd_download_tasks_retired": wrong_title_active_slskd_download_tasks_retired, "retired_download_queue_items_requeued": retired_download_queue_items_requeued, "superseded_slskd_queue_active_download_tasks_retired": superseded_slskd_queue_active_download_tasks_retired, "duplicate_active_handoff_tasks_retired": duplicate_active_handoff_tasks_retired, "inactive_download_tasks_retired": inactive_download_tasks_retired, "duplicate_download_tasks_removed": download_task_dupes_removed, "download_task_history": download_task_history_count, "legacy_folder_completion_backfill": legacy_folder_completion_backfill, "queue_verified_pending_scan_backfill": queue_verified_pending_scan_backfill, "optional_folder_scan_pending_promoted": optional_folder_scan_pending_promoted, "pending_pack_import_backfill": pending_pack_import_backfill, "direct_import_verification": direct_import_verification, "verified_queue_backfill": verified_backfill_count, "import_source_attempt_links": source_linked_count, "superseded_adapter_import_results": superseded_adapter_import_results, "missing_folder_import_proofs_retracted": missing_folder_import_proofs_retracted, "wrong_unit_page_pack_import_proofs_retracted": wrong_unit_page_pack_import_proofs_retracted, "active_download_queue_settled": active_download_queue_settled_count, "verified_import_queue_settled": verified_import_settled_count, "duplicate_issue_wanted_reconciled": duplicate_issue_wanted_reconciled, "collected_edition_coverage_reconciled": collected_edition_coverage_reconciled, "expired_import_authorities_released": expired_import_authorities_released, "queue_scheduler_evidence_backfilled": queue_scheduler_evidence_backfilled, "optional_folder_import_queue_settled": optional_folder_import_settled_count, "folder_presence_backfill": folder_presence_backfill, "folder_presence_wanted_backfill": folder_presence_wanted_backfill, "collection_single_part_verified_reopened": collection_single_part_verified_reopened, "superseded_duplicates": superseded_count, "duplicate_verified_activity_attempts_removed": verification_dupes_removed, "media_files": media_files}, "synced_at": now, "synced_at_iso": utc_stamp(now)})
         summary["synced"]["rejected_import_status_events"] = len(import_status_sync["rejected"])
         summary["synced"]["contradictory_completion_provenance_retracted"] = contradictory_completion_provenance_retracted
         return summary
@@ -36653,12 +37154,34 @@ def update_provider_config(db_path, provider_id, patch):
         if "secret_ref" in patch:
             updates["secret_ref"] = str(patch.get("secret_ref") or "").strip() or None
             changed_fields.append("secret_ref")
+        current_settings = current_settings if isinstance(current_settings, dict) else {}
+        # A row seeded with source_template:True only ever loses that
+        # classification via add_provider_config_from_template()'s clone
+        # path (source_template_instance=True) -- but a single-instance
+        # template a user enables/edits *in place* through this endpoint
+        # never goes through that path, so it stays misclassified as an
+        # unconfigured template forever (stays hidden behind the
+        # Experimental/compatibility drawer) even after being genuinely
+        # configured. Any direct save here already means "no longer just
+        # a template" the same way it already means source="user" above.
+        needs_template_instance_flag = (
+            current_settings.get("source_template") is True
+            and current_settings.get("source_template_instance") is not True
+        )
         if "settings" in patch:
-            current = current_settings if isinstance(current_settings, dict) else {}
+            current = current_settings
             incoming = patch.get("settings") if isinstance(patch.get("settings"), dict) else {}
+            if needs_template_instance_flag:
+                incoming = dict(incoming)
+                incoming.setdefault("source_template_instance", True)
             current, changed_settings, secret_fields = _provider_settings_patch(current, incoming)
             incoming = {key: current.get(key) for key in changed_settings}
             changed_fields.extend(sorted(incoming.keys()))
+            updates["settings_json"] = json_dumps(current)
+        elif needs_template_instance_flag:
+            current = dict(current_settings)
+            current["source_template_instance"] = True
+            changed_fields.append("source_template_instance")
             updates["settings_json"] = json_dumps(current)
         assignments = ", ".join(f"{key}=?" for key in updates)
         con.execute(
@@ -36861,6 +37384,56 @@ def slskd_active_stall_policy(con):
     }
 
 
+def slskd_concurrent_transfer_cap(con):
+    """Resolve the effective cap on InkDrop's own simultaneous SLSKD transfers.
+
+    A plain user-editable setting, not a runtime/environment-overridden
+    policy like the stall thresholds below -- there's no operational reason
+    for this one to differ between deploys, so it doesn't need that extra
+    resolution layer.
+    """
+    row = con.execute(
+        "select value_json from app_settings where key=?",
+        (SLSKD_CONCURRENT_TRANSFER_CAP_SETTING_KEY,),
+    ).fetchone()
+    value = safe_float(
+        json_loads(row["value_json"], SLSKD_CONCURRENT_TRANSFER_CAP_DEFAULT) if row else SLSKD_CONCURRENT_TRANSFER_CAP_DEFAULT,
+        SLSKD_CONCURRENT_TRANSFER_CAP_DEFAULT,
+    )
+    return int(max(SLSKD_CONCURRENT_TRANSFER_CAP_MIN, min(value, SLSKD_CONCURRENT_TRANSFER_CAP_MAX)))
+
+
+def slskd_active_transfer_slot_count(con):
+    """Count download_tasks currently occupying an SLSKD transfer slot.
+
+    Covers both an actively-transferring task and one that's been handed to
+    SLSKD but hasn't started moving bytes yet (SLSKD_ACTIVE_DOWNLOAD_STATUSES)
+    -- both represent a live request InkDrop already has open against SLSKD
+    right now, which is what a burst-smoothing cap needs to count. A task
+    that's finished transferring and is only waiting on our own import/
+    verification pipeline no longer holds an SLSKD-side slot, so it's
+    correctly excluded once it reaches a staged status.
+    """
+    placeholders = ",".join("?" for _ in SLSKD_ACTIVE_DOWNLOAD_STATUSES)
+    row = con.execute(
+        f"""
+        select count(*) as c
+        from download_tasks dt
+        join queue_items q on q.id = dt.queue_id
+        where q.active = 1
+          and dt.state = 'downloading'
+          and lower(coalesce(dt.status, '')) in ({placeholders})
+          and (
+            lower(coalesce(dt.download_client, '')) = 'slskd'
+            or lower(coalesce(dt.source, '')) in ('slskd', 'soulseek')
+            or lower(coalesce(dt.protocol, '')) in ('slskd', 'soulseek')
+          )
+        """,
+        tuple(SLSKD_ACTIVE_DOWNLOAD_STATUSES),
+    ).fetchone()
+    return int(row["c"]) if row and row["c"] is not None else 0
+
+
 def slskd_queued_wait_stall_policy(con):
     """Resolve the effective SLSKD queued/waiting-with-no-progress stall policy.
 
@@ -36913,6 +37486,11 @@ def queue_watchdog_policy(con):
         SLSKD_NEVER_STARTED_STALE_HOURS_DEFAULT,
     ) or SLSKD_NEVER_STARTED_STALE_HOURS_DEFAULT
     never_started_hours = max(SLSKD_NEVER_STARTED_MIN_HOURS, min(never_started_hours, SLSKD_NEVER_STARTED_MAX_HOURS))
+    import_authority_ttl_hours = safe_float(
+        _app_setting_value_from_connection(con, IMPORT_AUTHORITY_TTL_SETTING_KEY, IMPORT_AUTHORITY_TTL_HOURS_DEFAULT),
+        IMPORT_AUTHORITY_TTL_HOURS_DEFAULT,
+    ) or IMPORT_AUTHORITY_TTL_HOURS_DEFAULT
+    import_authority_ttl_hours = max(IMPORT_AUTHORITY_TTL_MIN_HOURS, min(import_authority_ttl_hours, IMPORT_AUTHORITY_TTL_MAX_HOURS))
     return {
         "enabled": enabled,
         "slskd_stale_seconds": slskd_stall["seconds"],
@@ -36924,6 +37502,8 @@ def queue_watchdog_policy(con):
         "retry_delay_seconds": max(60, retry_minutes * 60),
         "slskd_never_started_stale_seconds": never_started_hours * 60 * 60,
         "slskd_never_started_stale_hours": never_started_hours,
+        "import_authority_ttl_seconds": int(import_authority_ttl_hours * 60 * 60),
+        "import_authority_ttl_hours": import_authority_ttl_hours,
     }
 
 

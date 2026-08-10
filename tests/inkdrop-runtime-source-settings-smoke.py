@@ -810,6 +810,54 @@ def main():
         opds_config = inkdrop_state.provider_config(db_path, "generic_opds_catalog")
         assert_true(opds_config["enabled"], "runtime Generic OPDS catalog can be enabled")
 
+        # A source_template:True row enabled/edited directly through this
+        # endpoint (not cloned via add_provider_config_from_template) must
+        # stop classifying as an unconfigured template -- otherwise it
+        # stays hidden behind the Experimental/compatibility drawer even
+        # after a user genuinely configures it (the real Suwayomi/MangaDex
+        # bug: both ship source_template:True with no matching instance
+        # flag, and neither is cloned from a template, so nothing ever
+        # cleared it).
+        suwayomi_before = inkdrop_state.provider_config(db_path, "suwayomi")
+        assert_true(
+            suwayomi_before["settings"].get("source_template") is True,
+            "fixture sanity: Suwayomi ships source_template:True like every other catalog row",
+        )
+        assert_true(
+            suwayomi_before["settings"].get("source_template_instance") is not True,
+            "fixture sanity: Suwayomi has not been enabled yet, so it has no instance flag",
+        )
+        inkdrop_state.update_provider_config(db_path, "suwayomi", {"enabled": True})
+        suwayomi_after = inkdrop_state.provider_config(db_path, "suwayomi")
+        assert_true(
+            suwayomi_after["settings"].get("source_template_instance") is True,
+            "enabling Suwayomi directly clears its unconfigured-template classification",
+        )
+        # A template nobody has touched must stay exactly that -- a
+        # template, not silently marked as a real instance. Standard
+        # Ebooks is never enabled/edited anywhere else in this file.
+        untouched_template = inkdrop_state.provider_config(db_path, "standard_ebooks")
+        assert_true(
+            untouched_template["settings"].get("source_template") is True,
+            "fixture sanity: Standard Ebooks ships source_template:True like every other catalog row",
+        )
+        assert_true(
+            untouched_template["settings"].get("source_template_instance") is not True,
+            "a template nobody enabled or edited keeps its unconfigured classification",
+        )
+        # A provider that was never template-shaped in the first place
+        # (no source_template key at all) must not gain this key either --
+        # the fix is a no-op for the overwhelming majority of providers.
+        qbittorrent_after = inkdrop_state.provider_config(db_path, "qbittorrent")
+        assert_true(
+            "source_template" not in qbittorrent_after["settings"],
+            "fixture sanity: qBittorrent was never template-shaped",
+        )
+        assert_true(
+            "source_template_instance" not in qbittorrent_after["settings"],
+            "a provider with no source_template flag never gains an instance flag either",
+        )
+
     ok("runtime settings include catalog source templates without enabling them")
 
 

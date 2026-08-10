@@ -29,6 +29,8 @@ DOWNLOAD_TASK_SCAN_LIMIT = 500
 TASK_WATCH_PREFIX = "dt:"
 TASK_WATCH_RETENTION_SECONDS = 30 * 86400
 
+QUEUE_VERIFIED_SCAN_LIMIT = 500
+
 # A queue in one of these states (or inactive) has no automatic path left --
 # matches the same terminal-state vocabulary inkdrop_slskd_source_probe.py
 # already uses to decide which queues are still worth reconciling. Anything
@@ -147,6 +149,67 @@ def scan_grabbed_and_download_failed(db_path):
     return fired
 
 
+def scan_import_verified(db_path):
+    """import_verified used to be fired ad hoc from just 2 of the ~11 code
+    paths that can mark a queue item state='verified' -- everything else
+    (sync_queue, pack imports, folder-presence backfills, duplicate-issue
+    reconciliation, and more) went silent. Watching the shared 'verified'
+    transition itself, the same way scan_grabbed_and_download_failed watches
+    download_tasks instead of every call site that can grab or fail a task,
+    makes the notification independent of which code path completed the
+    import. notify_wanted_cleared() already dedupes repeat re-confirmations
+    of the same issue via its own occurrence_key + 24h channel window, so no
+    extra per-row "already announced" state is needed here -- the watermark
+    alone is enough to avoid rescanning old rows."""
+    watermark_key = "scan:queue_items:import_verified:watermark"
+    watermark = float(store.get_watch_state(db_path, watermark_key).get("updated_at") or 0)
+
+    con = _read_only_connect(db_path)
+    try:
+        rows = con.execute(
+            """
+            select q.id, q.series_id, q.issue_id, q.updated_at,
+                   s.title as series_title, i.issue_number, i.title as issue_title
+            from queue_items q
+            left join series s on s.id = q.series_id
+            left join issues i on i.id = q.issue_id
+            where q.state = 'verified' and q.updated_at > ?
+            order by q.updated_at asc
+            limit ?
+            """,
+            (watermark, QUEUE_VERIFIED_SCAN_LIMIT),
+        ).fetchall()
+    finally:
+        con.close()
+
+    fired = 0
+    max_seen = watermark
+    for row in rows:
+        max_seen = max(max_seen, float(row["updated_at"] or 0))
+        try:
+            inkdrop_notifications.notify_wanted_cleared(
+                db_path,
+                series=row["series_title"] or "A series",
+                issue_title=row["issue_title"],
+                issue_number=row["issue_number"],
+                series_id=row["series_id"],
+                issue_id=row["issue_id"],
+            )
+        except Exception:
+            # notify() is documented to never raise -- this is defense in
+            # depth, not a path that should ever trigger. It matters here
+            # specifically because the watermark only advances after the
+            # whole loop: an uncaught raise mid-batch would abort before
+            # max_seen is ever persisted, so every row already notified
+            # earlier in this same pass would be re-notified next time.
+            pass
+        fired += 1
+
+    if max_seen > watermark:
+        store.set_watch_state(db_path, watermark_key, {"updated_at": max_seen})
+    return {"import_verified": fired}
+
+
 def scan_health(db_path):
     """Diff each curated provider's on-demand health check against its
     last-seen state. Only a clean 'error' -> non-error (or the reverse)
@@ -217,6 +280,7 @@ def run_scan(db_path):
     results = {}
     for name, fn in (
         ("download_tasks", scan_grabbed_and_download_failed),
+        ("import_verified", scan_import_verified),
         ("health", scan_health),
         ("application_update", scan_application_update),
     ):

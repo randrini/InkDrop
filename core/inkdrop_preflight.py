@@ -58,6 +58,7 @@ REQUIRED_PYTHON_MODULES = {
     "PIL": "Pillow",
     "py7zr": "py7zr",
     "rarfile": "rarfile",
+    "cryptography": "cryptography",
 }
 
 OPTIONAL_RUNTIME_ROOTS = {"staging_dir", "manual_inbox_dir", "quarantine_dir"}

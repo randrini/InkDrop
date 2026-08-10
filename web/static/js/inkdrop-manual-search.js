@@ -28,6 +28,8 @@
     pendingGrabs: new Set(),
     pushedRoute: false,
     returnFocus: null,
+    sessionId: 0,
+    closingSessionId: -1,
   };
 
   function api() {
@@ -561,6 +563,14 @@
       window.dispatchEvent(new CustomEvent("inkdrop:manual-search-unavailable", { detail: { reason: "canonical_unit_id_required" } }));
       return false;
     }
+    // Each open() gets its own session id. window.history.back() (used by
+    // close() below) resolves asynchronously -- a "close issue A, open issue
+    // B" click sequence can start B's session before A's pending back()
+    // fires its popstate. Without this guard, that late popstate would tear
+    // down B's freshly-opened modal (see the popstate listener), which is
+    // exactly what made back-to-back searches look like they silently did
+    // nothing until the page was refreshed.
+    state.sessionId += 1;
     state.returnFocus = document.activeElement;
     reset(context);
     let element = root();
@@ -588,6 +598,7 @@
     document.body.classList.remove("manual-search-open");
     if (!fromPopState && state.pushedRoute && new URL(window.location.href).searchParams.get(ROUTE_KEY) === "1") {
       state.pushedRoute = false;
+      state.closingSessionId = state.sessionId;
       window.history.back();
     } else {
       state.pushedRoute = false;
@@ -596,6 +607,13 @@
   }
 
   window.addEventListener("popstate", () => {
+    // A popstate here can be the delayed result of THIS module's own
+    // history.back() (queued by an earlier close()) or a real click of the
+    // browser's own Back button. Only the former is stale-able: if a newer
+    // open() session has started since that back() was queued, this event
+    // belongs to a session that's no longer current and must not close
+    // whatever the user has open now.
+    if (state.closingSessionId !== -1 && state.closingSessionId !== state.sessionId) return;
     if (root() && new URL(window.location.href).searchParams.get(ROUTE_KEY) !== "1") close({ fromPopState: true });
   });
   document.addEventListener("keydown", (event) => {
