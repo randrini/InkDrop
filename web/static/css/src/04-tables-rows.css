@@ -135,10 +135,9 @@
 .section-table-wanted .section-table-head,
 .section-table-wanted .section-table-row {
   min-width: 1040px;
-  grid-template-columns: 30px minmax(280px, 1.15fr) minmax(108px, 0.3fr) minmax(
-      130px,
-      0.4fr
-    ) minmax(260px, 0.85fr) minmax(132px, 0.34fr);
+  grid-template-columns:
+    30px minmax(280px, 1.15fr) minmax(108px, 0.3fr) minmax(130px, 0.4fr)
+    minmax(260px, 0.85fr) minmax(132px, 0.34fr);
   gap: 8px;
 }
 .section-table-queue,
@@ -159,10 +158,9 @@
 .section-table-history .section-table-head,
 .section-table-history .section-table-row {
   min-width: 980px;
-  grid-template-columns: minmax(280px, 0.85fr) minmax(112px, 0.28fr) minmax(
-      130px,
-      0.4fr
-    ) minmax(340px, 1.3fr) minmax(210px, 0.55fr);
+  grid-template-columns:
+    minmax(280px, 0.85fr) minmax(112px, 0.28fr) minmax(130px, 0.4fr)
+    minmax(340px, 1.3fr) minmax(210px, 0.55fr);
   gap: 12px;
 }
 .section-table-history {
@@ -178,10 +176,9 @@
 .section-table-source_memory .section-table-head,
 .section-table-source_memory .section-table-row {
   min-width: 940px;
-  grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.55fr) minmax(
-      130px,
-      0.4fr
-    ) minmax(240px, 1.2fr) minmax(200px, 0.7fr);
+  grid-template-columns:
+    minmax(220px, 1fr) minmax(150px, 0.55fr) minmax(130px, 0.4fr)
+    minmax(240px, 1.2fr) minmax(200px, 0.7fr);
   gap: 12px;
 }
 .section-table-source_memory {
@@ -209,10 +206,9 @@
 .section-table-imports .section-table-head,
 .section-table-imports .section-table-row {
   min-width: 1040px;
-  grid-template-columns: 30px minmax(200px, 1.1fr) minmax(110px, 0.5fr) minmax(
-      140px,
-      0.5fr
-    ) minmax(230px, 1.35fr) minmax(160px, 0.75fr);
+  grid-template-columns:
+    30px minmax(200px, 1.1fr) minmax(110px, 0.5fr) minmax(140px, 0.5fr)
+    minmax(230px, 1.35fr) minmax(160px, 0.75fr);
   gap: 10px;
 }
 .section-table-issues,
@@ -321,10 +317,9 @@
 .series-library-table-head,
 .series-library-row {
   display: grid;
-  grid-template-columns: minmax(340px, 2.35fr) minmax(78px, 0.32fr) minmax(
-      126px,
-      0.48fr
-    ) minmax(96px, 0.36fr) minmax(104px, 0.4fr) minmax(120px, 0.42fr) minmax(
+  grid-template-columns:
+    minmax(340px, 2.35fr) minmax(78px, 0.32fr) minmax(126px, 0.48fr)
+    minmax(96px, 0.36fr) minmax(104px, 0.4fr) minmax(120px, 0.42fr) minmax(
       142px,
       0.44fr
     );
@@ -947,10 +942,9 @@ button.series-library-progress:focus {
     display: none;
   }
   .series-library-row {
-    grid-template-columns: minmax(230px, 1.55fr) minmax(68px, 0.28fr) minmax(
-        92px,
-        0.4fr
-      ) minmax(82px, 0.3fr) minmax(82px, 0.3fr) auto;
+    grid-template-columns:
+      minmax(230px, 1.55fr) minmax(68px, 0.28fr) minmax(92px, 0.4fr)
+      minmax(82px, 0.3fr) minmax(82px, 0.3fr) auto;
     grid-template-areas:
       "series year monitor wanted queue actions"
       "series dates monitor wanted queue actions";
@@ -1809,10 +1803,9 @@ body[data-inkdrop-view="queue"] .section-table-queue .section-table-row,
 body[data-inkdrop-view="wanted"] .section-table-wanted .section-table-head,
 body[data-inkdrop-view="wanted"] .section-table-wanted .section-table-row {
   min-width: 1040px;
-  grid-template-columns: 30px minmax(280px, 1.15fr) minmax(108px, 0.3fr) minmax(
-      130px,
-      0.4fr
-    ) minmax(260px, 0.85fr) minmax(132px, 0.34fr);
+  grid-template-columns:
+    30px minmax(280px, 1.15fr) minmax(108px, 0.3fr) minmax(130px, 0.4fr)
+    minmax(260px, 0.85fr) minmax(132px, 0.34fr);
   gap: 8px;
 }
 body[data-inkdrop-view="queue"] .section-table-queue .section-table-row,
@@ -1842,10 +1835,9 @@ body[data-inkdrop-view="manual_review"]
 body[data-inkdrop-view="manual_review"]
   .section-table-manual_review
   .section-table-row {
-  grid-template-columns: minmax(290px, 1.28fr) minmax(112px, 0.42fr) minmax(
-      258px,
-      0.84fr
-    ) minmax(220px, 0.72fr);
+  grid-template-columns:
+    minmax(290px, 1.28fr) minmax(112px, 0.42fr) minmax(258px, 0.84fr)
+    minmax(220px, 0.72fr);
   gap: 8px;
 }
 body[data-inkdrop-view="manual_review"]

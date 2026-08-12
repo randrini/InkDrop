@@ -503,10 +503,9 @@
   body[data-inkdrop-view="queue"] .section-table-queue .section-table-head,
   body[data-inkdrop-view="queue"] .section-table-queue .section-table-row {
     min-width: 1000px;
-    grid-template-columns: minmax(280px, 1.15fr) minmax(108px, 0.3fr) minmax(
-        130px,
-        0.4fr
-      ) minmax(260px, 0.85fr) minmax(132px, 0.34fr);
+    grid-template-columns:
+      minmax(280px, 1.15fr) minmax(108px, 0.3fr) minmax(130px, 0.4fr)
+      minmax(260px, 0.85fr) minmax(132px, 0.34fr);
   }
 
   body[data-inkdrop-view="queue"]
@@ -515,10 +514,9 @@
   body[data-inkdrop-view="queue"]
     .section-table-queue.arr-table-hide-state:not(.arr-table-hide-detail)
     .section-table-row {
-    grid-template-columns: minmax(330px, 1.35fr) minmax(140px, 0.5fr) minmax(
-        300px,
-        1.65fr
-      ) minmax(168px, 0.7fr);
+    grid-template-columns:
+      minmax(330px, 1.35fr) minmax(140px, 0.5fr) minmax(300px, 1.65fr)
+      minmax(168px, 0.7fr);
   }
 
   body[data-inkdrop-view="queue"]
@@ -527,10 +525,9 @@
   body[data-inkdrop-view="queue"]
     .section-table-queue.arr-table-hide-detail:not(.arr-table-hide-state)
     .section-table-row {
-    grid-template-columns: minmax(350px, 1.65fr) minmax(126px, 0.55fr) minmax(
-        140px,
-        0.5fr
-      ) minmax(168px, 0.7fr);
+    grid-template-columns:
+      minmax(350px, 1.65fr) minmax(126px, 0.55fr) minmax(140px, 0.5fr)
+      minmax(168px, 0.7fr);
   }
 
   body[data-inkdrop-view="queue"]
@@ -561,10 +558,9 @@
      the same 4-area layout the row uses, source included. */
   body[data-inkdrop-view="queue"] .section-table-queue .section-table-head,
   body[data-inkdrop-view="wanted"] .section-table-wanted .section-table-head {
-    grid-template-columns: minmax(170px, 1fr) minmax(90px, 0.5fr) minmax(
-        90px,
-        0.5fr
-      ) minmax(64px, auto);
+    grid-template-columns:
+      minmax(170px, 1fr) minmax(90px, 0.5fr) minmax(90px, 0.5fr)
+      minmax(64px, auto);
     grid-template-areas: "item state source actions";
   }
   body[data-inkdrop-view="queue"]
