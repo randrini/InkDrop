@@ -44021,9 +44021,13 @@ def inkdrop_bool_setting(key, default=False):
 
 
 def inkdrop_runtime_paths():
+    COMIC_INCOMING_DEFAULT = COMIC_ROOT / "_Incoming"
+    EBOOK_INCOMING_DEFAULT = Path(env_value("INKDROP_EBOOK_INCOMING_ROOT", "/library/ebooks/_Incoming"))
     return {
         "comic_root": inkdrop_path_setting("path.comic_root", COMIC_ROOT),
         "manga_root": inkdrop_path_setting("path.manga_root", MANGA_ROOT),
+        "comic_incoming_root": inkdrop_path_setting("path.comic_incoming_root", COMIC_INCOMING_DEFAULT),
+        "ebook_incoming_root": inkdrop_path_setting("path.ebook_incoming_root", EBOOK_INCOMING_DEFAULT),
         "kavita_comic_root": inkdrop_text_setting("path.kavita_comic_root", KAVITA_COMIC_ROOT),
         "kavita_manga_root": inkdrop_text_setting("path.kavita_manga_root", KAVITA_MANGA_ROOT),
         "manual_comics_inbox": inkdrop_path_setting("path.manual_comics_inbox", MANUAL_COMICS_INBOX),
@@ -44217,6 +44221,8 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
             ("inkdrop_state", STATE_DIR, "InkDrop state"),
             ("comic_root", runtime_paths.get("comic_root") or COMIC_ROOT, "Comic root"),
             ("manga_root", runtime_paths.get("manga_root") or MANGA_ROOT, "Manga root"),
+            ("comic_incoming_root", runtime_paths.get("comic_incoming_root") or COMIC_ROOT / "_Incoming", "Comic incoming"),
+            ("ebook_incoming_root", runtime_paths.get("ebook_incoming_root") or Path("/library/ebooks/_Incoming"), "Ebook incoming"),
         ]
     disks = [disk_health_item(key, path, label) for key, path, label in disk_targets]
     logs = inkdrop_log_health_items(log_dir=log_dir, explicit_paths=explicit_log_paths, limit=None)
@@ -44308,6 +44314,8 @@ def operator_storage_metrics():
         ("state_root", STATE_DIR, "InkDrop state"),
         ("comics_root", runtime_paths.get("comic_root") or COMIC_ROOT, "Comics root"),
         ("manga_root", runtime_paths.get("manga_root") or MANGA_ROOT, "Manga root"),
+        ("comic_incoming_root", runtime_paths.get("comic_incoming_root") or COMIC_ROOT / "_Incoming", "Comic incoming"),
+        ("ebook_incoming_root", runtime_paths.get("ebook_incoming_root") or Path("/library/ebooks/_Incoming"), "Ebook incoming"),
         ("manual_comics_inbox", runtime_paths.get("manual_comics_inbox") or MANUAL_COMICS_INBOX, "Manual comics inbox"),
         ("slskd_download_root", runtime_paths.get("slskd_download_root") or SLSKD_DOWNLOAD_ROOT, "SLSKD download root"),
     ]
@@ -44321,6 +44329,8 @@ def support_bundle_system_health_summary():
         ("inkdrop_state", STATE_DIR, "InkDrop state"),
         ("comic_root", runtime_paths.get("comic_root") or COMIC_ROOT, "Comic root"),
         ("manga_root", runtime_paths.get("manga_root") or MANGA_ROOT, "Manga root"),
+        ("comic_incoming_root", runtime_paths.get("comic_incoming_root") or COMIC_ROOT / "_Incoming", "Comic incoming"),
+        ("ebook_incoming_root", runtime_paths.get("ebook_incoming_root") or Path("/library/ebooks/_Incoming"), "Ebook incoming"),
         (
             "manual_comics_inbox",
             runtime_paths.get("manual_comics_inbox") or MANUAL_COMICS_INBOX,
@@ -50136,11 +50146,27 @@ def runtime_provider_settings():
                 "source": "runtime",
             },
             {
+                "key": "path.comic_incoming_root",
+                "scope": "path",
+                "label": "Comic Incoming Root",
+                "value": str(runtime_paths["comic_incoming_root"]),
+                "description": "Folder inside the comic library root where newly imported comics are placed (e.g. /library/comics/_Incoming). Defaults to {comic_root}/_Incoming.",
+                "source": "runtime",
+            },
+            {
+                "key": "path.ebook_incoming_root",
+                "scope": "path",
+                "label": "Ebook Incoming Root",
+                "value": str(runtime_paths["ebook_incoming_root"]),
+                "description": "Folder where newly imported ebooks are placed (e.g. /library/ebooks/_Incoming).",
+                "source": "runtime",
+            },
+            {
                 "key": "path.slskd_download_root",
                 "scope": "path",
                 "label": "SLSKD Download Root",
                 "value": str(runtime_paths["slskd_download_root"]),
-                "description": "Host folder watched for completed SLSKD downloads.",
+                "description": "Folder InkDrop watches for completed SLSKD transfers, as seen inside InkDrop's own container (e.g. /data/soulseek/downloads). This is the default for new SLSKD download client instances — a per-instance Download Root override takes priority over this global setting.",
                 "source": "runtime",
             },
             {
@@ -50148,7 +50174,7 @@ def runtime_provider_settings():
                 "scope": "path",
                 "label": "SLSKD Incomplete Root",
                 "value": str(runtime_paths["slskd_incomplete_root"]),
-                "description": "Host folder where SLSKD keeps incomplete downloads.",
+                "description": "Folder where SLSKD stores in-progress transfers, as seen inside InkDrop's own container (e.g. /data/soulseek/incomplete). Defaults to {download_root}/incomplete. A per-instance Incomplete Root override takes priority over this global setting.",
                 "source": "runtime",
             },
             {
