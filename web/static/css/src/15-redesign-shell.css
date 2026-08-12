@@ -273,7 +273,7 @@
     width: 38px;
     height: 38px;
     border-radius: 999px;
-    background: rgba(114, 210, 255, .16);
+    background: rgba(114, 210, 255, 0.16);
   }
   .arr-page-stat-icon::before,
   .section-workbench-card-icon::before {
@@ -287,47 +287,99 @@
     width: 18px;
     height: 18px;
     background: var(--accent);
-    -webkit-mask: var(--arr-stat-icon-mask, radial-gradient(circle at center, #000 0 52%, transparent 54%)) center / contain no-repeat;
-    mask: var(--arr-stat-icon-mask, radial-gradient(circle at center, #000 0 52%, transparent 54%)) center / contain no-repeat;
+    -webkit-mask: var(
+        --arr-stat-icon-mask,
+        radial-gradient(circle at center, #000 0 52%, transparent 54%)
+      )
+      center / contain no-repeat;
+    mask: var(
+        --arr-stat-icon-mask,
+        radial-gradient(circle at center, #000 0 52%, transparent 54%)
+      )
+      center / contain no-repeat;
   }
-  .arr-page-stat.good .arr-page-stat-icon { background: rgba(120, 217, 155, .18); }
-  .arr-page-stat.good .arr-page-stat-icon::before { background: var(--good); }
-  .arr-page-stat.warn .arr-page-stat-icon { background: rgba(247, 201, 111, .18); }
-  .arr-page-stat.warn .arr-page-stat-icon::before { background: var(--warn); }
-  .arr-page-stat.bad .arr-page-stat-icon { background: rgba(255, 125, 125, .18); }
-  .arr-page-stat.bad .arr-page-stat-icon::before { background: var(--bad); }
+  .arr-page-stat.good .arr-page-stat-icon {
+    background: rgba(120, 217, 155, 0.18);
+  }
+  .arr-page-stat.good .arr-page-stat-icon::before {
+    background: var(--good);
+  }
+  .arr-page-stat.warn .arr-page-stat-icon {
+    background: rgba(247, 201, 111, 0.18);
+  }
+  .arr-page-stat.warn .arr-page-stat-icon::before {
+    background: var(--warn);
+  }
+  .arr-page-stat.bad .arr-page-stat-icon {
+    background: rgba(255, 125, 125, 0.18);
+  }
+  .arr-page-stat.bad .arr-page-stat-icon::before {
+    background: var(--bad);
+  }
   .arr-page-stat-icon[data-icon="search"],
-  .section-workbench-card-icon[data-icon="search"] { --arr-stat-icon-mask: var(--arr-glyph-search); }
+  .section-workbench-card-icon[data-icon="search"] {
+    --arr-stat-icon-mask: var(--arr-glyph-search);
+  }
   .arr-page-stat-icon[data-icon="bolt"],
-  .section-workbench-card-icon[data-icon="bolt"] { --arr-stat-icon-mask: var(--arr-glyph-bolt); }
+  .section-workbench-card-icon[data-icon="bolt"] {
+    --arr-stat-icon-mask: var(--arr-glyph-bolt);
+  }
   .arr-page-stat-icon[data-icon="x-plain"],
-  .section-workbench-card-icon[data-icon="x-plain"] { --arr-stat-icon-mask: var(--arr-glyph-x-plain); }
+  .section-workbench-card-icon[data-icon="x-plain"] {
+    --arr-stat-icon-mask: var(--arr-glyph-x-plain);
+  }
   .arr-page-stat-icon[data-icon="peers"],
-  .section-workbench-card-icon[data-icon="peers"] { --arr-stat-icon-mask: var(--arr-glyph-peers); }
+  .section-workbench-card-icon[data-icon="peers"] {
+    --arr-stat-icon-mask: var(--arr-glyph-peers);
+  }
   .arr-page-stat-icon[data-icon="cloud-download"],
-  .section-workbench-card-icon[data-icon="cloud-download"] { --arr-stat-icon-mask: var(--arr-glyph-cloud-download); }
+  .section-workbench-card-icon[data-icon="cloud-download"] {
+    --arr-stat-icon-mask: var(--arr-glyph-cloud-download);
+  }
   .arr-page-stat-icon[data-icon="upload"],
-  .section-workbench-card-icon[data-icon="upload"] { --arr-stat-icon-mask: var(--arr-glyph-upload); }
+  .section-workbench-card-icon[data-icon="upload"] {
+    --arr-stat-icon-mask: var(--arr-glyph-upload);
+  }
   .arr-page-stat-icon[data-icon="clock"],
-  .section-workbench-card-icon[data-icon="clock"] { --arr-stat-icon-mask: var(--arr-glyph-clock); }
+  .section-workbench-card-icon[data-icon="clock"] {
+    --arr-stat-icon-mask: var(--arr-glyph-clock);
+  }
   .arr-page-stat-icon[data-icon="check"],
-  .section-workbench-card-icon[data-icon="check"] { --arr-stat-icon-mask: var(--arr-glyph-check); }
+  .section-workbench-card-icon[data-icon="check"] {
+    --arr-stat-icon-mask: var(--arr-glyph-check);
+  }
   .arr-page-stat-icon[data-icon="x"],
-  .section-workbench-card-icon[data-icon="x"] { --arr-stat-icon-mask: var(--arr-glyph-x); }
+  .section-workbench-card-icon[data-icon="x"] {
+    --arr-stat-icon-mask: var(--arr-glyph-x);
+  }
   .arr-page-stat-icon[data-icon="refresh"],
-  .section-workbench-card-icon[data-icon="refresh"] { --arr-stat-icon-mask: var(--arr-glyph-refresh); }
+  .section-workbench-card-icon[data-icon="refresh"] {
+    --arr-stat-icon-mask: var(--arr-glyph-refresh);
+  }
   .arr-page-stat-icon[data-icon="eye"],
-  .section-workbench-card-icon[data-icon="eye"] { --arr-stat-icon-mask: var(--arr-glyph-eye); }
+  .section-workbench-card-icon[data-icon="eye"] {
+    --arr-stat-icon-mask: var(--arr-glyph-eye);
+  }
   .arr-page-stat-icon[data-icon="alert"],
-  .section-workbench-card-icon[data-icon="alert"] { --arr-stat-icon-mask: var(--arr-glyph-alert); }
+  .section-workbench-card-icon[data-icon="alert"] {
+    --arr-stat-icon-mask: var(--arr-glyph-alert);
+  }
   .arr-page-stat-icon[data-icon="shield"],
-  .section-workbench-card-icon[data-icon="shield"] { --arr-stat-icon-mask: var(--arr-glyph-shield); }
+  .section-workbench-card-icon[data-icon="shield"] {
+    --arr-stat-icon-mask: var(--arr-glyph-shield);
+  }
   .arr-page-stat-icon[data-icon="calendar"],
-  .section-workbench-card-icon[data-icon="calendar"] { --arr-stat-icon-mask: var(--arr-glyph-calendar); }
+  .section-workbench-card-icon[data-icon="calendar"] {
+    --arr-stat-icon-mask: var(--arr-glyph-calendar);
+  }
   .arr-page-stat-icon[data-icon="radar"],
-  .section-workbench-card-icon[data-icon="radar"] { --arr-stat-icon-mask: var(--arr-glyph-radar); }
+  .section-workbench-card-icon[data-icon="radar"] {
+    --arr-stat-icon-mask: var(--arr-glyph-radar);
+  }
   .arr-page-stat-icon[data-icon="download"],
-  .section-workbench-card-icon[data-icon="download"] { --arr-stat-icon-mask: var(--arr-glyph-download); }
+  .section-workbench-card-icon[data-icon="download"] {
+    --arr-stat-icon-mask: var(--arr-glyph-download);
+  }
 
   /* Workbench summary cards with an icon (today: the Blocklist counts).
      The card is a single-column grid of title/count/detail spans; when
@@ -348,16 +400,29 @@
   /* :not() keeps the icon span out of this text-column rule -- the icon is
      also a span, and without the exclusion this selector out-specifies the
      icon's own grid-column: 1 above. */
-  .section-workbench-card:has(.section-workbench-card-icon) > span:not(.section-workbench-card-icon),
+  .section-workbench-card:has(.section-workbench-card-icon)
+    > span:not(.section-workbench-card-icon),
   .section-workbench-card:has(.section-workbench-card-icon) > strong {
     grid-column: 2;
   }
-  .section-workbench-card.good .section-workbench-card-icon { background: rgba(120, 217, 155, .18); }
-  .section-workbench-card.good .section-workbench-card-icon::before { background: var(--good); }
-  .section-workbench-card.warn .section-workbench-card-icon { background: rgba(247, 201, 111, .18); }
-  .section-workbench-card.warn .section-workbench-card-icon::before { background: var(--warn); }
-  .section-workbench-card.bad .section-workbench-card-icon { background: rgba(255, 125, 125, .18); }
-  .section-workbench-card.bad .section-workbench-card-icon::before { background: var(--bad); }
+  .section-workbench-card.good .section-workbench-card-icon {
+    background: rgba(120, 217, 155, 0.18);
+  }
+  .section-workbench-card.good .section-workbench-card-icon::before {
+    background: var(--good);
+  }
+  .section-workbench-card.warn .section-workbench-card-icon {
+    background: rgba(247, 201, 111, 0.18);
+  }
+  .section-workbench-card.warn .section-workbench-card-icon::before {
+    background: var(--warn);
+  }
+  .section-workbench-card.bad .section-workbench-card-icon {
+    background: rgba(255, 125, 125, 0.18);
+  }
+  .section-workbench-card.bad .section-workbench-card-icon::before {
+    background: var(--bad);
+  }
 }
 
 /* Filter/tab pill row: restyles the existing arr-table-view-strip/chip
@@ -426,14 +491,24 @@
     background: var(--bad);
     color: #0b1720;
   }
-  body[data-inkdrop-view="queue"] .arr-table-view-chip.active .arr-table-view-count,
-  body[data-inkdrop-view="wanted"] .arr-table-view-chip.active .arr-table-view-count,
-  body[data-inkdrop-view="history"] .arr-table-view-chip.active .arr-table-view-count,
-  body[data-inkdrop-view="source_memory"] .arr-table-view-chip.active .arr-table-view-count,
-  body[data-inkdrop-view="manual_review"] .arr-table-view-chip.active .arr-table-view-count {
-    border-color: rgba(11, 23, 32, .3);
+  body[data-inkdrop-view="queue"]
+    .arr-table-view-chip.active
+    .arr-table-view-count,
+  body[data-inkdrop-view="wanted"]
+    .arr-table-view-chip.active
+    .arr-table-view-count,
+  body[data-inkdrop-view="history"]
+    .arr-table-view-chip.active
+    .arr-table-view-count,
+  body[data-inkdrop-view="source_memory"]
+    .arr-table-view-chip.active
+    .arr-table-view-count,
+  body[data-inkdrop-view="manual_review"]
+    .arr-table-view-chip.active
+    .arr-table-view-count {
+    border-color: rgba(11, 23, 32, 0.3);
     color: #0b1720;
-    background: rgba(11, 23, 32, .16);
+    background: rgba(11, 23, 32, 0.16);
   }
 }
 
@@ -465,33 +540,83 @@
     width: 34px;
     height: 34px;
     border-radius: 999px;
-    background: rgba(114, 210, 255, .16);
+    background: rgba(114, 210, 255, 0.16);
   }
   body[data-inkdrop-view="source_memory"] .section-workbench-card-icon::before {
     content: "";
     width: 16px;
     height: 16px;
     background: var(--accent);
-    -webkit-mask: var(--arr-stat-icon-mask, radial-gradient(circle at center, #000 0 52%, transparent 54%)) center / contain no-repeat;
-    mask: var(--arr-stat-icon-mask, radial-gradient(circle at center, #000 0 52%, transparent 54%)) center / contain no-repeat;
+    -webkit-mask: var(
+        --arr-stat-icon-mask,
+        radial-gradient(circle at center, #000 0 52%, transparent 54%)
+      )
+      center / contain no-repeat;
+    mask: var(
+        --arr-stat-icon-mask,
+        radial-gradient(circle at center, #000 0 52%, transparent 54%)
+      )
+      center / contain no-repeat;
   }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card.good .section-workbench-card-icon { background: rgba(120, 217, 155, .18); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card.good .section-workbench-card-icon::before { background: var(--good); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card.warn .section-workbench-card-icon { background: rgba(247, 201, 111, .18); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card.warn .section-workbench-card-icon::before { background: var(--warn); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card.bad .section-workbench-card-icon { background: rgba(255, 125, 125, .18); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card.bad .section-workbench-card-icon::before { background: var(--bad); }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card.good
+    .section-workbench-card-icon {
+    background: rgba(120, 217, 155, 0.18);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card.good
+    .section-workbench-card-icon::before {
+    background: var(--good);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card.warn
+    .section-workbench-card-icon {
+    background: rgba(247, 201, 111, 0.18);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card.warn
+    .section-workbench-card-icon::before {
+    background: var(--warn);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card.bad
+    .section-workbench-card-icon {
+    background: rgba(255, 125, 125, 0.18);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card.bad
+    .section-workbench-card-icon::before {
+    background: var(--bad);
+  }
   /* Distinct per-source icon hues (mockup gives every stat card its own
      color). Tone classes above still win for Blocked (red); these cover the
      tone-less cards: calendar=blue (accent default), shield=teal,
      refresh=purple, cloud-download=amber. Keyed by data-icon rather than a
      new tone system since each icon appears exactly once on this page. */
-  body[data-inkdrop-view="source_memory"] .section-workbench-card-icon[data-icon="shield"] { background: rgba(94, 214, 198, .16); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card-icon[data-icon="shield"]::before { background: #5ed6c6; }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card-icon[data-icon="refresh"] { background: rgba(178, 140, 255, .18); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card-icon[data-icon="refresh"]::before { background: #b28cff; }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card-icon[data-icon="cloud-download"] { background: rgba(247, 201, 111, .18); }
-  body[data-inkdrop-view="source_memory"] .section-workbench-card-icon[data-icon="cloud-download"]::before { background: var(--warn); }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card-icon[data-icon="shield"] {
+    background: rgba(94, 214, 198, 0.16);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card-icon[data-icon="shield"]::before {
+    background: #5ed6c6;
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card-icon[data-icon="refresh"] {
+    background: rgba(178, 140, 255, 0.18);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card-icon[data-icon="refresh"]::before {
+    background: #b28cff;
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card-icon[data-icon="cloud-download"] {
+    background: rgba(247, 201, 111, 0.18);
+  }
+  body[data-inkdrop-view="source_memory"]
+    .section-workbench-card-icon[data-icon="cloud-download"]::before {
+    background: var(--warn);
+  }
 }
 
 .arr-table-text-filter {
@@ -534,8 +659,10 @@
   body[data-inkdrop-view="source_memory"] #inkdropCore {
     min-width: 0;
   }
-  body[data-inkdrop-view="manual_review"] .manual-review-decision-modal:not([hidden]),
-  body[data-inkdrop-view="source_memory"] .source-memory-detail-panel:not([hidden]) {
+  body[data-inkdrop-view="manual_review"]
+    .manual-review-decision-modal:not([hidden]),
+  body[data-inkdrop-view="source_memory"]
+    .source-memory-detail-panel:not([hidden]) {
     display: block !important;
     position: sticky;
     top: 22px;
@@ -559,8 +686,12 @@
     flex-direction: column;
     overflow: hidden;
   }
-  body[data-inkdrop-view="manual_review"] .manual-review-decision-dialog .series-remove-body,
-  body[data-inkdrop-view="source_memory"] .source-memory-detail-dialog .series-remove-body {
+  body[data-inkdrop-view="manual_review"]
+    .manual-review-decision-dialog
+    .series-remove-body,
+  body[data-inkdrop-view="source_memory"]
+    .source-memory-detail-dialog
+    .series-remove-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -571,12 +702,24 @@
      facts painted straight through the Actions cards -- the "text
      overwriting" seen live. These panels are a plain vertical stack;
      block flow cannot overlap and overflow goes to the body scrollbar. */
-  body[data-inkdrop-view="manual_review"] .manual-review-decision-dialog .series-remove-body,
-  body[data-inkdrop-view="source_memory"] .source-memory-detail-dialog .series-remove-body {
+  body[data-inkdrop-view="manual_review"]
+    .manual-review-decision-dialog
+    .series-remove-body,
+  body[data-inkdrop-view="source_memory"]
+    .source-memory-detail-dialog
+    .series-remove-body {
     display: block;
   }
-  body[data-inkdrop-view="manual_review"] .manual-review-decision-dialog .series-remove-body > * + *,
-  body[data-inkdrop-view="source_memory"] .source-memory-detail-dialog .series-remove-body > * + * {
+  body[data-inkdrop-view="manual_review"]
+    .manual-review-decision-dialog
+    .series-remove-body
+    > *
+    + *,
+  body[data-inkdrop-view="source_memory"]
+    .source-memory-detail-dialog
+    .series-remove-body
+    > *
+    + * {
     margin-top: 12px;
   }
   /* At the docked panel's fixed 400px, the side-by-side Expected/Candidate
@@ -584,7 +727,9 @@
      into one-character-per-line stacks (overflow-wrap: anywhere doing
      exactly what it says in a column with no room). Stack the two evidence
      sections vertically inside the docked panel instead. */
-  body[data-inkdrop-view="manual_review"] .manual-review-decision-modal .manual-review-evidence-columns {
+  body[data-inkdrop-view="manual_review"]
+    .manual-review-decision-modal
+    .manual-review-evidence-columns {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -592,19 +737,25 @@
      hidden. The Blocklist panel now closes ONLY via this X -- its footer
      strip is gone (it painted past the dialog's max-height boundary and
      floated over the table below). */
-  body[data-inkdrop-view="manual_review"] .manual-review-decision-modal .series-remove-close {
+  body[data-inkdrop-view="manual_review"]
+    .manual-review-decision-modal
+    .series-remove-close {
     display: none;
   }
   /* Both pages start with no row selected -- showing a placeholder card here
      would be misleading (nothing is "selected" yet), so the column collapses
      instead of reserving space for an empty card. */
-  body[data-inkdrop-view="source_memory"] #opDetailDock:has(.source-memory-detail-panel[hidden]),
-  body[data-inkdrop-view="manual_review"] #opDetailDock:has(.manual-review-decision-modal[hidden]) {
+  body[data-inkdrop-view="source_memory"]
+    #opDetailDock:has(.source-memory-detail-panel[hidden]),
+  body[data-inkdrop-view="manual_review"]
+    #opDetailDock:has(.manual-review-decision-modal[hidden]) {
     grid-template-columns: minmax(0, 1fr);
   }
-  body[data-inkdrop-view="source_memory"] .section-table-row.selected-detail-row,
-  body[data-inkdrop-view="manual_review"] .section-table-row.selected-detail-row {
-    background: rgba(114, 210, 255, .07);
+  body[data-inkdrop-view="source_memory"]
+    .section-table-row.selected-detail-row,
+  body[data-inkdrop-view="manual_review"]
+    .section-table-row.selected-detail-row {
+    background: rgba(114, 210, 255, 0.07);
     box-shadow: inset 3px 0 0 var(--accent);
   }
   /* Manual Review's existing bucket filter (All/Source hints/Ambiguous/
@@ -649,7 +800,7 @@
   color: var(--muted);
   font-size: var(--font-xs, 11px);
   font-weight: var(--weight-semibold, 700);
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 .source-memory-detail-section-label:first-child {
@@ -713,8 +864,8 @@
   font-size: var(--font-xs, 11px);
 }
 .source-memory-detail-remove:hover {
-  border-color: rgba(255, 125, 125, .45);
-  background: rgba(255, 125, 125, .08);
+  border-color: rgba(255, 125, 125, 0.45);
+  background: rgba(255, 125, 125, 0.08);
 }
 
 /* Page-level alert banner (currently used by Queue's "N downloads need
@@ -726,14 +877,14 @@
   justify-content: space-between;
   gap: 14px;
   margin: 0 0 16px;
-  border: 1px solid rgba(255, 125, 125, .38);
+  border: 1px solid rgba(255, 125, 125, 0.38);
   border-radius: 10px;
   padding: 12px 16px;
-  background: rgba(255, 125, 125, .1);
+  background: rgba(255, 125, 125, 0.1);
 }
 .arr-page-alert-banner.warn {
-  border-color: rgba(247, 201, 111, .42);
-  background: rgba(247, 201, 111, .1);
+  border-color: rgba(247, 201, 111, 0.42);
+  background: rgba(247, 201, 111, 0.1);
 }
 .arr-page-alert-banner-text {
   display: grid;
