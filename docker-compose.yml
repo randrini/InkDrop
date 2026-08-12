@@ -1,15 +1,22 @@
+# InkDrop docker-compose template.
+#
 # The scheduler runs inside this one service by default, so this is the
 # whole install -- no separate worker container needed.
 #
-# Four mounts, matching the paths the image actually uses:
-#   /config          database, logs, cache, backups, quarantine, manual inbox
-#   /downloads       where downloads land before they are checked and imported
-#   /data/comics     your comic library
-#   /data/manga      your manga library
+# Volume mounts and path settings must agree. The image defaults are:
+#   /config           database, logs, cache, backups, quarantine, manual inbox
+#   /staging          SLSKD downloads, direct downloads, pack staging
+#   /data/comics      your comic library (INKDROP_COMIC_ROOT)
+#   /data/manga       your manga library (INKDROP_MANGA_ROOT)
 #
 # Mounting a library somewhere else without also changing Comic root or
 # Manga root under Settings -> Media Management leaves it invisible to
 # InkDrop, so it is worth keeping these as they are.
+#
+# If you run SLSKD in a separate container, its completed-download folder
+# MUST be mounted at the same path InkDrop sees via INKDROP_SLSKD_DOWNLOAD_ROOT.
+# The default is /staging/slskd — change both the volume and the env var
+# together if you move it.
 services:
   inkdrop:
     image: ghcr.io/jaredbahr/inkdrop:latest
@@ -24,7 +31,7 @@ services:
       - "8796:8796"
     volumes:
       - ./config:/config
-      - ./downloads:/downloads
+      - ./staging:/staging
       - /path/to/your/Comics:/data/comics
       - /path/to/your/Manga:/data/manga
     restart: unless-stopped
