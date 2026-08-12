@@ -5,7 +5,7 @@
 #
 # Volume mounts and path settings must agree. The image defaults are:
 #   /config           database, logs, cache, backups, quarantine, manual inbox
-#   /staging          SLSKD downloads, direct downloads, pack staging
+#   /downloads        staging area for downloads, imports, and SLSKD transfers
 #   /data/comics      your comic library (INKDROP_COMIC_ROOT)
 #   /data/manga       your manga library (INKDROP_MANGA_ROOT)
 #
@@ -15,8 +15,8 @@
 #
 # If you run SLSKD in a separate container, its completed-download folder
 # MUST be mounted at the same path InkDrop sees via INKDROP_SLSKD_DOWNLOAD_ROOT.
-# The default is /staging/slskd — change both the volume and the env var
-# together if you move it.
+# The image default is /downloads/staging/slskd — change both the volume and
+# the env var together if you move it.
 services:
   inkdrop:
     image: ghcr.io/jaredbahr/inkdrop:latest
@@ -31,7 +31,7 @@ services:
       - "8796:8796"
     volumes:
       - ./config:/config
-      - ./staging:/staging
+      - ./downloads:/downloads
       - /path/to/your/Comics:/data/comics
       - /path/to/your/Manga:/data/manga
     restart: unless-stopped

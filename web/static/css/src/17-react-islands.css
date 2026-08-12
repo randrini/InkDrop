@@ -127,7 +127,7 @@
   color: var(--muted);
   font-size: 10px;
   font-weight: var(--weight-semibold, 700);
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
 }
 
 .blocklist-reason-cell {
@@ -179,7 +179,7 @@
   border-radius: 8px;
   padding: 4px;
   background: var(--panel);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, .4);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
 }
 .blocklist-kebab-menu button {
   display: block;
@@ -377,9 +377,18 @@
   white-space: nowrap;
 }
 
-.inkdrop-series-pill.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, var(--border)); }
-.inkdrop-series-pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
-.inkdrop-series-pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--border)); }
+.inkdrop-series-pill.good {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 45%, var(--border));
+}
+.inkdrop-series-pill.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+.inkdrop-series-pill.bad {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--border));
+}
 
 /* Kept exposed down the right-hand edge of the grid rather than tucked into a
    menu: 378 series with no fast jump is a long scroll. */
@@ -516,7 +525,7 @@
   color: var(--muted);
   font-size: var(--font-xs, 11px);
   font-weight: var(--weight-semibold, 700);
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   background: var(--panel-2);
 }
@@ -546,7 +555,7 @@
   display: inline-block;
   color: var(--muted);
   font-size: 16px;
-  transition: transform .12s ease;
+  transition: transform 0.12s ease;
 }
 .history-chevron.open {
   transform: rotate(90deg);
@@ -570,7 +579,7 @@
   color: var(--muted);
   font-size: var(--font-xs, 11px);
   text-transform: uppercase;
-  letter-spacing: .05em;
+  letter-spacing: 0.05em;
 }
 .history-detail-grid strong {
   font-weight: var(--weight-medium, 600);
@@ -669,10 +678,22 @@
 }
 
 @media (max-width: 760px) {
-  .blocklist-table, .blocklist-table tbody, .blocklist-table tr, .blocklist-table td,
-  .history-table, .history-table tbody, .history-table tr, .history-table td,
-  .mr-table, .mr-table tbody, .mr-table tr, .mr-table td,
-  .wanted-table, .wanted-table tbody, .wanted-table tr, .wanted-table td {
+  .blocklist-table,
+  .blocklist-table tbody,
+  .blocklist-table tr,
+  .blocklist-table td,
+  .history-table,
+  .history-table tbody,
+  .history-table tr,
+  .history-table td,
+  .mr-table,
+  .mr-table tbody,
+  .mr-table tr,
+  .mr-table td,
+  .wanted-table,
+  .wanted-table tbody,
+  .wanted-table tr,
+  .wanted-table td {
     display: block;
     width: 100%;
     min-width: 0;
@@ -716,7 +737,10 @@
      name themselves). */
   .blocklist-table td[data-label]:not([data-label="Series / Issue"])::before,
   .history-table td[data-label]:not([data-label="Event"])::before,
-  .mr-table td[data-label]:not([data-label="Series / Issue"]):not([data-label="Select"])::before,
+  .mr-table
+    td[data-label]:not([data-label="Series / Issue"]):not(
+      [data-label="Select"]
+    )::before,
   .wanted-table td[data-label]:not([data-label="Series / Issue"])::before {
     content: attr(data-label);
     display: block;
@@ -782,16 +806,28 @@
   .blocklist-table {
     table-layout: fixed;
   }
-  .blocklist-table th:nth-child(1) { width: 18%; }
-  .blocklist-table th:nth-child(2) { width: 18%; }
-  .blocklist-table th:nth-child(3) { width: 21%; }
-  .blocklist-table th:nth-child(4) { width: 9%; }
-  .blocklist-table th:nth-child(5) { width: 72px; }
+  .blocklist-table th:nth-child(1) {
+    width: 18%;
+  }
+  .blocklist-table th:nth-child(2) {
+    width: 18%;
+  }
+  .blocklist-table th:nth-child(3) {
+    width: 21%;
+  }
+  .blocklist-table th:nth-child(4) {
+    width: 9%;
+  }
+  .blocklist-table th:nth-child(5) {
+    width: 72px;
+  }
   /* Wide enough for "Allow & retry" + "Inspect" + "Remove" on one nowrap
      line -- an undersized fixed column doesn't shrink its content, it just
      lets the buttons paint past the table edge (measured 293px at default
      font metrics; 240px pushed Remove ~50px over the border). */
-  .blocklist-table th:nth-child(6) { width: 300px; }
+  .blocklist-table th:nth-child(6) {
+    width: 300px;
+  }
   .blocklist-reason-badge {
     white-space: normal;
   }
@@ -829,7 +865,7 @@
    shifting every column one slot right). */
 .blocklist-row.selected-detail-row,
 .mr-row.selected-detail-row {
-  background: rgba(114, 210, 255, .07);
+  background: rgba(114, 210, 255, 0.07);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
@@ -858,17 +894,42 @@
   mask: var(--arr-stat-icon-mask, none) center / contain no-repeat;
 }
 
-.history-event-icon[data-icon="check"] { --arr-stat-icon-mask: var(--arr-glyph-check); background: var(--ok, #6fd087); }
-.history-event-icon[data-icon="x"] { --arr-stat-icon-mask: var(--arr-glyph-x); background: var(--bad, #e26464); }
-.history-event-icon[data-icon="refresh"] { --arr-stat-icon-mask: var(--arr-glyph-refresh); background: var(--warn, #e8c268); }
-.history-event-icon[data-icon="eye"] { --arr-stat-icon-mask: var(--arr-glyph-eye); }
-.history-event-icon[data-icon="search"] { --arr-stat-icon-mask: var(--arr-glyph-search); }
-.history-event-icon[data-icon="download"] { --arr-stat-icon-mask: var(--arr-glyph-download); }
-.history-event-icon[data-icon="cloud-download"] { --arr-stat-icon-mask: var(--arr-glyph-cloud-download); }
-.history-event-icon[data-icon="shield"] { --arr-stat-icon-mask: var(--arr-glyph-shield); }
-.history-event-icon[data-icon="radar"] { --arr-stat-icon-mask: var(--arr-glyph-radar); }
-.history-event-icon[data-icon="calendar"] { --arr-stat-icon-mask: var(--arr-glyph-calendar); }
-.history-event-icon[data-icon="clock"] { --arr-stat-icon-mask: var(--arr-glyph-clock); }
+.history-event-icon[data-icon="check"] {
+  --arr-stat-icon-mask: var(--arr-glyph-check);
+  background: var(--ok, #6fd087);
+}
+.history-event-icon[data-icon="x"] {
+  --arr-stat-icon-mask: var(--arr-glyph-x);
+  background: var(--bad, #e26464);
+}
+.history-event-icon[data-icon="refresh"] {
+  --arr-stat-icon-mask: var(--arr-glyph-refresh);
+  background: var(--warn, #e8c268);
+}
+.history-event-icon[data-icon="eye"] {
+  --arr-stat-icon-mask: var(--arr-glyph-eye);
+}
+.history-event-icon[data-icon="search"] {
+  --arr-stat-icon-mask: var(--arr-glyph-search);
+}
+.history-event-icon[data-icon="download"] {
+  --arr-stat-icon-mask: var(--arr-glyph-download);
+}
+.history-event-icon[data-icon="cloud-download"] {
+  --arr-stat-icon-mask: var(--arr-glyph-cloud-download);
+}
+.history-event-icon[data-icon="shield"] {
+  --arr-stat-icon-mask: var(--arr-glyph-shield);
+}
+.history-event-icon[data-icon="radar"] {
+  --arr-stat-icon-mask: var(--arr-glyph-radar);
+}
+.history-event-icon[data-icon="calendar"] {
+  --arr-stat-icon-mask: var(--arr-glyph-calendar);
+}
+.history-event-icon[data-icon="clock"] {
+  --arr-stat-icon-mask: var(--arr-glyph-clock);
+}
 
 /* ---- Queue island: grouped rows with real transfer progress ----
    The Queue view left its table behind: rows are cards inside collapsible
@@ -883,9 +944,9 @@
   gap: 12px;
   padding: 10px 14px;
   margin-bottom: 12px;
-  border: 1px solid rgba(226, 100, 100, .45);
+  border: 1px solid rgba(226, 100, 100, 0.45);
   border-radius: 8px;
-  background: rgba(226, 100, 100, .12);
+  background: rgba(226, 100, 100, 0.12);
 }
 
 .queue-attention-banner button {
@@ -914,7 +975,7 @@
 
 .queue-filter-chip.selected {
   border-color: var(--accent);
-  background: rgba(114, 210, 255, .12);
+  background: rgba(114, 210, 255, 0.12);
 }
 
 .queue-filter-chip-count {
@@ -1032,11 +1093,21 @@
   font-weight: 700;
 }
 
-.queue-row-status.info { color: var(--info, #72d2ff); }
-.queue-row-status.good { color: var(--ok, #6fd087); }
-.queue-row-status.warn { color: var(--warn, #e8c268); }
-.queue-row-status.bad { color: var(--bad, #e26464); }
-.queue-row-status.accent { color: var(--accent); }
+.queue-row-status.info {
+  color: var(--info, #72d2ff);
+}
+.queue-row-status.good {
+  color: var(--ok, #6fd087);
+}
+.queue-row-status.warn {
+  color: var(--warn, #e8c268);
+}
+.queue-row-status.bad {
+  color: var(--bad, #e26464);
+}
+.queue-row-status.accent {
+  color: var(--accent);
+}
 
 .queue-row-source,
 .queue-row-elapsed {
@@ -1067,7 +1138,7 @@
   height: 100%;
   border-radius: 3px;
   background: var(--info, #72d2ff);
-  transition: width .6s ease;
+  transition: width 0.6s ease;
 }
 
 .queue-progress.done .queue-progress-fill {
@@ -1152,4 +1223,3 @@
     justify-content: flex-end;
   }
 }
-

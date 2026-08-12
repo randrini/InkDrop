@@ -7,29 +7,45 @@
     title: 100,
     summary: 280,
     highlights: 8,
-    highlight: 200
+    highlight: 200,
   });
   var DETAILED_RELEASE_LIMIT = 10;
-  var GITHUB_RELEASE_HISTORY_URL = "https://github.com/jaredbahr/InkDrop/releases";
+  var GITHUB_RELEASE_HISTORY_URL =
+    "https://github.com/jaredbahr/InkDrop/releases";
 
   function publicRelease(release) {
-    var highlights = Array.isArray(release.highlights) ? release.highlights.slice() : [];
+    var highlights = Array.isArray(release.highlights)
+      ? release.highlights.slice()
+      : [];
     var fields = ["version", "slug", "released_at", "title", "summary"];
     fields.forEach(function (field) {
-      if (!String(release[field] || "").trim()) throw new Error("Release " + field + " is required");
+      if (!String(release[field] || "").trim())
+        throw new Error("Release " + field + " is required");
     });
-    if (String(release.version).length > RELEASE_LIMITS.version) throw new Error("Release version is too long");
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(release.slug) || release.slug.length > RELEASE_LIMITS.slug) {
+    if (String(release.version).length > RELEASE_LIMITS.version)
+      throw new Error("Release version is too long");
+    if (
+      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(release.slug) ||
+      release.slug.length > RELEASE_LIMITS.slug
+    ) {
       throw new Error("Release slug must be a stable lowercase identifier");
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(release.released_at)) throw new Error("Release date must use YYYY-MM-DD");
-    if (release.title.length > RELEASE_LIMITS.title) throw new Error("Release title is too long");
-    if (release.summary.length > RELEASE_LIMITS.summary) throw new Error("Release summary is too long");
-    if (!highlights.length || highlights.length > RELEASE_LIMITS.highlights) throw new Error("Release highlights are out of bounds");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(release.released_at))
+      throw new Error("Release date must use YYYY-MM-DD");
+    if (release.title.length > RELEASE_LIMITS.title)
+      throw new Error("Release title is too long");
+    if (release.summary.length > RELEASE_LIMITS.summary)
+      throw new Error("Release summary is too long");
+    if (!highlights.length || highlights.length > RELEASE_LIMITS.highlights)
+      throw new Error("Release highlights are out of bounds");
     var historyUrl = String(release.history_url || "").trim();
-    if (historyUrl && historyUrl !== GITHUB_RELEASE_HISTORY_URL) throw new Error("Release history URL is not allowed");
+    if (historyUrl && historyUrl !== GITHUB_RELEASE_HISTORY_URL)
+      throw new Error("Release history URL is not allowed");
     highlights.forEach(function (highlight) {
-      if (!String(highlight || "").trim() || String(highlight).length > RELEASE_LIMITS.highlight) {
+      if (
+        !String(highlight || "").trim() ||
+        String(highlight).length > RELEASE_LIMITS.highlight
+      ) {
         throw new Error("Release highlight is out of bounds");
       }
     });
@@ -41,7 +57,7 @@
       summary: release.summary,
       highlights: Object.freeze(highlights),
       compact: release.compact === true,
-      history_url: historyUrl
+      history_url: historyUrl,
     });
   }
 
@@ -52,25 +68,29 @@
       version: "v0.1.09",
       slug: "v0-1-09",
       released_at: "2026-08-10",
-      title: "New direct-download sources, scheduled backups, and more reliable SLSKD matching",
-      summary: "Adds Pixeldrain, WeTransfer, and Buzzheavier as direct-download sources, scheduled full backups, and encrypted settings export. Also fixes SLSKD subseries matching, adds real Test-button feedback for every provider, and surfaces the real reason when a Settings restore fails.",
+      title:
+        "New direct-download sources, scheduled backups, and more reliable SLSKD matching",
+      summary:
+        "Adds Pixeldrain, WeTransfer, and Buzzheavier as direct-download sources, scheduled full backups, and encrypted settings export. Also fixes SLSKD subseries matching, adds real Test-button feedback for every provider, and surfaces the real reason when a Settings restore fails.",
       highlights: [
         "SLSKD now rejects wrong-subseries matches before downloading instead of after, and recovery lanes get half of max_series instead of a third for faster backlog catch-up.",
         "Added Pixeldrain, WeTransfer, and Buzzheavier as direct-download sources, and fixed GetComics to Pixeldrain redirect resolution.",
         "Fixed Suwayomi's connection status being stuck on \"Unknown\" forever -- every provider's Test button now shows a real spinner and a pass/fail result tied to what was actually found.",
         "Added scheduled full backups with automatic retention, and Settings export/import can now carry encrypted credentials.",
-        "Fixed Settings restore failures showing only a generic \"Bad Request\" -- the real reason (wrong passphrase, which setting failed) is now shown.",
+        'Fixed Settings restore failures showing only a generic "Bad Request" -- the real reason (wrong passphrase, which setting failed) is now shown.',
         "Manual Review's Reject and Search Again actually retries now, and accepts exact unresolved manga matches with a real approve path.",
         "A verified collected trade now satisfies an individual issue want directly, and stale import claims auto-release after a timeout instead of blocking forever.",
-        "Added an OPDS catalog discoverability panel to Settings, and Series pages now render through the same fast, virtualized approach used elsewhere in InkDrop."
-      ]
+        "Added an OPDS catalog discoverability panel to Settings, and Series pages now render through the same fast, virtualized approach used elsewhere in InkDrop.",
+      ],
     }),
     publicRelease({
       version: "v0.1.08",
       slug: "v0-1-08",
       released_at: "2026-08-07",
-      title: "Undo a wrong match, fix manga units per series, and steadier imports",
-      summary: "Mostly focused on search/import reliability, better troubleshooting when something goes wrong, and UI cleanup, including a way to correct a wrong match after import and fix a series' manga unit type individually.",
+      title:
+        "Undo a wrong match, fix manga units per series, and steadier imports",
+      summary:
+        "Mostly focused on search/import reliability, better troubleshooting when something goes wrong, and UI cleanup, including a way to correct a wrong match after import and fix a series' manga unit type individually.",
       highlights: [
         "Manga series that release as individual issues are no longer searched and imported as volumes -- InkDrop now checks the series itself instead of assuming based on the provider.",
         "Added a way to correct a wrong match after import: retract it, quarantine the file, and start a new search for the right one.",
@@ -79,49 +99,54 @@
         "The Test button for additional SLSKD instances now performs a real connection check instead of doing nothing.",
         "ComicInfo.xml now includes publisher information from ComicVine, backfilled across 2,417 existing archives.",
         "Suwayomi and MangaDex downloads are now correctly attributed in History instead of losing their source.",
-        "Fixed a long-running import verification bug that could leave successfully imported files stuck for weeks."
-      ]
+        "Fixed a long-running import verification bug that could leave successfully imported files stuck for weeks.",
+      ],
     }),
     publicRelease({
       version: "v0.1.07",
       slug: "v0-1-07",
       released_at: "2026-08-05",
       title: "Acquisition, search, and importing get more reliable",
-      summary: "This build focused mainly on making acquisition, search, and importing more reliable. It also includes a security pass, several performance improvements, and some lighter UI work.",
+      summary:
+        "This build focused mainly on making acquisition, search, and importing more reliable. It also includes a security pass, several performance improvements, and some lighter UI work.",
       highlights: [
         "Manual Search no longer fails across every provider at once — a locking issue meant one slow provider could block the other three from starting; providers now run independently again.",
-        "\"Use this candidate\" in Manual Review now works for downloaded files instead of silently doing nothing, while still checking for corruption and duplicates.",
+        '"Use this candidate" in Manual Review now works for downloaded files instead of silently doing nothing, while still checking for corruption and duplicates.',
         "Fixed a cleanup crash that could break search, imports, and queue processing at the same time.",
         "Fixed an issue that could import a release into the wrong series when two MangaDex titles shared an alias or creator credit.",
         "Fixed Roman numeral parsing, unnecessary search cooldowns, and several causes of stuck or silently failed downloads, including a new 48-hour Soulseek timeout.",
         "Search matching is more accurate, and several import problems (ordering, stuck-in-queue, duplicate imports, multi-series packs) are fixed.",
         "Security improvements: provider credentials are no longer written to persistent storage, and a script-injection issue in search-result data has been fixed.",
-        "Wanted, Queue, History, Blocklist, and Manual Review now use a new page-rendering system — pagination is noticeably faster on larger libraries."
-      ]
+        "Wanted, Queue, History, Blocklist, and Manual Review now use a new page-rendering system — pagination is noticeably faster on larger libraries.",
+      ],
     }),
     publicRelease({
       version: "v0.1.06",
       slug: "v0-1-06",
       released_at: "2026-08-02",
-      title: "Notifications become a real system, and SLSKD gets smarter searches",
-      summary: "Notifications now support per-channel event triggers, series scoping, quiet hours, and delivery history. SLSKD searches use better terms and more patience, several stuck-download patterns are fixed, and provider secrets no longer leak into diagnostics.",
+      title:
+        "Notifications become a real system, and SLSKD gets smarter searches",
+      summary:
+        "Notifications now support per-channel event triggers, series scoping, quiet hours, and delivery history. SLSKD searches use better terms and more patience, several stuck-download patterns are fixed, and provider secrets no longer leak into diagnostics.",
       highlights: [
         "Notifications are a real system now: per-channel event triggers, series scoping, quiet hours, delivery history, and test buttons for Discord and Pushover.",
-        "SLSKD searches no longer waste queries on literal \"cbz\"/\"cbr\" keywords or miss singular/plural title variants, and get more time before assuming a timeout.",
+        'SLSKD searches no longer waste queries on literal "cbz"/"cbr" keywords or miss singular/plural title variants, and get more time before assuming a timeout.',
         "Fixed several stuck-download patterns: repeat-reject loops, permanent single-timeout blocks, and dead-end searches that only turn up already-rejected results.",
         "Fixed downloads that were grabbed but never finished landing in your library.",
         "Rate-limited or temporarily unavailable sources no longer get mislabeled as failed transfers.",
-        "The \"item imported\" notification no longer repeats for the same file on every re-check.",
+        'The "item imported" notification no longer repeats for the same file on every re-check.',
         "Provider API keys and webhook tokens no longer show up in error messages or diagnostic output.",
-        "Recover Missing's tiles no longer overlap, Search All's scope is clearer, and SLSKD's default per-user transfer cap was raised."
-      ]
+        "Recover Missing's tiles no longer overlap, Search All's scope is clearer, and SLSKD's default per-user transfer cap was raised.",
+      ],
     }),
     publicRelease({
       version: "v0.1.05",
       slug: "v0-1-05",
       released_at: "2026-08-02",
-      title: "Comic one-shots stop getting rejected, and series can move library folders",
-      summary: "A large batch of acquisition and UI fixes. Comic one-shots and graphic novels no longer get rejected at import, oversized packs go to Manual Review instead of auto-grabbing, and a series content type and library folder can now be changed after creation.",
+      title:
+        "Comic one-shots stop getting rejected, and series can move library folders",
+      summary:
+        "A large batch of acquisition and UI fixes. Comic one-shots and graphic novels no longer get rejected at import, oversized packs go to Manual Review instead of auto-grabbing, and a series content type and library folder can now be changed after creation.",
       highlights: [
         "Packs over a configurable size limit now go to Manual Review instead of being auto-grabbed.",
         "Fixed comic one-shots and graphic novels getting permanently rejected at import.",
@@ -130,15 +155,17 @@
         "SLSKD searches no longer waste early attempts on a redundant qualifier, and no longer leak filename text into queries through series aliases.",
         "SLSKD can now recognize and convert raw page-image folders into a CBZ during import.",
         "The History page supports searching by series title and no longer repeats duplicate entries.",
-        "Recover Missing, Attempts, and the SLSKD/download-client Settings cards all got clarity and usability fixes this build."
-      ]
+        "Recover Missing, Attempts, and the SLSKD/download-client Settings cards all got clarity and usability fixes this build.",
+      ],
     }),
     publicRelease({
       version: "v0.1.04",
       slug: "v0-1-04",
       released_at: "2026-08-02",
-      title: "SLSKD stops crying wolf, and a wrong print-run stops auto-grabbing",
-      summary: "Fixed a bug where finished SLSKD searches could be wrongly logged and retried as timed out, likely the cause of \"SLSKD isn't working\" reports. Also fixes a wrong-volume auto-grab bug and a queue bug that excluded some series from search.",
+      title:
+        "SLSKD stops crying wolf, and a wrong print-run stops auto-grabbing",
+      summary:
+        'Fixed a bug where finished SLSKD searches could be wrongly logged and retried as timed out, likely the cause of "SLSKD isn\'t working" reports. Also fixes a wrong-volume auto-grab bug and a queue bug that excluded some series from search.',
       highlights: [
         "Fixed finished SLSKD searches sometimes being wrongly logged and retried as timed out.",
         "Fixed candidates with the wrong volume or print run getting auto-grabbed as a safe match; unclear cases now go to Manual Review.",
@@ -147,46 +174,52 @@
         "SLSKD, Prowlarr, Torznab, and Newznab now try more results on a genuine zero-result search instead of waiting for the next pass.",
         "Manual Review no longer hides legacy decisions, and supports bulk-ignore.",
         "Fixed several qBittorrent and download-client bugs, including one that could wrongly blacklist a release.",
-        "Smaller fixes: faster status indicator, a clearer Queue wait panel, and automatic search on by default for new installs."
-      ]
+        "Smaller fixes: faster status indicator, a clearer Queue wait panel, and automatic search on by default for new installs.",
+      ],
     }),
     publicRelease({
       version: "v0.1.03",
       slug: "v0-1-03",
       released_at: "2026-08-02",
       title: "Search tries the right title, and the System page stops hanging",
-      summary: "Search now tries the title people actually share files under instead of burning its budget on one nobody uses, and a real print-run marker on the exact issue you wanted no longer gets rejected. The System page also stops hanging if a request stalls.",
+      summary:
+        "Search now tries the title people actually share files under instead of burning its budget on one nobody uses, and a real print-run marker on the exact issue you wanted no longer gets rejected. The System page also stops hanging if a request stalls.",
       highlights: [
-        "Searches for licensed creator-credit titles (like \"Naoki Urasawa's Monster\") now try the title people actually share files under, instead of spending the whole budget on one nobody uses.",
-        "A volume/print-run marker like \"v1 #19\" no longer gets treated as a mismatch when it's exactly the issue you wanted — that was silently blocking real grabs.",
-        "The System page no longer hangs on a silent \"Loading...\" if a request stalls; you'll see what failed instead."
-      ]
+        'Searches for licensed creator-credit titles (like "Naoki Urasawa\'s Monster") now try the title people actually share files under, instead of spending the whole budget on one nobody uses.',
+        'A volume/print-run marker like "v1 #19" no longer gets treated as a mismatch when it\'s exactly the issue you wanted — that was silently blocking real grabs.',
+        'The System page no longer hangs on a silent "Loading..." if a request stalls; you\'ll see what failed instead.',
+      ],
     }),
     publicRelease({
       version: "v0.1.02",
       slug: "v0-1-02",
       released_at: "2026-08-01",
       title: "Searches that found nothing now work",
-      summary: "Several separate faults could each stop a series from ever getting a search result. If something has sat in Wanted with no explanation, this build is worth trying.",
+      summary:
+        "Several separate faults could each stop a series from ever getting a search result. If something has sat in Wanted with no explanation, this build is worth trying.",
       highlights: [
         "Searches run properly again, and reuse a recent result instead of asking twice for the same thing.",
         "Volumes and chapters match correctly, and ordinary comic filenames are no longer rejected.",
         "A failed archive read could be remembered as having no metadata for two weeks, and the wrong issue imported afterwards.",
         "A CBR import could crash after copying the file and mark a good file as bad.",
-        "qBittorrent supports API keys. MangaDex mature content is ranked, not hidden."
-      ]
-    })
+        "qBittorrent supports API keys. MangaDex mature content is ranked, not hidden.",
+      ],
+    }),
   ]);
 
-  var PUBLIC_RELEASES = Object.freeze(DETAILED_RELEASES.slice(0, DETAILED_RELEASE_LIMIT));
+  var PUBLIC_RELEASES = Object.freeze(
+    DETAILED_RELEASES.slice(0, DETAILED_RELEASE_LIMIT),
+  );
 
   function validateCatalog(catalog) {
     var seenVersions = new Set();
     var seenSlugs = new Set();
     var previousDate = "9999-99-99";
     catalog.forEach(function (release) {
-      if (seenVersions.has(release.version) || seenSlugs.has(release.slug)) throw new Error("Release versions and slugs must be unique");
-      if (release.released_at > previousDate) throw new Error("Release catalog must be newest first");
+      if (seenVersions.has(release.version) || seenSlugs.has(release.slug))
+        throw new Error("Release versions and slugs must be unique");
+      if (release.released_at > previousDate)
+        throw new Error("Release catalog must be newest first");
       seenVersions.add(release.version);
       seenSlugs.add(release.slug);
       previousDate = release.released_at;
@@ -195,16 +228,27 @@
   }
 
   function releaseHistorySummary(count) {
-    var visibleCount = Math.max(0, Math.min(DETAILED_RELEASE_LIMIT, Math.floor(Number(count) || 0)));
-    if (!visibleCount) return "No recent updates are shown here. Older release notes remain available on GitHub.";
-    if (visibleCount === 1) return "The latest update is shown here. Older release notes remain available on GitHub.";
-    return "The latest " + visibleCount + " updates are shown here. Older release notes remain available on GitHub.";
+    var visibleCount = Math.max(
+      0,
+      Math.min(DETAILED_RELEASE_LIMIT, Math.floor(Number(count) || 0)),
+    );
+    if (!visibleCount)
+      return "No recent updates are shown here. Older release notes remain available on GitHub.";
+    if (visibleCount === 1)
+      return "The latest update is shown here. Older release notes remain available on GitHub.";
+    return (
+      "The latest " +
+      visibleCount +
+      " updates are shown here. Older release notes remain available on GitHub."
+    );
   }
 
   validateCatalog(PUBLIC_RELEASES);
 
   function text(value, fallback) {
-    var result = String(value === undefined || value === null ? "" : value).trim();
+    var result = String(
+      value === undefined || value === null ? "" : value,
+    ).trim();
     return result || fallback || "";
   }
 
@@ -212,15 +256,21 @@
     var explicit = text(metadata.display_version);
     var version = text(metadata.version, "dev");
     var shortSha = text(metadata.short_commit_sha);
-    var development = metadata.development === true || text(metadata.release_channel).toLowerCase() === "dev";
+    var development =
+      metadata.development === true ||
+      text(metadata.release_channel).toLowerCase() === "dev";
     var base = explicit || version;
-    if (development && shortSha && base.indexOf(shortSha) < 0) return base + "+" + shortSha;
+    if (development && shortSha && base.indexOf(shortSha) < 0)
+      return base + "+" + shortSha;
     return base;
   }
 
   var PRERELEASE_STAGES = Object.freeze({
-    alpha: { label: "Closed Alpha", stage: "Closed alpha · not publicly launched" },
-    beta: { label: "Beta", stage: "Public beta" }
+    alpha: {
+      label: "Closed Alpha",
+      stage: "Closed alpha · not publicly launched",
+    },
+    beta: { label: "Beta", stage: "Public beta" },
   });
 
   // Three shapes, newest first. Current releases are the bare number: 0.1.02.
@@ -239,7 +289,7 @@
         prerelease: trailing[4].toLowerCase(),
         update: Number(trailing[5]),
         counterInPatch: false,
-        patchText: trailing[3]
+        patchText: trailing[3],
       };
     }
     var inPatch = /^v?(\d+)\.(\d+)\.(\d+)-(alpha|beta)$/i.exec(raw);
@@ -252,7 +302,7 @@
         update: Number(inPatch[3]),
         counterInPatch: true,
         // Kept as written so 0.1.01-beta does not render as 0.1.1-beta.
-        patchText: inPatch[3]
+        patchText: inPatch[3],
       };
     }
     // Releases from 0.1.02 on carry no stage suffix at all: the version is just
@@ -269,42 +319,74 @@
       update: Number(plain[3]),
       counterInPatch: true,
       // Kept as written so 0.1.02 does not render as 0.1.2.
-      patchText: plain[3]
+      patchText: plain[3],
     };
   }
 
   function productVersionLabel(value) {
-    var parts = closedAlphaParts(value && typeof value === "object" ? displayVersion(value) : value);
-    if (!parts) return text(value && typeof value === "object" ? displayVersion(value) : value, "Development build");
+    var parts = closedAlphaParts(
+      value && typeof value === "object" ? displayVersion(value) : value,
+    );
+    if (!parts)
+      return text(
+        value && typeof value === "object" ? displayVersion(value) : value,
+        "Development build",
+      );
     // No suffix means no stage word: the version stands on its own.
     if (!parts.prerelease) {
       return parts.major + "." + parts.minor + "." + parts.patchText;
     }
     var stage = PRERELEASE_STAGES[parts.prerelease] || PRERELEASE_STAGES.alpha;
     if (parts.counterInPatch) {
-      return parts.major + "." + parts.minor + "." + parts.patchText + " " + stage.label;
+      return (
+        parts.major +
+        "." +
+        parts.minor +
+        "." +
+        parts.patchText +
+        " " +
+        stage.label
+      );
     }
     var patch = parts.patch ? "." + parts.patchText : "";
-    return parts.major + "." + parts.minor + patch + " " + stage.label + " · Update " + parts.update;
+    return (
+      parts.major +
+      "." +
+      parts.minor +
+      patch +
+      " " +
+      stage.label +
+      " · Update " +
+      parts.update
+    );
   }
 
   function releaseStageLabel(metadata) {
     metadata = metadata && typeof metadata === "object" ? metadata : {};
     var parts = closedAlphaParts(displayVersion(metadata));
-    if (parts && parts.prerelease) return (PRERELEASE_STAGES[parts.prerelease] || PRERELEASE_STAGES.alpha).stage;
+    if (parts && parts.prerelease)
+      return (PRERELEASE_STAGES[parts.prerelease] || PRERELEASE_STAGES.alpha)
+        .stage;
     if (parts) return "Release";
     return text(metadata.release_channel || metadata.channel, "Development");
   }
 
   function releaseFromHash(hashValue) {
-    var raw = String(hashValue === undefined ? global.location?.hash || "" : hashValue || "");
+    var raw = String(
+      hashValue === undefined ? global.location?.hash || "" : hashValue || "",
+    );
     var queryIndex = raw.indexOf("?");
     if (queryIndex < 0) return "";
-    return String(new URLSearchParams(raw.slice(queryIndex + 1)).get("release") || "").trim();
+    return String(
+      new URLSearchParams(raw.slice(queryIndex + 1)).get("release") || "",
+    ).trim();
   }
 
   function canonicalReleaseHref(version) {
-    return "#system?area=about&release=" + encodeURIComponent(String(version || "").trim());
+    return (
+      "#system?area=about&release=" +
+      encodeURIComponent(String(version || "").trim())
+    );
   }
 
   function setReleaseExpanded(entry, button, panel, expanded) {
@@ -317,10 +399,19 @@
   function renderReleases(container, options) {
     if (!container) return null;
     options = options || {};
-    var sourceCatalog = Array.isArray(options.catalog) ? options.catalog : PUBLIC_RELEASES;
-    var catalog = validateCatalog(sourceCatalog.map(publicRelease)).slice(0, DETAILED_RELEASE_LIMIT);
-    var requested = String(options.releaseVersion || releaseFromHash(options.hash)).trim();
-    var selectedIndex = catalog.findIndex(function (release) { return release.version === requested; });
+    var sourceCatalog = Array.isArray(options.catalog)
+      ? options.catalog
+      : PUBLIC_RELEASES;
+    var catalog = validateCatalog(sourceCatalog.map(publicRelease)).slice(
+      0,
+      DETAILED_RELEASE_LIMIT,
+    );
+    var requested = String(
+      options.releaseVersion || releaseFromHash(options.hash),
+    ).trim();
+    var selectedIndex = catalog.findIndex(function (release) {
+      return release.version === requested;
+    });
     if (selectedIndex < 0) selectedIndex = 0;
     container.replaceChildren();
     container.classList.add("inkdrop-release-notes");
@@ -341,7 +432,8 @@
 
     catalog.forEach(function (release, index) {
       var entry = document.createElement("article");
-      entry.className = "inkdrop-release-entry" + (release.compact ? " compact" : "");
+      entry.className =
+        "inkdrop-release-entry" + (release.compact ? " compact" : "");
       entry.dataset.releaseKind = release.compact ? "rollup" : "detailed";
       entry.id = "inkdrop-release-" + release.slug;
       var header = document.createElement("header");
@@ -350,8 +442,13 @@
       var versionHeading = document.createElement("h4");
       var versionLink = document.createElement("a");
       versionLink.href = canonicalReleaseHref(release.version);
-      versionLink.textContent = release.compact ? release.title : productVersionLabel(release.version);
-      versionLink.setAttribute("aria-label", "Permanent link to release notes for " + release.version);
+      versionLink.textContent = release.compact
+        ? release.title
+        : productVersionLabel(release.version);
+      versionLink.setAttribute(
+        "aria-label",
+        "Permanent link to release notes for " + release.version,
+      );
       versionHeading.appendChild(versionLink);
       var technicalVersion = document.createElement("code");
       technicalVersion.className = "inkdrop-release-build-id";
@@ -362,7 +459,13 @@
       releaseDate.dateTime = release.released_at;
       releaseDate.textContent = release.released_at;
       if (release.compact) identity.append(versionHeading, releaseDate);
-      else identity.append(versionHeading, technicalVersion, releaseTitle, releaseDate);
+      else
+        identity.append(
+          versionHeading,
+          technicalVersion,
+          releaseTitle,
+          releaseDate,
+        );
 
       var panelId = "inkdrop-release-notes-" + release.slug;
       var toggle = document.createElement("button");
@@ -393,7 +496,12 @@
       entry.append(header, panel);
       setReleaseExpanded(entry, toggle, panel, index === selectedIndex);
       toggle.addEventListener("click", function () {
-        setReleaseExpanded(entry, toggle, panel, toggle.getAttribute("aria-expanded") !== "true");
+        setReleaseExpanded(
+          entry,
+          toggle,
+          panel,
+          toggle.getAttribute("aria-expanded") !== "true",
+        );
       });
       container.appendChild(entry);
     });
@@ -426,7 +534,8 @@
     button.textContent = "Copy";
     button.setAttribute("aria-label", "Copy " + label.toLowerCase());
     button.addEventListener("click", function () {
-      if (global.navigator?.clipboard?.writeText) global.navigator.clipboard.writeText(String(value));
+      if (global.navigator?.clipboard?.writeText)
+        global.navigator.clipboard.writeText(String(value));
     });
     content.after(button);
     return item;
@@ -439,14 +548,28 @@
     container.classList.add("inkdrop-about-version");
     var rows = [
       row("Version", productVersionLabel(metadata), "Product version"),
-      metadata.qa_build_number !== undefined && metadata.qa_build_number !== null && text(metadata.qa_build_number)
-        ? row("QA Build", text(metadata.qa_build_number), "QA candidate build number")
+      metadata.qa_build_number !== undefined &&
+      metadata.qa_build_number !== null &&
+      text(metadata.qa_build_number)
+        ? row(
+            "QA Build",
+            text(metadata.qa_build_number),
+            "QA candidate build number",
+          )
         : null,
-      copyableRow("Commit", text(metadata.short_commit_sha || metadata.commit_sha, "unknown"), "Source revision"),
+      copyableRow(
+        "Commit",
+        text(metadata.short_commit_sha || metadata.commit_sha, "unknown"),
+        "Source revision",
+      ),
       row("Built", text(metadata.build_date, "unknown"), "Build date"),
       metadata.image_digest || metadata.digest
-        ? copyableRow("Image digest", text(metadata.image_digest || metadata.digest), "Container image digest")
-        : null
+        ? copyableRow(
+            "Image digest",
+            text(metadata.image_digest || metadata.digest),
+            "Container image digest",
+          )
+        : null,
     ].filter(Boolean);
     container.append.apply(container, rows);
     return metadata;
@@ -456,11 +579,16 @@
     options = options || {};
     if (options.metadata) return render(container, options.metadata);
     var fetchImpl = options.fetch || global.fetch;
-    if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required");
+    if (typeof fetchImpl !== "function")
+      throw new Error("A fetch implementation is required");
     container.setAttribute("aria-busy", "true");
     try {
-      var response = await fetchImpl(options.endpoint || "/api/system/version", { headers: { Accept: "application/json" } });
-      if (!response || !response.ok) throw new Error("Version metadata request failed");
+      var response = await fetchImpl(
+        options.endpoint || "/api/system/version",
+        { headers: { Accept: "application/json" } },
+      );
+      if (!response || !response.ok)
+        throw new Error("Version metadata request failed");
       return render(container, await response.json());
     } finally {
       container.removeAttribute("aria-busy");
@@ -478,9 +606,12 @@
     render: render,
     renderReleases: renderReleases,
     releaseFromHash: releaseFromHash,
-    mount: mount
+    mount: mount,
   });
-  if (typeof global.dispatchEvent === "function" && typeof global.Event === "function") {
+  if (
+    typeof global.dispatchEvent === "function" &&
+    typeof global.Event === "function"
+  ) {
     global.dispatchEvent(new global.Event("inkdrop-version-about-ready"));
   }
 })(typeof window !== "undefined" ? window : globalThis);
