@@ -36,14 +36,24 @@
   }
 
   function cookieValue(name) {
-    const match = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+    const match = document.cookie.match(
+      new RegExp("(?:^|; )" + name + "=([^;]*)"),
+    );
     return match ? decodeURIComponent(match[1]) : "";
   }
 
   function escapeHtml(value) {
-    return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[ch]));
+    return String(value == null ? "" : value).replace(
+      /[&<>"']/g,
+      (ch) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[ch],
+    );
   }
 
   function humanizeToken(value) {
@@ -142,7 +152,10 @@
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify({
           username: els.username.value.trim(),
           password: els.password.value,
@@ -154,10 +167,13 @@
         showApp();
         return;
       }
-      els.loginError.textContent = humanizeToken(data && data.error) || "Sign-in failed. Check your username and password.";
+      els.loginError.textContent =
+        humanizeToken(data && data.error) ||
+        "Sign-in failed. Check your username and password.";
       els.loginError.hidden = false;
     } catch (err) {
-      els.loginError.textContent = "Couldn't reach InkDrop. Check your connection and try again.";
+      els.loginError.textContent =
+        "Couldn't reach InkDrop. Check your connection and try again.";
       els.loginError.hidden = false;
     } finally {
       submitBtn.disabled = false;
@@ -208,9 +224,18 @@
 
   function statusDotClass(status) {
     const s = String(status || "").toLowerCase();
-    if (s.includes("problem") || s.includes("fail") || s.includes("error")) return "m-status-problem";
-    if (s.includes("warn") || s.includes("attention") || s.includes("degraded")) return "m-status-warn";
-    if (s.includes("ok") || s.includes("healthy") || s.includes("good") || s.includes("idle") || s.includes("running")) return "m-status-ok";
+    if (s.includes("problem") || s.includes("fail") || s.includes("error"))
+      return "m-status-problem";
+    if (s.includes("warn") || s.includes("attention") || s.includes("degraded"))
+      return "m-status-warn";
+    if (
+      s.includes("ok") ||
+      s.includes("healthy") ||
+      s.includes("good") ||
+      s.includes("idle") ||
+      s.includes("running")
+    )
+      return "m-status-ok";
     return "";
   }
 
@@ -225,7 +250,8 @@
     const token = ++loadToken;
     setSpinning(true);
     if (!els.homeContent.dataset.loaded) {
-      els.homeContent.innerHTML = '<div class="m-loading">Loading status&hellip;</div>';
+      els.homeContent.innerHTML =
+        '<div class="m-loading">Loading status&hellip;</div>';
     }
     try {
       const [status, activity] = await Promise.all([
@@ -237,9 +263,13 @@
       els.homeContent.dataset.loaded = "1";
     } catch (err) {
       if (token !== loadToken) return;
-      if (err.unauthenticated) { showLogin(); return; }
+      if (err.unauthenticated) {
+        showLogin();
+        return;
+      }
       if (!els.homeContent.dataset.loaded) {
-        els.homeContent.innerHTML = '<p class="m-error">Couldn\'t load status. Pull down or tap refresh to try again.</p>';
+        els.homeContent.innerHTML =
+          '<p class="m-error">Couldn\'t load status. Pull down or tap refresh to try again.</p>';
       }
     } finally {
       if (token === loadToken) setSpinning(false);
@@ -249,16 +279,40 @@
   function renderHome(status, activity) {
     status = status || {};
     const dotClass = statusDotClass(status.status);
-    const detail = status.detail ? `<span class="m-status-detail">${escapeHtml(status.detail)}</span>` : "";
+    const detail = status.detail
+      ? `<span class="m-status-detail">${escapeHtml(status.detail)}</span>`
+      : "";
     const lastImport = fmtMinutes(status.last_import_minutes);
 
     const tiles = [
       tile(status.inkdrop_state_series_count ?? "-", "Series"),
       tile(status.inkdrop_state_wanted_count ?? "-", "Wanted"),
-      tile(activity && activity.active_total != null ? activity.active_total : (status.inkdrop_state_queue_count ?? "-"), "Active downloads"),
-      tile(status.manual_review_actionable_count ?? status.manual_review_count ?? "-", "Needs attention", (status.manual_review_actionable_count || 0) > 0),
-      tile((status.failed_download_count || 0) + (status.failed_import_count || 0), "Failed", ((status.failed_download_count || 0) + (status.failed_import_count || 0)) > 0),
-      tile(activity && activity.ready_to_import != null ? activity.ready_to_import : "-", "Ready to import"),
+      tile(
+        activity && activity.active_total != null
+          ? activity.active_total
+          : (status.inkdrop_state_queue_count ?? "-"),
+        "Active downloads",
+      ),
+      tile(
+        status.manual_review_actionable_count ??
+          status.manual_review_count ??
+          "-",
+        "Needs attention",
+        (status.manual_review_actionable_count || 0) > 0,
+      ),
+      tile(
+        (status.failed_download_count || 0) + (status.failed_import_count || 0),
+        "Failed",
+        (status.failed_download_count || 0) +
+          (status.failed_import_count || 0) >
+          0,
+      ),
+      tile(
+        activity && activity.ready_to_import != null
+          ? activity.ready_to_import
+          : "-",
+        "Ready to import",
+      ),
     ].join("");
 
     const clientsHtml = renderClientRow(activity);
@@ -308,22 +362,35 @@
   }
 
   function reviewRowState(row) {
-    return row.display_state_label || row.display_state || row.state || row.status || "";
+    return (
+      row.display_state_label ||
+      row.display_state ||
+      row.state ||
+      row.status ||
+      ""
+    );
   }
 
   function reviewRowReason(row) {
-    return row.review_reason || row.reason || row.why_not_grabbed || row.activity_summary || "";
+    return (
+      row.review_reason ||
+      row.reason ||
+      row.why_not_grabbed ||
+      row.activity_summary ||
+      ""
+    );
   }
 
   async function loadStuck() {
     const token = ++loadToken;
     setSpinning(true);
     if (!els.stuckContent.dataset.loaded) {
-      els.stuckContent.innerHTML = '<div class="m-loading">Loading&hellip;</div>';
+      els.stuckContent.innerHTML =
+        '<div class="m-loading">Loading&hellip;</div>';
     }
     try {
       const payload = await fetchJson(
-        `/api/inkdrop-state/manual_review?summary=compact&rows=compact&limit=${MANUAL_REVIEW_LIMIT}`
+        `/api/inkdrop-state/manual_review?summary=compact&rows=compact&limit=${MANUAL_REVIEW_LIMIT}`,
       );
       const data = (payload && payload.view) || {};
       if (token !== loadToken) return;
@@ -332,9 +399,13 @@
       els.stuckContent.dataset.loaded = "1";
     } catch (err) {
       if (token !== loadToken) return;
-      if (err.unauthenticated) { showLogin(); return; }
+      if (err.unauthenticated) {
+        showLogin();
+        return;
+      }
       if (!els.stuckContent.dataset.loaded) {
-        els.stuckContent.innerHTML = '<p class="m-error">Couldn\'t load Manual Review. Pull down or tap refresh to try again.</p>';
+        els.stuckContent.innerHTML =
+          '<p class="m-error">Couldn\'t load Manual Review. Pull down or tap refresh to try again.</p>';
       }
     } finally {
       if (token === loadToken) setSpinning(false);
@@ -344,7 +415,7 @@
   async function refreshStuckBadge() {
     try {
       const payload = await fetchJson(
-        `/api/inkdrop-state/manual_review?summary=compact&rows=compact&limit=1`
+        `/api/inkdrop-state/manual_review?summary=compact&rows=compact&limit=1`,
       );
       updateBadge((payload && payload.view) || {});
     } catch (err) {
@@ -363,9 +434,10 @@
   }
 
   function renderStuck(data) {
-    const rows = (data && Array.isArray(data.rows)) ? data.rows : [];
+    const rows = data && Array.isArray(data.rows) ? data.rows : [];
     if (!rows.length) {
-      els.stuckContent.innerHTML = '<div class="m-empty">Nothing needs your attention right now.</div>';
+      els.stuckContent.innerHTML =
+        '<div class="m-empty">Nothing needs your attention right now.</div>';
       return;
     }
     const cards = rows
@@ -382,17 +454,22 @@
         </div>`;
       })
       .join("");
-    const total = Number((data && (data.total_count ?? rows.length)) || rows.length);
-    const more = total > rows.length
-      ? `<div class="m-more-note">Showing ${rows.length} of ${total} &mdash; open InkDrop on desktop for the full list.</div>`
-      : "";
+    const total = Number(
+      (data && (data.total_count ?? rows.length)) || rows.length,
+    );
+    const more =
+      total > rows.length
+        ? `<div class="m-more-note">Showing ${rows.length} of ${total} &mdash; open InkDrop on desktop for the full list.</div>`
+        : "";
     els.stuckContent.innerHTML = `<div class="m-item-list">${cards}</div>${more}`;
   }
 
   // --- Wire up --------------------------------------------------------
 
   function goToDesktop() {
-    try { sessionStorage.setItem("inkdropViewPreference", "desktop"); } catch (e) {}
+    try {
+      sessionStorage.setItem("inkdropViewPreference", "desktop");
+    } catch (e) {}
     // Deliberately not forwarding location.search: a lingering ?view=mobile
     // (from an earlier forced-mobile visit) would otherwise re-assert
     // itself the instant the desktop gate script reads the query string,

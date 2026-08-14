@@ -28,7 +28,7 @@
   body[data-inkdrop-view="history"] .section-table-row:hover,
   body[data-inkdrop-view="source_memory"] .section-table-row:hover,
   body[data-inkdrop-view="manual_review"] .section-table-row:hover {
-    background: rgba(255, 255, 255, .025);
+    background: rgba(255, 255, 255, 0.025);
   }
   body[data-inkdrop-view="queue"] .section-table-lane-header,
   body[data-inkdrop-view="wanted"] .section-table-lane-header,
@@ -78,7 +78,7 @@
   body[data-inkdrop-view="source_memory"] .section-table-status-badge,
   body[data-inkdrop-view="manual_review"] .section-table-status-badge {
     border-color: transparent;
-    background: rgba(114, 210, 255, .16);
+    background: rgba(114, 210, 255, 0.16);
     color: var(--accent);
     font-weight: var(--weight-semibold, 700);
   }
@@ -107,7 +107,7 @@
   body[data-inkdrop-view="history"] .section-table-status-badge.good,
   body[data-inkdrop-view="source_memory"] .section-table-status-badge.good,
   body[data-inkdrop-view="manual_review"] .section-table-status-badge.good {
-    background: rgba(120, 217, 155, .16);
+    background: rgba(120, 217, 155, 0.16);
     color: var(--good);
   }
   body[data-inkdrop-view="queue"] .core-state.warn,
@@ -135,7 +135,7 @@
   body[data-inkdrop-view="history"] .section-table-status-badge.warn,
   body[data-inkdrop-view="source_memory"] .section-table-status-badge.warn,
   body[data-inkdrop-view="manual_review"] .section-table-status-badge.warn {
-    background: rgba(247, 201, 111, .16);
+    background: rgba(247, 201, 111, 0.16);
     color: var(--warn);
   }
   body[data-inkdrop-view="queue"] .core-state.bad,
@@ -163,7 +163,7 @@
   body[data-inkdrop-view="history"] .section-table-status-badge.bad,
   body[data-inkdrop-view="source_memory"] .section-table-status-badge.bad,
   body[data-inkdrop-view="manual_review"] .section-table-status-badge.bad {
-    background: rgba(255, 125, 125, .16);
+    background: rgba(255, 125, 125, 0.16);
     color: var(--bad);
   }
   /* Icon actions: round, compact, icon-only buttons instead of bordered
@@ -184,7 +184,7 @@
   body[data-inkdrop-view="history"] .arr-table-icon-button:hover,
   body[data-inkdrop-view="source_memory"] .arr-table-icon-button:hover,
   body[data-inkdrop-view="manual_review"] .arr-table-icon-button:hover {
-    background: rgba(255, 255, 255, .06);
+    background: rgba(255, 255, 255, 0.06);
     border-color: transparent;
   }
   /* Lane-header glyph + tinted label, matching the mockups' colored
@@ -197,8 +197,12 @@
   body[data-inkdrop-view="queue"] .section-table-lane-header strong::before,
   body[data-inkdrop-view="wanted"] .section-table-lane-header strong::before,
   body[data-inkdrop-view="history"] .section-table-lane-header strong::before,
-  body[data-inkdrop-view="source_memory"] .section-table-lane-header strong::before,
-  body[data-inkdrop-view="manual_review"] .section-table-lane-header strong::before {
+  body[data-inkdrop-view="source_memory"]
+    .section-table-lane-header
+    strong::before,
+  body[data-inkdrop-view="manual_review"]
+    .section-table-lane-header
+    strong::before {
     content: "";
     display: inline-block;
     width: 13px;
@@ -206,49 +210,83 @@
     margin-right: 6px;
     vertical-align: -2px;
     background: currentColor;
-    -webkit-mask: var(--arr-lane-glyph, radial-gradient(circle at center, #000 0 34%, transparent 36%)) center / contain no-repeat;
-    mask: var(--arr-lane-glyph, radial-gradient(circle at center, #000 0 34%, transparent 36%)) center / contain no-repeat;
+    -webkit-mask: var(
+        --arr-lane-glyph,
+        radial-gradient(circle at center, #000 0 34%, transparent 36%)
+      )
+      center / contain no-repeat;
+    mask: var(
+        --arr-lane-glyph,
+        radial-gradient(circle at center, #000 0 34%, transparent 36%)
+      )
+      center / contain no-repeat;
   }
   body[data-inkdrop-view="queue"] .section-table-lane-header.good strong,
   body[data-inkdrop-view="wanted"] .section-table-lane-header.good strong,
   body[data-inkdrop-view="history"] .section-table-lane-header.good strong,
-  body[data-inkdrop-view="source_memory"] .section-table-lane-header.good strong,
-  body[data-inkdrop-view="manual_review"] .section-table-lane-header.good strong {
+  body[data-inkdrop-view="source_memory"]
+    .section-table-lane-header.good
+    strong,
+  body[data-inkdrop-view="manual_review"]
+    .section-table-lane-header.good
+    strong {
     color: var(--good);
   }
   body[data-inkdrop-view="queue"] .section-table-lane-header.warn strong,
   body[data-inkdrop-view="wanted"] .section-table-lane-header.warn strong,
   body[data-inkdrop-view="history"] .section-table-lane-header.warn strong,
-  body[data-inkdrop-view="source_memory"] .section-table-lane-header.warn strong,
-  body[data-inkdrop-view="manual_review"] .section-table-lane-header.warn strong {
+  body[data-inkdrop-view="source_memory"]
+    .section-table-lane-header.warn
+    strong,
+  body[data-inkdrop-view="manual_review"]
+    .section-table-lane-header.warn
+    strong {
     color: var(--warn);
   }
   body[data-inkdrop-view="queue"] .section-table-lane-header.bad strong,
   body[data-inkdrop-view="wanted"] .section-table-lane-header.bad strong,
   body[data-inkdrop-view="history"] .section-table-lane-header.bad strong,
   body[data-inkdrop-view="source_memory"] .section-table-lane-header.bad strong,
-  body[data-inkdrop-view="manual_review"] .section-table-lane-header.bad strong {
+  body[data-inkdrop-view="manual_review"]
+    .section-table-lane-header.bad
+    strong {
     color: var(--bad);
   }
   .section-table-lane-header[data-table-lane="queue-work"],
-  .section-table-lane-header[data-table-lane="wanted-moving"] { --arr-lane-glyph: var(--arr-glyph-cloud-download); }
+  .section-table-lane-header[data-table-lane="wanted-moving"] {
+    --arr-lane-glyph: var(--arr-glyph-cloud-download);
+  }
   .section-table-lane-header[data-table-lane="queue-automatic"],
   .section-table-lane-header[data-table-lane="queue-retry"],
-  .section-table-lane-header[data-table-lane="wanted-retry"] { --arr-lane-glyph: var(--arr-glyph-refresh); }
+  .section-table-lane-header[data-table-lane="wanted-retry"] {
+    --arr-lane-glyph: var(--arr-glyph-refresh);
+  }
   .section-table-lane-header[data-table-lane="queue-provider-wait"],
   .section-table-lane-header[data-table-lane="wanted-provider-wait"],
-  .section-table-lane-header[data-table-lane="manual-parked"] { --arr-lane-glyph: var(--arr-glyph-clock); }
+  .section-table-lane-header[data-table-lane="manual-parked"] {
+    --arr-lane-glyph: var(--arr-glyph-clock);
+  }
   .section-table-lane-header[data-table-lane="queue-no-candidate"],
   .section-table-lane-header[data-table-lane="wanted-no-candidate"],
   .section-table-lane-header[data-table-lane="wanted-missing"],
-  .section-table-lane-header[data-table-lane="manual-source"] { --arr-lane-glyph: var(--arr-glyph-search); }
+  .section-table-lane-header[data-table-lane="manual-source"] {
+    --arr-lane-glyph: var(--arr-glyph-search);
+  }
   .section-table-lane-header[data-table-lane="queue-covered"],
-  .section-table-lane-header[data-table-lane="wanted-covered"] { --arr-lane-glyph: var(--arr-glyph-check); }
+  .section-table-lane-header[data-table-lane="wanted-covered"] {
+    --arr-lane-glyph: var(--arr-glyph-check);
+  }
   .section-table-lane-header[data-table-lane="queue-attention"],
   .section-table-lane-header[data-table-lane="wanted-needs-user"],
-  .section-table-lane-header[data-table-lane="manual-decision"] { --arr-lane-glyph: var(--arr-glyph-alert); }
-  .section-table-lane-header[data-table-lane="manual-blocked"] { --arr-lane-glyph: var(--arr-glyph-x); }
-  .section-table-lane-header[data-table-lane="manual-ready-import"] { --arr-lane-glyph: var(--arr-glyph-upload); }
+  .section-table-lane-header[data-table-lane="manual-decision"] {
+    --arr-lane-glyph: var(--arr-glyph-alert);
+  }
+  .section-table-lane-header[data-table-lane="manual-blocked"] {
+    --arr-lane-glyph: var(--arr-glyph-x);
+  }
+  .section-table-lane-header[data-table-lane="manual-ready-import"] {
+    --arr-lane-glyph: var(--arr-glyph-upload);
+  }
 }
 
 /* Blocklist stat cards: one consistent icon treatment -- a solid filled
@@ -256,19 +294,43 @@
    looks each tone class produced. Colors follow the reference: red for
    Blocked, blue for Recent and SLSKD, purple for Prowlarr; Direct downloads
    keeps its card (real data) and joins the same style in slate. */
-body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbench-card-icon {
+body[data-inkdrop-view="source_memory"]
+  #inkdropSectionWorkbench
+  .section-workbench-card-icon {
   border-radius: 50%;
 }
 
-body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbench-card-icon::before {
+body[data-inkdrop-view="source_memory"]
+  #inkdropSectionWorkbench
+  .section-workbench-card-icon::before {
   background: #fff;
 }
 
-body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbench-card-icon[data-icon="x-plain"] { background: #d75757; }
-body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbench-card-icon[data-icon="calendar"] { background: #3f7fd4; }
-body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbench-card-icon[data-icon="peers"] { background: #3f7fd4; }
-body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbench-card-icon[data-icon="search"] { background: #7d63c9; }
-body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbench-card-icon[data-icon="download"] { background: #6a7687; }
+body[data-inkdrop-view="source_memory"]
+  #inkdropSectionWorkbench
+  .section-workbench-card-icon[data-icon="x-plain"] {
+  background: #d75757;
+}
+body[data-inkdrop-view="source_memory"]
+  #inkdropSectionWorkbench
+  .section-workbench-card-icon[data-icon="calendar"] {
+  background: #3f7fd4;
+}
+body[data-inkdrop-view="source_memory"]
+  #inkdropSectionWorkbench
+  .section-workbench-card-icon[data-icon="peers"] {
+  background: #3f7fd4;
+}
+body[data-inkdrop-view="source_memory"]
+  #inkdropSectionWorkbench
+  .section-workbench-card-icon[data-icon="search"] {
+  background: #7d63c9;
+}
+body[data-inkdrop-view="source_memory"]
+  #inkdropSectionWorkbench
+  .section-workbench-card-icon[data-icon="download"] {
+  background: #6a7687;
+}
 
 /* With the Inspect panel docked, the table column keeps roughly half its
    width, and the fixed-layout column plan (sized for the full-width table)
@@ -277,11 +339,15 @@ body[data-inkdrop-view="source_memory"] #inkdropSectionWorkbench .section-workbe
    into the release column; caught on screenshots with the panel open).
    In the docked state the table sizes to content and scrolls inside its
    own container instead. */
-body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-detail-panel[hidden])) .inkdrop-react-blocklist {
+body[data-inkdrop-view="source_memory"]
+  #opDetailDock:not(:has(.source-memory-detail-panel[hidden]))
+  .inkdrop-react-blocklist {
   overflow-x: auto;
 }
 
-body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-detail-panel[hidden])) .blocklist-table {
+body[data-inkdrop-view="source_memory"]
+  #opDetailDock:not(:has(.source-memory-detail-panel[hidden]))
+  .blocklist-table {
   table-layout: auto;
 }
 
@@ -291,10 +357,22 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
    screenshots: Inspect half-cut, Remove past the edge). Source and Added
    are already shown in the open panel, so drop those columns while it is
    docked and let the remaining four fit without any hidden scroll. */
-body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-detail-panel[hidden])) .blocklist-table th:nth-child(4),
-body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-detail-panel[hidden])) .blocklist-table td[data-label="Source"],
-body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-detail-panel[hidden])) .blocklist-table th:nth-child(5),
-body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-detail-panel[hidden])) .blocklist-table td[data-label="Added"] {
+body[data-inkdrop-view="source_memory"]
+  #opDetailDock:not(:has(.source-memory-detail-panel[hidden]))
+  .blocklist-table
+  th:nth-child(4),
+body[data-inkdrop-view="source_memory"]
+  #opDetailDock:not(:has(.source-memory-detail-panel[hidden]))
+  .blocklist-table
+  td[data-label="Source"],
+body[data-inkdrop-view="source_memory"]
+  #opDetailDock:not(:has(.source-memory-detail-panel[hidden]))
+  .blocklist-table
+  th:nth-child(5),
+body[data-inkdrop-view="source_memory"]
+  #opDetailDock:not(:has(.source-memory-detail-panel[hidden]))
+  .blocklist-table
+  td[data-label="Added"] {
   display: none;
 }
 
@@ -304,7 +382,6 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
 }
 
 .source-memory-detail-action.busy {
-  opacity: .65;
+  opacity: 0.65;
   cursor: progress;
 }
-
