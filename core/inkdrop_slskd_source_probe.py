@@ -841,26 +841,75 @@ WESTERN_COMIC_PUBLISHER_PHRASES = {
     "ablaze",
     "aftershock",
     "archie",
+    "artemis",
     "awa",
+    "belly rub",
+    "berkeley",
     "black mask",
     "boom",
+    "catalyst",
+    "comicmint",
     "dark horse",
     "dc",
     "dc comics",
+    "drawn and quarterly",
+    "drawn quarterly",
     "dynamite",
+    "fantagraphics",
+    "fantagraphics books",
+    "first second",
+    "glacier bay",
+    "haven",
+    "humanoids",
     "idw",
     "image",
     "image comics",
+    "iron circus",
+    "koyama",
+    "lerner",
     "mad cave",
     "marvel",
+    "miracle",
+    "nbm",
     "oni",
+    "pacific",
+    "peow",
+    "power pack",
+    "press gang",
     "rebellion",
+    "roaring brook",
     "scout",
+    "self made hero",
+    "silver sprocket",
+    "strip arts",
     "titan",
     "top shelf",
     "valiant",
     "vault",
     "vertigo",
+    "warner",
+}
+
+# Indie/small-press and graphic-novel publishers whose releases are more
+# commonly shared as single volumes, collected editions, or OGNs than as
+# numbered single issues.  Used by slskd_book_query_qualifier() to promote
+# book-style query variants (Book N, Volume N, tpb, hardcover, etc.) ahead
+# of issue-number patterns.
+INDIE_BOOK_PUBLISHER_PHRASES = {
+    "drawn and quarterly",
+    "drawn quarterly",
+    "fantagraphics",
+    "fantagraphics books",
+    "first second",
+    "iron circus",
+    "koyama",
+    "nobrow",
+    "peow",
+    "roaring brook",
+    "self made hero",
+    "silver sprocket",
+    "strip arts",
+    "top shelf",
 }
 MANGA_PUBLISHER_PHRASES = {
     "denpa",
@@ -3645,7 +3694,48 @@ def slskd_media_query_qualifier(item):
     return "comics"
 
 
-def broad_series_query_variants(title, qualifier="comics"):
+def slskd_book_query_qualifier(item):
+    """Return a book-oriented qualifier for indie/graphic-novel publishers.
+
+    Indie and small-press comics (Fantagraphics, Drawn & Quarterly, Top Shelf,
+    First Second, etc.) are disproportionately shared on Soulseek as collected
+    editions, OGNs, or single volumes rather than as numbered monthly issues.
+    When the publisher matches, this returns "book" so that
+    broad_series_query_variants() and source_queries() promote volume-oriented
+    and book-format query patterns ahead of issue-number patterns.
+    """
+
+    item = item if isinstance(item, dict) else {}
+    publisher = item_publisher_text(item)
+    if not publisher:
+        return ""
+    if any_normalized_phrase_in_text(publisher, INDIE_BOOK_PUBLISHER_PHRASES):
+        return "book"
+    return ""
+
+
+def _short_publisher_label(publisher_text):
+    """Extract the most distinctive single-word or short-phrase label from a
+    publisher string for use as a query qualifier.  Avoids generic words and
+    returns at most one label."""
+
+    if not publisher_text:
+        return ""
+    # Known multi-word labels that must stay together
+    for phrase in sorted(
+        list(WESTERN_COMIC_PUBLISHER_PHRASES) + list(INDIE_BOOK_PUBLISHER_PHRASES),
+        key=lambda p: -len(p),
+    ):
+        if normalized_phrase_in_text(publisher_text, phrase):
+            return phrase
+    # Fallback: first capitalized/distinguishable word of 3+ chars
+    for word in publisher_text.split():
+        if len(word) >= 3 and word.lower() not in STOP_WORDS:
+            return word
+    return ""
+
+
+def broad_series_query_variants(title, qualifier="comics", item=None):
     clean = display_clean(title)
     if not clean or title_has_numbering(clean):
         return []
@@ -3675,7 +3765,27 @@ def broad_series_query_variants(title, qualifier="comics"):
         f"{clean} volumes",
         f"{clean} volume",
     ])
-    return unique_values(out, limit=10)
+    # Publisher-qualified queries: on Soulseek, many shares are organized
+    # by publisher folder (e.g., "Fantagraphics/Tongues"). For indie/small-
+    # press titles these publisher qualifiers are disproportionately effective
+    # because uploaders of indie comics tend to group by imprint.
+    if item is not None:
+        publisher = item_publisher_text(item)
+        publisher_label = _short_publisher_label(publisher)
+        if publisher_label and publisher_label.lower() != normalize(clean):
+            out.append(f"{clean} {publisher_label}")
+    # Book-format variants for indie/graphic-novel publishers whose releases
+    # are more commonly shared as OGNs, TPBs, or collected editions than as
+    # numbered single issues.
+    book_qualifier = slskd_book_query_qualifier(item) if item is not None else ""
+    if book_qualifier == "book":
+        out.extend([
+            f"{clean} graphic novel",
+            f"{clean} tpb",
+            f"{clean} trade",
+            f"{clean} hardcover",
+        ])
+    return unique_values(out, limit=18)
 
 
 def trusted_collected_singleton_query_anchor(item):
@@ -3727,6 +3837,9 @@ def source_queries(item):
     canonical_title = preferred_titles[0] if preferred_titles else ""
     trusted_singleton_anchor = trusted_collected_singleton_query_anchor(item)
     media_query_qualifier = slskd_media_query_qualifier(item)
+    issue_year = str(metadata.get("date") or "")[:4] if metadata.get("date") else ""
+    if not issue_year and metadata.get("year"):
+        issue_year = str(metadata.get("year") or "")
     if trusted_singleton_anchor:
         queries.append(trusted_singleton_anchor)
     # Broad series/alias discovery leads automatic SLSKD searches. Candidate
@@ -3768,14 +3881,48 @@ def source_queries(item):
     # These sit after the first numbered query on purpose. Finding the wanted
     # issue still leads; this only stops a bad canonical title from being the
     # only broad query a series ever gets.
-    for title in preferred_titles[1:2]:
-        if alias_mentions_issue(title, issue) or title_has_numbering(title):
-            continue
-        queries.extend(broad_series_query_variants(title, media_query_qualifier)[:2])
+    # For indie/book publishers, promote broad queries earlier and include
+    # publisher-qualified + book-format variants from broad_series_query_variants.
+    book_qualifier = slskd_book_query_qualifier(item)
+    is_indie_book = book_qualifier == "book"
+    broad_variants_by_title = {}
     for title in preferred_titles[:2]:
         if alias_mentions_issue(title, issue) or title_has_numbering(title):
             continue
-        queries.extend(broad_series_query_variants(title, media_query_qualifier)[2:6])
+        broad_variants_by_title[title] = broad_series_query_variants(title, media_query_qualifier, item)
+    # Indie/book publishers: emit publisher-qualified and book-format queries
+    # (graphic novel, tpb, trade, hardcover) early because on Soulseek these
+    # titles are disproportionately shared as collected editions or under
+    # publisher directories. The first 7 broad variants (bare title, qualified,
+    # comic, complete, collection, volumes, volume) are already emitted by the
+    # normal flow below, so only the tail variants need promotion here.
+    if is_indie_book:
+        publisher_label = _short_publisher_label(item_publisher_text(item))
+        for title in list(broad_variants_by_title)[:1]:
+            bv = broad_variants_by_title[title]
+            # Positions 7+ are the publisher-qualified and book-format variants
+            # that the normal flow never generates (unique_values will dedup
+            # any overlap with the regular broad variant slots below).
+            for variant in bv[7:]:
+                queries.append(variant)
+            # Also add the publisher-qualified form directly if not already in
+            # broad variants, in case the title itself collides with the label.
+            if publisher_label and publisher_label.lower() != normalize(title):
+                queries.append(f"{title} {publisher_label}")
+        # Year-only broad query: "Tongues 2018" without issue number.
+        # Uploaders of indie comics often label entire runs or OGNs by year.
+        if issue_year:
+            for title in preferred_titles[:2]:
+                if not alias_mentions_issue(title, issue) and not title_has_numbering(title):
+                    queries.append(f"{title} {issue_year}")
+    for title in preferred_titles[1:2]:
+        if alias_mentions_issue(title, issue) or title_has_numbering(title):
+            continue
+        queries.extend(broad_variants_by_title.get(title, broad_series_query_variants(title, media_query_qualifier, item))[:2])
+    for title in preferred_titles[:2]:
+        if alias_mentions_issue(title, issue) or title_has_numbering(title):
+            continue
+        queries.extend(broad_variants_by_title.get(title, broad_series_query_variants(title, media_query_qualifier, item))[2:6])
     if canonical_title and not alias_mentions_issue(canonical_title, issue) and not title_has_numbering(canonical_title):
         for suffix in compact_volume_suffixes[:1]:
             queries.append(f"{canonical_title} {suffix}")
@@ -3827,9 +3974,6 @@ def source_queries(item):
                 queries.append(f"{title} {suffix} {issue_title}")
     for issue_title in issue_titles:
         queries.append(issue_title)
-    issue_year = str(metadata.get("date") or "")[:4] if metadata.get("date") else ""
-    if not issue_year and metadata.get("year"):
-        issue_year = str(metadata.get("year") or "")
     if issue_year:
         for title in preferred_titles[:2]:
             if suffixes and not title_has_numbering(title):
