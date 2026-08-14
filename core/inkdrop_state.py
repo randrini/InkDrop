@@ -66,7 +66,7 @@ DEFERRED_QUEUE_SYNC_STALE_SECONDS = 20 * 60
 QUEUE_THROUGHPUT_STALE_ACTIVE_SECONDS = 2 * 60 * 60
 QUEUE_THROUGHPUT_OLD_NO_ATTEMPT_SECONDS = 30 * 60
 REMOVED_SERIES_MESSAGE = "Series removed by user"
-REMOVED_SERIES_ACTIVE_WANTED_STATUSES = ("wanted", "in_progress", "grabbed", "blocked", "searching")
+REMOVED_SERIES_ACTIVE_WANTED_STATUSES = ("wanted", "in_progress", "grabbed", "blocked", "searching", "awaiting_release")
 REMOVED_SERIES_ACTIVE_QUEUE_STATES = ("queued", "searching", "source_wait", "downloading", "importing", "needs_you")
 QUEUE_TERMINAL_STATES = {
     "verified", "satisfied", "superseded_duplicate", "stale_source_absent",
@@ -103,23 +103,93 @@ COALESCED_SOURCE_ATTEMPT_STATUS = "coalesced_retry_duplicate"
 # full 15-22s rebuild, on every single auto-refresh. 300s comfortably outlasts
 # that cadence so most refreshes hit the cache instead.
 STATE_VIEW_SUMMARY_TTL_SECONDS = 300
-STATE_VIEW_SUMMARY_CACHE = {
-    "db_path": None,
-    "ts": 0.0,
-    "summary": None,
-}
+# Keyed by "{db_path}::{scope}" (see state_view_summary's cache_key), one slot
+# per scope -- there are only ever two, full and counts. A single shared slot
+# used to mean any counts-scope view (Series, History, Imports) evicted the
+# full-scope entry that Queue/Wanted/Manual Review/Sources/Source Memory/
+# Attempts/Workers rely on, and vice versa, so switching between an
+# analytics view and any other view -- completely normal navigation, and
+# guaranteed under multi-tab or worker-background polling -- meant the cache
+# never actually stayed warm and every request paid the full 15-22s rebuild.
+STATE_VIEW_SUMMARY_CACHE = {}
 # dict.update() is one atomic write under the GIL, but a reader that checks
-# "summary", "ts" and "db_path" as three separate .get() calls can still
-# straddle it -- e.g. read the pre-update summary, then read the post-update
-# ts and db_path, and hand out a payload for the wrong scope labelled as a
-# clean cache hit. This lock makes each cache's read-snapshot and write an
-# indivisible unit instead of three independent lookups.
+# "summary" and "ts" as two separate .get() calls on a slot can still
+# straddle a concurrent write to that same slot. This lock makes each slot's
+# read-snapshot and write an indivisible unit instead of independent lookups.
 STATE_SUMMARY_CACHE_LOCK = threading.Lock()
 STATE_SUMMARY_CACHE = {
     "db_path": None,
     "ts": 0.0,
     "summary": None,
 }
+
+# clear_state_view_summary_cache() (below) is called from ~9 write paths --
+# most heavily record_worker_activity() (every worker heartbeat) and
+# update_sync_meta(), which is itself called from dozens of ordinary
+# acquisition writes (every recorded source_attempt, queue transition,
+# series add, provider health check, ...). On a live, actively-working
+# instance those land every 1-2s, so STATE_VIEW_SUMMARY_CACHE above almost
+# never survives long enough to reach its own 300s TTL -- nearly every
+# full-scope load re-pays the 15-22s queue_provider_timeout_pressure_rollup
+# / queue_throughput_rollup cost the comment above this describes, even
+# though the TTL was explicitly sized to avoid exactly that. Both rollups
+# answer "why is the queue stuck" -- a diagnostic question that doesn't need
+# to reflect a write from a second ago -- so they get their own TTL-only
+# cache here, keyed by db path and deliberately NOT touched by
+# clear_state_view_summary_cache(), so they actually get the bounded
+# staleness the surrounding design already intended.
+QUEUE_DIAGNOSTIC_ROLLUP_TTL_SECONDS = STATE_VIEW_SUMMARY_TTL_SECONDS
+QUEUE_DIAGNOSTIC_ROLLUP_CACHE_LOCK = threading.Lock()
+QUEUE_DIAGNOSTIC_ROLLUP_CACHE = {}
+
+
+def _queue_diagnostic_rollup_cached(cache_name, con, limit, compute):
+    db_path = ""
+    try:
+        row = con.execute("PRAGMA database_list").fetchone()
+        db_path = str(row["file"] or "") if row else ""
+    except Exception:
+        db_path = ""
+    if not db_path:
+        return compute()
+    cache_key = f"{db_path}::{cache_name}::{int(limit or 0)}"
+    now = time.time()
+    with QUEUE_DIAGNOSTIC_ROLLUP_CACHE_LOCK:
+        slot = QUEUE_DIAGNOSTIC_ROLLUP_CACHE.get(cache_key)
+    if isinstance(slot, dict) and now - float(slot.get("ts") or 0) <= QUEUE_DIAGNOSTIC_ROLLUP_TTL_SECONDS:
+        return clone_jsonish(slot.get("result"))
+    result = compute()
+    with QUEUE_DIAGNOSTIC_ROLLUP_CACHE_LOCK:
+        QUEUE_DIAGNOSTIC_ROLLUP_CACHE[cache_key] = {"ts": now, "result": clone_jsonish(result)}
+    return result
+
+
+def _queue_diagnostic_rollup_cache_min_ts(con):
+    # SIXH-20260812-CACHE-P2-01: this cache deliberately survives ordinary
+    # write invalidation (see the comment above QUEUE_DIAGNOSTIC_ROLLUP_TTL_SECONDS),
+    # so a summary built from it can embed rollups up to
+    # QUEUE_DIAGNOSTIC_ROLLUP_TTL_SECONDS old even when the enclosing summary
+    # itself was just freshly rebuilt. Callers that embed these rollups must
+    # report this timestamp (the oldest of the ones actually embedded) so the
+    # UI can show real diagnostic freshness instead of inheriting the outer
+    # summary's own (unrelated) cache-hit/miss state. Returns None if nothing
+    # is cached for this db yet (the caller should treat that as "just computed").
+    try:
+        row = con.execute("PRAGMA database_list").fetchone()
+        db_path = str(row["file"] or "") if row else ""
+    except Exception:
+        db_path = ""
+    if not db_path:
+        return None
+    prefix = f"{db_path}::"
+    timestamps = []
+    with QUEUE_DIAGNOSTIC_ROLLUP_CACHE_LOCK:
+        for cache_key, slot in QUEUE_DIAGNOSTIC_ROLLUP_CACHE.items():
+            if not cache_key.startswith(prefix) or not isinstance(slot, dict):
+                continue
+            timestamps.append(float(slot.get("ts") or 0))
+    return min(timestamps) if timestamps else None
+
 
 # How much of the summary a caller actually needs. "counts" skips the queue
 # analytics rollups -- the Series and Issues views never render them, and they
@@ -136,10 +206,18 @@ HISTORY_ACTIVITY_VIEW_TTL_SECONDS = 8
 HISTORY_ACTIVITY_VIEW_CACHE = {}
 SETTINGS_SNAPSHOT_TTL_SECONDS = 60
 SOURCE_PROVIDER_VIEW_TTL_SECONDS = 45
+# Both caches below are rebuilt outside this lock (a DB read can take a while
+# under load), so a plain lock around the read/write of each cache's fields
+# only stops a torn read -- it does not stop a rebuild that started *before*
+# a settings write from publishing its now-stale result *after*
+# clear_settings_caches() ran, stamped with a timestamp that makes it look
+# fresh (PASS33-STATE-P2-01). The generation counter closes that: a rebuild
+# captures it before doing any work and refuses to publish if it no longer
+# matches, so an invalidation that lands mid-rebuild always wins.
+SETTINGS_CACHE_LOCK = threading.Lock()
+SETTINGS_CACHE_GENERATION = 0
 SETTINGS_SNAPSHOT_CACHE = {
-    "db_path": None,
-    "ts": 0.0,
-    "snapshot": None,
+    "record": None,  # {"db_path": ..., "ts": ..., "snapshot": ...} or None
 }
 SOURCE_PROVIDER_VIEW_CACHE = {}
 # The Blocklist page's impact rollup has to check whether each source_attempts
@@ -261,6 +339,7 @@ MANGA_PUBLISHER_HINTS = {
     "yen press",
 }
 MANGA_TITLE_HINTS = {
+    "akira",
     "berserk",
     "bleach",
     "chainsaw man",
@@ -269,6 +348,7 @@ MANGA_TITLE_HINTS = {
     "delicious in dungeon",
     "fire punch",
     "firepunch",
+    "ghost in the shell",
     "hunter x hunter",
     "hunterxhunter",
     "naoki urasawa s 20th century boys",
@@ -279,6 +359,22 @@ MANGA_TITLE_HINTS = {
     "vagabond",
     "wild strawberry",
 }
+# ComicVine's own volume description is a much stronger, self-updating signal
+# than publisher/title matching: a Western imprint (Marvel, Dark Horse Comics)
+# tells you nothing about whether a specific release is a manga reprint, but
+# ComicVine's community-written descriptions consistently flag a translated
+# manga in prose even when the publisher field doesn't (confirmed live for
+# both Akira/"Marvel" and Ghost in the Shell/"Dark Horse Comics" -- both
+# descriptions read "English translation of the Japanese manga ..."). Requires
+# manga to co-occur with "Japanese" or "translat(ed/ion)"/"originally
+# serialized in Japan" so it doesn't fire on a Western comic that merely
+# mentions manga in passing (e.g. "manga-influenced art style").
+MANGA_DESCRIPTION_HINT_RE = re.compile(
+    r"(?i)\bjapanese\s+manga\b"
+    r"|\btranslat(?:ed|ion)\b[^.]{0,60}\bmanga\b"
+    r"|\bmanga\b[^.]{0,60}\btranslat(?:ed|ion)\b"
+    r"|\boriginally\s+(?:serialized|serialised|published)\s+in\s+japan\b"
+)
 WESTERN_COMIC_MEDIA_TYPES = {"comic", "comics", "graphic novel", "graphic_novel"}
 WESTERN_COMIC_PUBLISHER_HINTS = {
     "aftershock comics",
@@ -388,13 +484,16 @@ def boolish(value, default=False):
 
 
 def clear_settings_caches():
-    SETTINGS_SNAPSHOT_CACHE.update({"db_path": None, "ts": 0.0, "snapshot": None})
-    SOURCE_PROVIDER_VIEW_CACHE.clear()
+    global SETTINGS_CACHE_GENERATION
+    with SETTINGS_CACHE_LOCK:
+        SETTINGS_CACHE_GENERATION += 1
+        SETTINGS_SNAPSHOT_CACHE["record"] = None
+        SOURCE_PROVIDER_VIEW_CACHE.clear()
 
 
 def clear_state_view_summary_cache():
     with STATE_SUMMARY_CACHE_LOCK:
-        STATE_VIEW_SUMMARY_CACHE.update({"db_path": None, "ts": 0.0, "summary": None})
+        STATE_VIEW_SUMMARY_CACHE.clear()
         STATE_SUMMARY_CACHE.update({"db_path": None, "ts": 0.0, "summary": None})
 
 
@@ -449,7 +548,12 @@ def stable_id(*parts):
 
 
 def normalize_key(value):
-    text = str(value or "").strip().lower()
+    # Fold "&" / "&amp;" to "and" before stripping non-alphanumerics, so
+    # titles stored with an ampersand ("Love & Rockets") and titles/aliases
+    # spelled out with "and" ("Love and Rockets") always produce the same
+    # key. Without this, the two forms diverge at the very primitive every
+    # title-identity comparison in this module is built on.
+    text = str(value or "").strip().lower().replace("&amp;", " and ").replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -1158,11 +1262,27 @@ def init_schema_uncached(con):
             detail_json text
         );
         create index if not exists idx_issues_series on issues(series_id);
+        -- Backs per-row identity lookups (backup-merge preview classification,
+        -- see _classify_backup_series/_classify_backup_issues in
+        -- core/inkdrop_backup_restore.py) that query one (provider, id) pair
+        -- at a time instead of loading every series/issue into an in-memory
+        -- index -- without these, that per-row query pattern would be a full
+        -- table scan per row.
+        create index if not exists idx_series_metadata_identity on series(metadata_provider, metadata_id)
+            where metadata_provider is not null and metadata_provider != '' and metadata_id is not null and metadata_id != '';
+        create index if not exists idx_issues_metadata_identity on issues(series_id, metadata_provider, metadata_id)
+            where metadata_provider is not null and metadata_provider != '' and metadata_id is not null and metadata_id != '';
         create index if not exists idx_wanted_series_status_updated on wanted_items(series_id, status, updated_at desc);
         create index if not exists idx_wanted_status on wanted_items(status);
         create index if not exists idx_wanted_status_updated on wanted_items(status, updated_at desc);
         create index if not exists idx_wanted_issue_status_updated on wanted_items(issue_id, status, updated_at desc);
         create index if not exists idx_queue_state on queue_items(state);
+        -- Ascending, with id as the tiebreak, so the notification scanner's
+        -- (updated_at, id) cursor walks a plain index range instead of sorting
+        -- every verified row it matches. The desc indexes below can serve the
+        -- range but not the id tiebreak, which is exactly the ordering that
+        -- keeps a batch of same-timestamp rows from being skipped.
+        create index if not exists idx_queue_state_updated_id on queue_items(state, updated_at, id);
         create index if not exists idx_queue_active_state_updated on queue_items(active, state, updated_at desc);
         create index if not exists idx_queue_series_state_active_updated on queue_items(series_id, state, active, updated_at desc);
         create index if not exists idx_queue_wanted_updated on queue_items(wanted_id, updated_at desc);
@@ -1216,6 +1336,8 @@ def init_schema_uncached(con):
         );
         create index if not exists idx_source_attempts_recent_activity on source_attempts(coalesce(completed_at, started_at, 0) desc, id desc);
         create index if not exists idx_download_tasks_state_updated on download_tasks(state, updated_at desc);
+        -- Ascending twin of the index above; see idx_queue_state_updated_id.
+        create index if not exists idx_download_tasks_state_updated_id on download_tasks(state, updated_at, id);
         create index if not exists idx_download_tasks_queue_updated on download_tasks(queue_id, updated_at desc);
         create index if not exists idx_download_tasks_wanted_updated on download_tasks(wanted_id, updated_at desc);
         create index if not exists idx_download_tasks_series_issue_updated on download_tasks(series_id, issue_id, updated_at desc);
@@ -1746,6 +1868,29 @@ def init_schema_uncached(con):
             "display_phase": "text",
         },
     )
+    # After that column migration on purpose, for the same reason as
+    # idx_source_attempts_download_url_hash above: on a legacy database the base
+    # executescript's CREATE TABLE IF NOT EXISTS no-ops, so outcome and
+    # display_phase do not exist until ensure_columns adds them, and an index
+    # whose predicate names them fails schema init outright. Caught by
+    # state_schema_audit in CI, which replays a legacy fixture.
+    #
+    # backfill_history_event_activity_columns() pages through the events still
+    # missing these two columns, and nothing indexed that gap: picking each
+    # batch of a thousand meant scanning 1.83M rows and sorting them, against a
+    # backlog of 861K. Partial, so it carries only the rows still owed a
+    # backfill and empties itself as they drain -- 34MB and 2.2s to build on
+    # production. The predicate is kept character-identical to the query's so
+    # the planner can match it. Measured on a copy of the production table this
+    # is worth 62ms per batch, not the 229s the whole backfill costs: the rest
+    # is the join that follows, which is random-read bound on a 45.7GB database
+    # and already has its indexes.
+    con.execute(
+        "create index if not exists idx_history_events_activity_backfill"
+        " on history_events(created_at desc, id desc)"
+        " where outcome is null or trim(outcome) = ''"
+        "    or display_phase is null or trim(display_phase) = ''"
+    )
     # Databases created before the archive-validation cache learned to notice
     # mtime-preserving rewrites have neither column. Both are deliberately
     # nullable with no default: a row that predates the upgrade reads back as
@@ -1770,6 +1915,11 @@ def init_schema_uncached(con):
     ensure_columns(con, "wanted_items", {"revision": "integer not null default 1"})
     ensure_columns(con, "queue_items", {"revision": "integer not null default 1"})
     ensure_columns(con, "bad_source_candidates", {"revision": "integer not null default 1"})
+    # Tracks whether media_type was set by a user (via the reclassify endpoint)
+    # or derived automatically. upsert_series() reads this before recomputing
+    # media_type on every provider sync, so a manual correction survives the
+    # next sync instead of being silently overwritten by the auto-classifier.
+    ensure_columns(con, "series", {"media_type_source": "text not null default 'auto'"})
 
 
 def ensure_columns(con, table, columns):
@@ -2508,6 +2658,7 @@ def sanitize_path_component(value):
     value = re.sub(r"\s+", " ", value).strip()
     value = value.replace("/", "-").replace("\\", "-")
     value = re.sub(r"-{2,}", "-", value)
+    value = value.strip(" .-")
     return value or "Unknown"
 
 
@@ -2588,6 +2739,14 @@ def title_manga_hint(title):
     return ""
 
 
+def description_manga_hint(description):
+    text = str(description or "")
+    if not text:
+        return ""
+    match = MANGA_DESCRIPTION_HINT_RE.search(text)
+    return match.group(0).strip() if match else ""
+
+
 def native_series_media_decision(row, provider=None):
     provider_key = metadata_provider_key(
         provider
@@ -2617,6 +2776,15 @@ def native_series_media_decision(row, provider=None):
             "source": "metadata_hint",
             "reason": "title_hint",
             "hint": title_hint,
+        }
+    description = row_value(row, "description") or row_value(row, "deck")
+    description_hint = description_manga_hint(description)
+    if description_hint:
+        return {
+            "media_type": "manga",
+            "source": "metadata_hint",
+            "reason": "description_hint",
+            "hint": description_hint,
         }
     return {"media_type": explicit or "comic", "source": "default", "reason": "default_comic"}
 
@@ -2875,6 +3043,161 @@ def media_type_for_managed_file_path(con, path, fallback=None):
     return media or ""
 
 
+def repair_media_file_identity(con):
+    """Restore the invariant that a media_files id is derived from its own normalized_path.
+
+    ``media_id`` is ``stable_id("media_file", normalized_path)``, so the primary
+    key and the normalized_path index normally collide together and the upsert
+    below resolves both through its ``on conflict(normalized_path)`` branch.
+    Path migrations break that pairing: they rewrite normalized_path in place --
+    a re-import into a renamed folder, a case-normalising cleanup -- without
+    recomputing the key, which leaves a row whose id still belongs to the path
+    it used to describe. Observing the original path then computes that stale
+    id, hits the primary key *instead* of the conflict target, and raises
+    ``UNIQUE constraint failed: media_files.id``, which aborts the entire
+    surrounding sync. Production carried 453 such rows out of 4,409.
+
+    identity_artifacts.legacy_media_file_id references media_files.id with the
+    default ON UPDATE/DELETE NO ACTION, so a referenced row can't be rekeyed in
+    place either -- that raises ``FOREIGN KEY constraint failed`` and aborts
+    the sync exactly like the UNIQUE collision above. Production carries 48
+    such referenced rows among the 416 diverged.
+
+    A single left-to-right pass that rekeys whichever row currently occupies a
+    target id -- on the theory that "the slot is taken" means "that row is a
+    duplicate of this one" -- is unsound: nothing establishes that the
+    occupant actually describes the same file. Divergent ids can chain or
+    cycle (row A's stale id is row B's correct id, row B's stale id is row
+    C's correct id, ...), entirely coincidentally, from unrelated path
+    migrations landing on unrelated rows. Treating an occupied slot as a
+    duplicate then walks that chain: it rebinds an artifact describing A onto
+    whatever row happens to sit at A's target id -- B, a completely different
+    file -- and deletes A's own row. ``pragma foreign_key_check`` stays clean
+    throughout, because every step is individually FK-valid; the corruption is
+    semantic, not structural, and reproduces even in a bare 2-row cycle.
+
+    So this runs in two passes instead of one. Pass one moves every diverged
+    row (referenced or not) to a temporary id derived from its own
+    normalized_path -- never from anything about its neighbours -- so by
+    construction no two rows can ever collide over a temp id, and nothing is
+    read as "occupied" that isn't a row this function has already claimed
+    itself. Pass two then moves each of those rows from its temp id to its
+    real target id. Because pass one already vacated every diverged row's
+    stale id, a target can only still be occupied in pass two by a row that
+    was never diverged to begin with -- and since normalized_path is unique,
+    two distinct rows can't legitimately share a target id (that would need
+    two different paths to hash the same). A still-occupied target in pass two
+    is therefore treated as a genuine, unexplained conflict: nothing is
+    deleted or merged on an assumption, and it is reported instead. Every
+    single-row move (referenced or not) runs inside a savepoint, so a
+    genuinely unexpected error rolls back that one move instead of leaving a
+    half-migrated row.
+    """
+    if not table_exists(con, "media_files"):
+        return {"repaired": 0, "conflicts": 0, "conflict_samples": []}
+    rows = con.execute("select id, normalized_path from media_files").fetchall()
+    taken = {str(row["id"] or "") for row in rows}
+    has_identity_artifacts = table_exists(con, "identity_artifacts")
+
+    def referencing_artifact(media_file_id):
+        if not has_identity_artifacts:
+            return None
+        found = con.execute(
+            "select id from identity_artifacts where legacy_media_file_id=?",
+            (media_file_id,),
+        ).fetchone()
+        return found["id"] if found else None
+
+    def move_row(old_id, new_id, normalized_path):
+        con.execute("savepoint repair_media_file_identity_row")
+        try:
+            if referencing_artifact(old_id) is not None:
+                # normalized_path is unique, so the clone can't be inserted
+                # under the row's own path while the old id still holds it --
+                # displace the old row onto a placeholder first; it is
+                # deleted a few statements down regardless.
+                con.execute(
+                    "update media_files set normalized_path=? where id=?",
+                    (f"__repair_media_file_identity__{old_id}", old_id),
+                )
+                con.execute(
+                    """
+                    insert into media_files(
+                        id, path, normalized_path, media_type, series_id, issue_id, queue_id,
+                        import_result_id, source_path, status, active, completion_truth,
+                        folder_imported, size_bytes, mtime, first_seen_at, last_seen_at, raw_json
+                    )
+                    select ?, path, ?, media_type, series_id, issue_id, queue_id,
+                        import_result_id, source_path, status, active, completion_truth,
+                        folder_imported, size_bytes, mtime, first_seen_at, last_seen_at, raw_json
+                    from media_files where id=?
+                    """,
+                    (new_id, normalized_path, old_id),
+                )
+                con.execute(
+                    "update identity_artifacts set legacy_media_file_id=? where legacy_media_file_id=?",
+                    (new_id, old_id),
+                )
+                con.execute("delete from media_files where id=?", (old_id,))
+            else:
+                con.execute("update media_files set id=? where id=?", (new_id, old_id))
+        except sqlite3.Error:
+            con.execute("rollback to repair_media_file_identity_row")
+            con.execute("release repair_media_file_identity_row")
+            raise
+        con.execute("release repair_media_file_identity_row")
+
+    diverged = []
+    for row in rows:
+        normalized_path = str(row["normalized_path"] or "")
+        current = str(row["id"] or "")
+        if not normalized_path:
+            continue
+        expected = stable_id("media_file", normalized_path)
+        if current != expected:
+            diverged.append((current, normalized_path, expected))
+
+    # Pass one: vacate every diverged row's stale id. Each temp id is derived
+    # only from that row's own normalized_path (a different hash domain than
+    # real ids), so this can never collide with another row's real id, temp
+    # id, or itself across repeated runs -- a standing conflict below parks
+    # at the same temp id every time instead of drifting.
+    temp_of = {}
+    for current, normalized_path, expected in diverged:
+        temp_id = stable_id("media_file_repair_tmp", normalized_path)
+        if current != temp_id:
+            # A standing conflict from a prior pass already sits at exactly
+            # this temp id (it's derived only from normalized_path, so it's
+            # stable across runs) -- moving it "to itself" would collide with
+            # itself rather than being a no-op.
+            move_row(current, temp_id, normalized_path)
+        taken.discard(current)
+        taken.add(temp_id)
+        temp_of[current] = temp_id
+
+    # Pass two: move each row from its temp id to its real target id.
+    repaired = 0
+    conflicts = 0
+    conflict_samples = []
+    for current, normalized_path, expected in diverged:
+        temp_id = temp_of[current]
+        if expected in taken:
+            conflicts += 1
+            if len(conflict_samples) < 5:
+                conflict_samples.append({"id": temp_id, "normalized_path": normalized_path})
+            continue
+        move_row(temp_id, expected, normalized_path)
+        taken.discard(temp_id)
+        taken.add(expected)
+        repaired += 1
+
+    return {
+        "repaired": repaired,
+        "conflicts": conflicts,
+        "conflict_samples": conflict_samples,
+    }
+
+
 def sync_managed_media_files(con, now=None, limit=5000):
     now = float(now or time.time())
     limit = max(1, min(int(limit or 5000), 50000))
@@ -2882,6 +3205,7 @@ def sync_managed_media_files(con, now=None, limit=5000):
     normalized_roots = [media_file_normalized_path(root) for root in roots if media_file_normalized_path(root)]
     if not normalized_roots:
         return {"observed": 0, "present": 0, "missing": 0, "skipped": 0}
+    identity_repair = repair_media_file_identity(con)
     rows = con.execute(
         """
         select ir.id, ir.queue_id, ir.source_attempt_id, ir.series_id, ir.issue_id,
@@ -2917,6 +3241,8 @@ def sync_managed_media_files(con, now=None, limit=5000):
     present = 0
     missing = 0
     skipped = 0
+    conflicted = 0
+    conflict_samples = []
     for row in rows:
         dest_path = str(row["dest_path"] or "").strip()
         normalized_path = media_file_normalized_path(dest_path)
@@ -2959,57 +3285,75 @@ def sync_managed_media_files(con, now=None, limit=5000):
             "import_raw": raw,
         }
         media_id = stable_id("media_file", normalized_path)
-        con.execute(
-            """
-            insert into media_files(
-                id, path, normalized_path, media_type, series_id, issue_id, queue_id,
-                import_result_id, source_path, status, active, completion_truth,
-                folder_imported, size_bytes, mtime, first_seen_at, last_seen_at, raw_json
-            ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            on conflict(normalized_path) do update set
-                path=excluded.path,
-                media_type=coalesce(nullif(excluded.media_type, ''), media_files.media_type),
-                series_id=excluded.series_id,
-                issue_id=excluded.issue_id,
-                queue_id=excluded.queue_id,
-                import_result_id=excluded.import_result_id,
-                source_path=excluded.source_path,
-                status=excluded.status,
-                active=excluded.active,
-                completion_truth=excluded.completion_truth,
-                folder_imported=excluded.folder_imported,
-                size_bytes=excluded.size_bytes,
-                mtime=excluded.mtime,
-                last_seen_at=excluded.last_seen_at,
-                raw_json=excluded.raw_json
-            """,
-            (
-                media_id,
-                dest_path,
-                normalized_path,
-                media_type,
-                row["series_id"],
-                row["issue_id"],
-                row["queue_id"],
-                row["id"],
-                row["source_path"],
-                status,
-                active,
-                row["completion_truth"],
-                1 if row["folder_imported"] else 0,
-                snapshot["size_bytes"],
-                snapshot["mtime"],
-                now,
-                now,
-                json_dumps(payload),
-            ),
-        )
+        try:
+            con.execute(
+                """
+                insert into media_files(
+                    id, path, normalized_path, media_type, series_id, issue_id, queue_id,
+                    import_result_id, source_path, status, active, completion_truth,
+                    folder_imported, size_bytes, mtime, first_seen_at, last_seen_at, raw_json
+                ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(normalized_path) do update set
+                    path=excluded.path,
+                    media_type=coalesce(nullif(excluded.media_type, ''), media_files.media_type),
+                    series_id=excluded.series_id,
+                    issue_id=excluded.issue_id,
+                    queue_id=excluded.queue_id,
+                    import_result_id=excluded.import_result_id,
+                    source_path=excluded.source_path,
+                    status=excluded.status,
+                    active=excluded.active,
+                    completion_truth=excluded.completion_truth,
+                    folder_imported=excluded.folder_imported,
+                    size_bytes=excluded.size_bytes,
+                    mtime=excluded.mtime,
+                    last_seen_at=excluded.last_seen_at,
+                    raw_json=excluded.raw_json
+                """,
+                (
+                    media_id,
+                    dest_path,
+                    normalized_path,
+                    media_type,
+                    row["series_id"],
+                    row["issue_id"],
+                    row["queue_id"],
+                    row["id"],
+                    row["source_path"],
+                    status,
+                    active,
+                    row["completion_truth"],
+                    1 if row["folder_imported"] else 0,
+                    snapshot["size_bytes"],
+                    snapshot["mtime"],
+                    now,
+                    now,
+                    json_dumps(payload),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            # One unresolvable row must not discard the whole surrounding sync.
+            # repair_media_file_identity() above clears the known cause, so
+            # anything landing here is new: count it, name it in the summary,
+            # and let the remaining files record their observation.
+            conflicted += 1
+            if len(conflict_samples) < 5:
+                conflict_samples.append({"normalized_path": normalized_path, "error": str(exc)})
+            continue
         observed += 1
         if exists:
             present += 1
         else:
             missing += 1
-    return {"observed": observed, "present": present, "missing": missing, "skipped": skipped}
+    return {
+        "observed": observed,
+        "present": present,
+        "missing": missing,
+        "skipped": skipped,
+        "conflicted": conflicted,
+        "conflict_samples": conflict_samples,
+        "identity_repair": identity_repair,
+    }
 
 
 def media_file_inventory_rollup(con):
@@ -4493,6 +4837,68 @@ def series_path_contract(row, provider=None, kapowarr_id=None, source=None):
     }
 
 
+def _record_series_title_collision_if_new(con, new_series_id, title, now):
+    """Record (never block) a brand-new series row colliding by title with an
+    existing, non-removed series under a different identity.
+
+    series_identity() is keyed on the provider's own catalog id (or a
+    title-only fallback when there is no catalog id at all), so it can only
+    ever catch two calls that resolve to the exact same id -- it structurally
+    cannot notice that ComicVine has just handed back a *different* catalog
+    entry for a title InkDrop already tracks under another id. Confirmed live
+    2026-08-11: 107 duplicate-title series groups, up from ~83 six days
+    earlier, 16 of them with real independent wanted/queue/download-task work
+    running in parallel under both identities (Berserk, Chainsaw Man, Bleach,
+    Kingdom, and others) -- each pair silently became two full, unrelated
+    acquisition pipelines for the same real series with nothing ever
+    surfacing that it happened.
+
+    This does not decide which row is canonical or retire/merge anything --
+    series_shadow_kind()/apply_series_shadow_retire_plan() deliberately
+    refuses to auto-retire this exact "two native metadata_peer rows" shape
+    (see docs/inkdrop/court-of-owls-edition-matching-scoping.md and the
+    2026-08-05 MangaDex companion design doc for why: a prior automated
+    same-title merge picked wrong). It only makes the moment of collision
+    permanently visible in history_events, deduped to fire once per unique
+    pair regardless of how many times either series gets re-synced, so a
+    future review or repair effort has a real, timestamped starting point
+    instead of only a live snapshot metric that says how many exist right
+    now with no record of when or why.
+    """
+    title_key = duplicate_series_title_key(title)
+    if not title_key:
+        return
+    candidates = con.execute(
+        f"""
+        select id, title from series s
+        where {series_not_removed_sql('s')}
+          and id != ?
+        """,
+        (new_series_id,),
+    ).fetchall()
+    other_id = None
+    for row in candidates:
+        candidate_id = str(row["id"] or "")
+        if candidate_id and duplicate_series_title_key(row["title"]) == title_key:
+            other_id = candidate_id
+            break
+    if not other_id:
+        return
+    pair_key = "|".join(sorted((str(new_series_id), other_id)))
+    event_id = stable_id("series_title_collision", pair_key)
+    message = f"New series {new_series_id!r} shares a title with existing series {other_id!r} under a different identity"
+    raw = json_dumps({"new_series_id": new_series_id, "existing_series_id": other_id, "title_key": title_key})
+    con.execute(
+        """
+        insert or ignore into history_events(
+            id, entity_type, entity_id, series_id, issue_id, event_type,
+            source, message, created_at, raw_json
+        ) values(?,'series',?,?,null,'series_title_collision',?,?,?,?)
+        """,
+        (event_id, new_series_id, new_series_id, "inkdrop_core", message, now, raw),
+    )
+
+
 def upsert_series(con, row, now):
     row = dict(row or {})
     title = row.get("name") or row.get("series") or row.get("title") or "Unknown"
@@ -4510,18 +4916,10 @@ def upsert_series(con, row, now):
         provider = tombstone_resolution.get("metadata_provider") or provider
         metadata_id = tombstone_resolution.get("metadata_id") or metadata_id
         row["series_identity_tombstone_resolution"] = tombstone_resolution
-    media_decision = native_series_media_decision(row, provider=provider)
-    media_type = media_decision.get("media_type") or "comic"
-    path_contract = series_path_contract(row, provider=provider, kapowarr_id=kapowarr_id, source=row.get("source"))
-    default_contract = None
-    if not has_path_contract_values(path_contract) and str(provider or "").lower() != "kapowarr":
-        default_contract = native_series_path_contract(row, media_type=media_type, con=con)
-        if default_contract:
-            path_contract = default_contract
     existing = con.execute(
         """
         select monitored, monitor_new, auto_grab, source, raw_json,
-               metadata_provider, metadata_id, kapowarr_id, media_type,
+               metadata_provider, metadata_id, kapowarr_id, media_type, media_type_source,
                library_root, library_path, library_path_template,
                library_path_source, library_adapter_path
         from series
@@ -4529,6 +4927,29 @@ def upsert_series(con, row, now):
         """,
         (sid,),
     ).fetchone()
+    media_type_locked = bool(
+        existing and str(existing["media_type_source"] or "auto").strip().lower() == "user"
+    )
+    media_decision = native_series_media_decision(row, provider=provider)
+    if media_type_locked and existing["media_type"]:
+        # A user explicitly reclassified this series (see set_series_media_type
+        # below). Every provider sync recomputes a fresh decision from the raw
+        # metadata regardless -- Akira/Ghost in the Shell's ComicVine records
+        # carry a Western publisher forever, so the auto decision would never
+        # stop disagreeing -- but a locked series keeps its own value instead
+        # of the freshly computed one, and that's what feeds the path contract
+        # below so the library root doesn't get "repaired" back either.
+        media_type = existing["media_type"]
+        media_decision = {"media_type": media_type, "source": "user_override", "reason": "media_type_locked"}
+    else:
+        media_type = media_decision.get("media_type") or "comic"
+    media_type_source = "user" if media_type_locked else "auto"
+    path_contract = series_path_contract(row, provider=provider, kapowarr_id=kapowarr_id, source=row.get("source"))
+    default_contract = None
+    if not has_path_contract_values(path_contract) and str(provider or "").lower() != "kapowarr":
+        default_contract = native_series_path_contract(row, media_type=media_type, con=con)
+        if default_contract:
+            path_contract = default_contract
     existing_raw = json_loads(existing["raw_json"] or "{}", {}) if existing else {}
     existing_parked_reason = str(existing_raw.get("automation_parked_reason") or "").strip().lower()
     existing_removed_or_parked = bool(existing and series_raw_removed_or_parked(existing_raw))
@@ -4539,6 +4960,20 @@ def upsert_series(con, row, now):
         and series_row_allows_removed_reactivation(row)
     )
     preserve_removed_or_parked = bool(existing_removed_or_parked and not explicit_removed_reactivation)
+    if preserve_removed_or_parked:
+        # A provider catalog sync must never re-park a companion that
+        # manga_companion_links currently authorizes as discovery_only -- that
+        # flag is only ever set/cleared through a confirmed call
+        # (restore_manga_companion_discovery / park_series_automation's
+        # allow_removing_discovery_only path), so if it still reads
+        # discovery_only here, whatever made existing_raw look removed/parked
+        # is stale or wrong, not a real decision this sync should honor.
+        protected_discovery_only = con.execute(
+            "select 1 from manga_companion_links where mangadex_series_id=? and discovery_mode='discovery_only' and status='linked'",
+            (sid,),
+        ).fetchone()
+        if protected_discovery_only:
+            preserve_removed_or_parked = False
     preserve_existing_default_path = bool(
         existing
         and default_contract
@@ -4664,21 +5099,21 @@ def upsert_series(con, row, now):
         if preserve_removed_or_parked and series_raw_user_removed(row_raw)
         else ((existing["source"] if preserve_removed_or_parked and existing else None) or row.get("source") or provider)
     )
+    if existing is None:
+        _record_series_title_collision_if_new(con, sid, title, now)
     con.execute(
         """
         insert into series(
-            id, title, sort_title, media_type, year, publisher, metadata_provider,
+            id, title, sort_title, media_type, media_type_source, year, publisher, metadata_provider,
             metadata_id, kapowarr_id, source, library_root, library_path,
             library_path_template, library_path_source, library_adapter_path,
             monitored, monitor_new, auto_grab, created_at, updated_at, raw_json
-        ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         on conflict(id) do update set
             title=excluded.title,
             sort_title=excluded.sort_title,
-            media_type=case
-                when coalesce(series.library_path_source, '') = 'user' and coalesce(excluded.media_type, '') = '' then series.media_type
-                else excluded.media_type
-            end,
+            media_type=excluded.media_type,
+            media_type_source=excluded.media_type_source,
             year=coalesce(excluded.year, series.year),
             publisher=coalesce(excluded.publisher, series.publisher),
             metadata_provider=excluded.metadata_provider,
@@ -4701,6 +5136,7 @@ def upsert_series(con, row, now):
             title,
             normalize_key(title),
             media_type,
+            media_type_source,
             row.get("year") or row.get("watch_year"),
             row.get("publisher") or row.get("watch_publisher"),
             provider,
@@ -4721,6 +5157,127 @@ def upsert_series(con, row, now):
         ),
     )
     return sid
+
+
+MEDIA_TYPE_OVERRIDE_ALLOWED = MANGA_MEDIA_TYPES | {"comic"}
+
+
+def set_series_media_type(db_path, series_id, media_type):
+    """db_path-level entry point for the reclassify-series API (mirrors
+    set_series_flags / set_series_manga_unit_override's calling convention)."""
+    series_id = str(series_id or "").strip()
+    if not series_id:
+        return {"ok": False, "error": "series_id is required"}
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return {"ok": False, "error": "missing_db", "series_id": series_id}
+    with connect(db_path, configure_wal=False) as con:
+        init_schema(con)
+        try:
+            result = _apply_series_media_type_override(con, series_id, media_type, time.time())
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), "series_id": series_id}
+        if result is None:
+            return {"ok": False, "error": "series not found", "series_id": series_id}
+        return {"ok": True, **result}
+
+
+def _apply_series_media_type_override(con, series_id, media_type, now):
+    """Manually reclassify a series and lock it against the next provider sync.
+
+    Unlike editing series.media_type directly, this also flips
+    media_type_source to 'user' so upsert_series() -- called on every routine
+    sync_watches() cycle, not just a manual rescan -- preserves the value
+    instead of recomputing it fresh from the provider's raw metadata every
+    time. See MANGA_TITLE_HINTS / native_series_media_decision() for why that
+    recompute is unreliable for titles like Akira or Ghost in the Shell,
+    whose ComicVine record carries a Western publisher forever.
+    """
+    normalized = normalized_media_type(media_type)
+    if normalized not in MEDIA_TYPE_OVERRIDE_ALLOWED:
+        raise ValueError(f"unsupported media_type: {media_type!r}")
+    existing = con.execute(
+        """
+        select id, title, media_type, media_type_source, library_root, library_path,
+               library_path_template, library_path_source, library_adapter_path, raw_json
+        from series
+        where id=?
+        """,
+        (series_id,),
+    ).fetchone()
+    if not existing:
+        return None
+    previous_media_type = existing["media_type"]
+    already_locked_to_value = (
+        str(existing["media_type_source"] or "").strip().lower() == "user"
+        and previous_media_type == normalized
+    )
+    if already_locked_to_value:
+        return {"series_id": series_id, "media_type": normalized, "changed": False}
+    path_contract = None
+    if (
+        str(existing["library_path_source"] or "").strip().lower() != "user"
+        and path_contract_needs_media_root_repair(existing, normalized, con=con)
+    ):
+        # prefer_existing_root=False: the whole point is to move off the old
+        # (wrong-media-type) root, so the existing library_root must not be
+        # allowed to win over the freshly computed default for `normalized`.
+        path_contract = native_series_path_contract(existing, media_type=normalized, con=con, prefer_existing_root=False)
+    raw = json_loads(existing["raw_json"] or "{}", {})
+    raw = raw if isinstance(raw, dict) else {}
+    raw["media_type_override"] = {
+        "previous_media_type": previous_media_type,
+        "set_at": now,
+        "set_at_iso": utc_stamp(now),
+        "source": "user",
+    }
+    set_clauses = ["media_type=?", "media_type_source='user'", "updated_at=?", "raw_json=?"]
+    params = [normalized, now, json_dumps(raw)]
+    if path_contract:
+        set_clauses += [
+            "library_root=?",
+            "library_path=?",
+            "library_path_template=?",
+            "library_path_source=?",
+            "library_adapter_path=?",
+        ]
+        params += [
+            path_contract.get("library_root"),
+            path_contract.get("library_path"),
+            path_contract.get("library_path_template"),
+            path_contract.get("library_path_source"),
+            path_contract.get("library_adapter_path"),
+        ]
+    params.append(series_id)
+    con.execute(f"update series set {', '.join(set_clauses)} where id=?", params)
+    event_id = stable_id("series_media_type_override", series_id, now)
+    con.execute(
+        """
+        insert or ignore into history_events(
+            id, entity_type, entity_id, series_id, issue_id, event_type,
+            source, message, created_at, raw_json
+        ) values(?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            event_id,
+            "series",
+            series_id,
+            series_id,
+            None,
+            "series_media_type_override",
+            "user",
+            f"{existing['title'] or series_id} reclassified as {normalized} (was {previous_media_type or 'unknown'})",
+            now,
+            json_dumps({"previous_media_type": previous_media_type, "media_type": normalized}),
+        ),
+    )
+    return {
+        "series_id": series_id,
+        "media_type": normalized,
+        "previous_media_type": previous_media_type,
+        "changed": True,
+        "path_contract": path_contract,
+    }
 
 
 def upsert_issue(con, series_id, issue, now):
@@ -5708,6 +6265,7 @@ def record_provider_series_catalog(
     monitored=True,
     auto_grab=True,
     now=None,
+    explicit_user_add=True,
 ):
     provider = metadata_provider_key(provider)
     provider_series_id = str(provider_series_id or "").strip()
@@ -5735,7 +6293,14 @@ def record_provider_series_catalog(
         "autoGrab": bool(auto_grab),
         "monitorNew": True,
         "created_at": now,
-        "inkdrop_explicit_user_add": True,
+        # Defaults True for a real user-initiated add (add_mangadex_series).
+        # Background catalog syncs (companion refresh, companion-stub creation)
+        # pass explicit_user_add=False -- this flag is what upsert_series's
+        # explicit_removed_reactivation branch uses to silently un-remove a
+        # series with no confirmation, so a background sync claiming it was
+        # unconditionally would revive *any* user-removed series the moment a
+        # routine catalog refresh happened to touch that same series id again.
+        "inkdrop_explicit_user_add": bool(explicit_user_add),
         "provider_catalog": True,
         "provider_series_id": provider_series_id,
     }
@@ -6389,7 +6954,237 @@ def wanted_status_for_queue_state(state):
     return "wanted"
 
 
-def park_series_automation(db_path, series_id, reason="automation_parked", message=None, source="inkdrop_state", raw=None):
+# A wanted_items row that has a genuinely clean "searched every configured
+# provider, found nothing" result on every recent attempt -- never a provider
+# error, a rejected candidate, or a found-but-not-grabbed one, any of which
+# means the search didn't actually complete cleanly and we can't yet be
+# confident the item is unavailable rather than just unlucky this cycle.
+WANTED_NO_CANDIDATE_ATTEMPT_STATUSES = frozenset({
+    "no_candidate", "no_candidates", "no_candidate_retry",
+    "searched_no_candidates", "checked_no_candidate", "checked_no_candidates",
+})
+AWAITING_RELEASE_SETTING_KEY = "automation.awaiting_release_hours"
+AWAITING_RELEASE_HOURS_DEFAULT = 72
+AWAITING_RELEASE_MIN_HOURS = 24
+AWAITING_RELEASE_MAX_HOURS = 720
+AWAITING_RELEASE_MIN_ATTEMPTS = 3
+AWAITING_RELEASE_REVIVAL_SETTING_KEY = "automation.awaiting_release_revival_hours"
+AWAITING_RELEASE_REVIVAL_HOURS_DEFAULT = 24
+AWAITING_RELEASE_REVIVAL_MIN_HOURS = 6
+AWAITING_RELEASE_REVIVAL_MAX_HOURS = 168
+# Duplicated from inkdrop_series_autopilot.DEFAULT_SOURCE_ORDER (minus
+# 'local') plus 'mangadex' (which DEFAULT_SOURCE_ORDER omits and
+# manga_source_policy_order() inserts dynamically right after 'local' for
+# manga-eligible items -- same position here) rather than imported --
+# inkdrop_series_autopilot already imports this module, so the reverse
+# import would be circular. Used only when a wanted item has no
+# queue-recorded source order yet.
+AWAITING_RELEASE_DEFAULT_PROVIDER_ORDER = ("mangadex", "prowlarr", "rss", "comicscodes", "slskd")
+
+
+def awaiting_release_policy(con):
+    """Resolve the effective Awaiting-Release thresholds. `hours`/`seconds` is
+    how long a Wanted item must have a clean, unbroken no-candidate streak
+    before it's parked as awaiting_release (see wanted_awaiting_release_eligible).
+    `revival_hours`/`revival_seconds` is how often a parked item gets promoted
+    back to `wanted` for one fresh full search pass through the normal
+    pipeline -- see sweep_wanted_release_revival."""
+    hours = safe_float(
+        _app_setting_value_from_connection(con, AWAITING_RELEASE_SETTING_KEY, AWAITING_RELEASE_HOURS_DEFAULT),
+        AWAITING_RELEASE_HOURS_DEFAULT,
+    ) or AWAITING_RELEASE_HOURS_DEFAULT
+    hours = max(AWAITING_RELEASE_MIN_HOURS, min(hours, AWAITING_RELEASE_MAX_HOURS))
+    revival_hours = safe_float(
+        _app_setting_value_from_connection(con, AWAITING_RELEASE_REVIVAL_SETTING_KEY, AWAITING_RELEASE_REVIVAL_HOURS_DEFAULT),
+        AWAITING_RELEASE_REVIVAL_HOURS_DEFAULT,
+    ) or AWAITING_RELEASE_REVIVAL_HOURS_DEFAULT
+    revival_hours = max(AWAITING_RELEASE_REVIVAL_MIN_HOURS, min(revival_hours, AWAITING_RELEASE_REVIVAL_MAX_HOURS))
+    return {
+        "hours": hours,
+        "seconds": int(hours * 3600),
+        "min_attempts": AWAITING_RELEASE_MIN_ATTEMPTS,
+        "revival_hours": revival_hours,
+        "revival_seconds": int(revival_hours * 3600),
+    }
+
+
+def _awaiting_release_applicable_providers(con, wanted_id):
+    """The set of search-provider keys that must each show a clean, tried
+    attempt before this Wanted item can be parked as awaiting_release --
+    the item's own resolved source order (the same order the search
+    pipeline actually dispatched, recorded on its most recent queue item),
+    filtered down to providers still enabled right now, minus 'local' which
+    never writes source_attempts rows. Falls back to the default comics
+    ladder only when no order has ever been recorded (e.g. never searched
+    yet)."""
+    row = con.execute(
+        """
+        select w.raw_json as wanted_raw_json, i.raw_json as issue_raw_json,
+               (
+                   select q.source_order_json from queue_items q
+                   where q.wanted_id = w.id
+                   order by coalesce(q.updated_at, q.created_at, 0) desc
+                   limit 1
+               ) as queue_source_order_json
+        from wanted_items w
+        left join issues i on i.id = w.issue_id
+        where w.id = ?
+        limit 1
+        """,
+        (wanted_id,),
+    ).fetchone()
+    if row is None:
+        return frozenset()
+    order = row_policy_list(dict(row), "source_order") or AWAITING_RELEASE_DEFAULT_PROVIDER_ORDER
+    enabled_map = provider_config_enabled_map(con)
+    applicable = set()
+    for entry in order:
+        key = provider_activity_key(entry)
+        if not key or key == "local":
+            continue
+        # Absent from provider_configs means never explicitly configured,
+        # which defaults to enabled elsewhere (source_provider_disabled_reason
+        # in inkdrop_series_autopilot uses the same config.get("enabled", True)).
+        if enabled_map.get(key, True):
+            applicable.add(key)
+    return frozenset(applicable)
+
+
+def wanted_awaiting_release_eligible(con, wanted_id, now, threshold_seconds, min_attempts=AWAITING_RELEASE_MIN_ATTEMPTS):
+    applicable = _awaiting_release_applicable_providers(con, wanted_id)
+    if not applicable:
+        # No currently-enabled, applicable provider to prove a clean pass
+        # against -- nothing to park on.
+        return False
+    rows = con.execute(
+        """
+        select status, lifecycle_phase, completed_at, started_at,
+               lower(coalesce(nullif(provider_id, ''), nullif(source, ''), nullif(provider, ''), '')) as provider_key
+        from source_attempts
+        where wanted_id = ?
+        order by completed_at desc, started_at desc, id desc
+        limit 50
+        """,
+        (wanted_id,),
+    ).fetchall()
+    if len(rows) < min_attempts:
+        return False
+    earliest_ts = None
+    seen_providers = set()
+    for row in rows:
+        status = str(row["status"] or "").strip().lower()
+        phase = str(row["lifecycle_phase"] or "").strip().lower()
+        if status not in WANTED_NO_CANDIDATE_ATTEMPT_STATUSES and phase not in WANTED_NO_CANDIDATE_ATTEMPT_STATUSES:
+            return False
+        # source_attempts rows can carry a legacy/alias spelling of a
+        # provider's key (e.g. 'get_comics' or 'soulseek') from before that
+        # alias was folded into the canonical key -- run it through the same
+        # provider_activity_key() normalization applicable's own keys already
+        # use, or a historical alias row would never match and this item
+        # could never reach awaiting_release even with a genuine clean streak.
+        provider_key = provider_activity_key(row["provider_key"])
+        if provider_key:
+            seen_providers.add(provider_key)
+        ts = safe_float(row["completed_at"], None) or safe_float(row["started_at"], None) or 0
+        if ts:
+            earliest_ts = ts if earliest_ts is None else min(earliest_ts, ts)
+    if not applicable.issubset(seen_providers):
+        # At least one currently-enabled, applicable provider has no clean
+        # attempt in the recent window -- it was never tried (budget skip,
+        # cooldown, disabled mid-window, not yet its turn) or its last
+        # attempt wasn't clean, so this isn't a genuine all-provider miss.
+        return False
+    if not earliest_ts:
+        return False
+    return (safe_float(now, time.time()) or time.time()) - earliest_ts >= threshold_seconds
+
+
+def sweep_wanted_awaiting_release(db_path, now=None, limit=200):
+    """Park a Wanted item as awaiting_release once it has a long, unbroken
+    no-candidate streak -- see wanted_awaiting_release_eligible. Skips
+    anything with an active queue item (a real candidate is already in
+    flight, so this isn't a "nothing found" situation)."""
+    now = safe_float(now, None) or time.time()
+    changed = []
+    with connect(db_path) as con:
+        policy = awaiting_release_policy(con)
+        cutoff = now - policy["seconds"]
+        rows = con.execute(
+            """
+            select id from wanted_items
+            where status = 'wanted' and updated_at is not null and updated_at <= ?
+            order by updated_at asc
+            limit ?
+            """,
+            (cutoff, max(1, int(limit))),
+        ).fetchall()
+        for row in rows:
+            wanted_id = row["id"]
+            # 'queued'/'searching' is the normal resting state for "still
+            # looking, nothing found yet" -- that's exactly the case this
+            # feature targets, so it must NOT be excluded here. Only a queue
+            # item showing genuine candidate-in-hand activity, or one already
+            # in a different lifecycle stage (needs_you/failed/blocked),
+            # disqualifies this item from being a "clean zero-candidate
+            # streak" situation.
+            in_flight_queue = con.execute(
+                """
+                select 1 from queue_items
+                where wanted_id=? and active=1
+                  and lower(coalesce(state, '')) in
+                      ('downloading', 'importing', 'source_wait', 'needs_you', 'failed', 'blocked')
+                limit 1
+                """,
+                (wanted_id,),
+            ).fetchone()
+            if in_flight_queue:
+                continue
+            if not wanted_awaiting_release_eligible(con, wanted_id, now, policy["seconds"], policy["min_attempts"]):
+                continue
+            con.execute(
+                "update wanted_items set status='awaiting_release', updated_at=? where id=? and status='wanted'",
+                (now, wanted_id),
+            )
+            changed.append(wanted_id)
+    return {"awaiting_release_count": len(changed), "wanted_ids": changed}
+
+
+def sweep_wanted_release_revival(db_path, now=None, limit=200):
+    """Give every awaiting_release item one fresh full search pass per
+    revival window by promoting it back to `wanted` -- the normal candidate
+    selection and search pipeline is unchanged, this just re-enters items
+    into it. If the item is still genuinely unavailable,
+    sweep_wanted_awaiting_release re-parks it once its no-candidate streak
+    reaches the threshold again; if a real candidate now exists, the normal
+    queue-creation path takes over and moves its status forward from there."""
+    now = safe_float(now, None) or time.time()
+    revived = []
+    with connect(db_path) as con:
+        policy = awaiting_release_policy(con)
+        cutoff = now - policy["revival_seconds"]
+        rows = con.execute(
+            """
+            select id from wanted_items
+            where status = 'awaiting_release' and updated_at is not null and updated_at <= ?
+            order by updated_at asc
+            limit ?
+            """,
+            (cutoff, max(1, int(limit))),
+        ).fetchall()
+        for row in rows:
+            wanted_id = row["id"]
+            con.execute(
+                "update wanted_items set status='wanted', updated_at=? where id=? and status='awaiting_release'",
+                (now, wanted_id),
+            )
+            revived.append(wanted_id)
+    return {"revived_count": len(revived), "wanted_ids": revived}
+
+
+def park_series_automation(
+    db_path, series_id, reason="automation_parked", message=None, source="inkdrop_state", raw=None,
+    allow_removing_discovery_only=False,
+):
     series_id = str(series_id or "").strip()
     if not series_id:
         return {"ok": False, "error": "series_id is required"}
@@ -6401,6 +7196,36 @@ def park_series_automation(db_path, series_id, reason="automation_parked", messa
         series = con.execute("select * from series where id=?", (series_id,)).fetchone()
         if not series:
             return {"ok": False, "error": "series not found", "series_id": series_id}
+        # discovery_mode='discovery_only' is the durable, deliberately-confirmed
+        # signal that this MangaDex row must keep polling even though it's
+        # suppressed from the series list (see restore_manga_companion_discovery).
+        # This function is the only caller of the real series-removal path
+        # (remove_inkdrop_series), and it has no other awareness of that state --
+        # a routine "clean up a confusing duplicate" removal can silently kill a
+        # series' only chapter-discovery path (Fire Punch, Hunter X Hunter both
+        # broke this way on 2026-08-07). Block by default; require an explicit
+        # override, mirroring the allow_reactivating_user_removal guard #480
+        # added to the restore direction.
+        discovery_only_link = con.execute(
+            "select id, comicvine_series_id from manga_companion_links "
+            "where mangadex_series_id=? and discovery_mode='discovery_only' and status='linked'",
+            (series_id,),
+        ).fetchone()
+        if discovery_only_link and not allow_removing_discovery_only:
+            return {
+                "ok": False,
+                "reason": "discovery_only_companion_protected",
+                "series_id": series_id,
+                "series": series["title"],
+                "link_id": discovery_only_link["id"],
+                "comicvine_series_id": discovery_only_link["comicvine_series_id"],
+                "requires_confirmation": True,
+                "message": (
+                    "This MangaDex series is a discovery_only companion providing chapter-level "
+                    "acquisition for another series. Removing it will silently kill that discovery "
+                    "path -- pass allow_removing_discovery_only=True to confirm."
+                ),
+            }
         series_raw = json_loads(series["raw_json"] or "{}", {})
         if not isinstance(series_raw, dict):
             series_raw = {}
@@ -6473,6 +7298,16 @@ def park_series_automation(db_path, series_id, reason="automation_parked", messa
             """,
             (now, json_dumps(series_raw), series_id),
         )
+        if discovery_only_link and allow_removing_discovery_only:
+            # Confirmed removal of a discovery_only companion: clear the
+            # authoritative flag along with it, so the periodic staleness
+            # self-heal (reconcile_discovery_only_companion_staleness) doesn't
+            # see a still-live discovery_mode next to a now-legitimately-parked
+            # series and revive what the caller just deliberately removed.
+            con.execute(
+                "update manga_companion_links set discovery_mode=null, updated_at=? where id=?",
+                (now, discovery_only_link["id"]),
+            )
 
         queue_rows = con.execute(
             """
@@ -6610,6 +7445,54 @@ def set_series_manga_unit_override(db_path, series_id, model):
         "ok": True,
         "series_id": series_id,
         "manga_unit_model_override": normalized,
+    }
+
+
+def set_series_edition_indifferent_override(db_path, series_id, enabled):
+    """Set (or clear, when enabled is None) a per-series override that loosens
+    edition/printing-specific acquisition matching to accept the first
+    complete, correctly-identified, English-language release instead of
+    holding out for the exact tracked edition/printing.
+
+    Feeds collected_singleton_edition_conflict()
+    (core/inkdrop_slskd_source_probe.py) and the collected-singleton title
+    matchers in core/inkdrop_candidate_matching.py -- both otherwise require
+    a candidate to echo the tracked series' own detected format markers
+    (Absolute/Omnibus/Deluxe/etc) and publication year. Series with no
+    override keep that strict behavior untouched; this only takes effect for
+    a series that has one explicitly set, and only matters at all for a
+    series whose tracked target is itself a collected/omnibus edition
+    (collected_singleton_proof) -- a no-op everywhere else.
+    """
+    series_id = str(series_id or "").strip()
+    if not series_id:
+        return {"ok": False, "error": "series_id is required"}
+    now = time.time()
+    with connect(Path(db_path)) as con:
+        init_schema(con)
+        series = con.execute("select * from series where id=?", (series_id,)).fetchone()
+        if not series:
+            return {"ok": False, "error": "series not found", "series_id": series_id}
+        raw = json_loads(series["raw_json"] or "{}", {})
+        if not isinstance(raw, dict):
+            raw = {}
+        if enabled is None:
+            raw.pop("edition_indifferent_override", None)
+            raw.pop("edition_indifferent_override_set_at", None)
+            raw.pop("edition_indifferent_override_set_at_iso", None)
+        else:
+            raw["edition_indifferent_override"] = bool(enabled)
+            raw["edition_indifferent_override_set_at"] = now
+            raw["edition_indifferent_override_set_at_iso"] = utc_stamp(now)
+        con.execute(
+            "update series set raw_json=?, updated_at=? where id=?",
+            (json_dumps(raw), now, series_id),
+        )
+        con.commit()
+    return {
+        "ok": True,
+        "series_id": series_id,
+        "edition_indifferent_override": bool(raw.get("edition_indifferent_override")),
     }
 
 
@@ -7053,6 +7936,22 @@ SLSKD_STAGED_SUPPRESSION_STATUSES = SLSKD_FAILED_IMPORT_MATCH_STATUSES | {
     "quality_rejected",
 }
 
+# The exact cleanup_reason values the stall watchdogs write into a retired
+# download_task's raw_json (see cleanup_stale_active_slskd_download_tasks and
+# stale_download_client_handoff_payload). Deliberately narrower than "any
+# retired task" -- a task superseded by a fresher candidate, a bad archive, or
+# a rejected candidate is a different, already-handled failure mode, not a
+# stall, and must not count against the stall-retry budget below.
+STALL_CLEANUP_REASONS = frozenset({
+    "SLSKD transfer never started and exceeded the pre-transfer wait timeout",
+    "active SLSKD task exceeded stale timeout without transfer refresh",
+    "stale download-client handoff had no local file after stale window",
+})
+QUEUE_WATCHDOG_MAX_STALL_RETRIES_SETTING_KEY = "automation.queue_watchdog_max_stall_retries"
+QUEUE_WATCHDOG_MAX_STALL_RETRIES_DEFAULT = 3
+QUEUE_WATCHDOG_MAX_STALL_RETRIES_MIN = 1
+QUEUE_WATCHDOG_MAX_STALL_RETRIES_MAX = 20
+
 
 SLSKD_STALE_ACTIVE_TASK_SECONDS = 45 * 60
 SLSKD_STALL_SETTING_KEY = "automation.queue_watchdog_slskd_stale_minutes"
@@ -7096,7 +7995,7 @@ SLSKD_NEVER_STARTED_MAX_HOURS = 336
 # No automatic expiry existed at all before this: a claim survived a crashed
 # or killed import worker forever, recoverable only via a manual,
 # worker-stopped operator tool (recover_active_import_authorities). 4 hours
-# is Jared's call (2026-08-08) -- comic-file imports realistically finish in
+# is the shipped default -- comic-file imports realistically finish in
 # minutes, so this is already a generous safety margin, not a tight timeout.
 IMPORT_AUTHORITY_TTL_HOURS_DEFAULT = 4
 IMPORT_AUTHORITY_TTL_SETTING_KEY = "automation.import_authority_ttl_hours"
@@ -7112,8 +8011,7 @@ IMPORT_AUTHORITY_TTL_MAX_HOURS = 72
 # a retry loop misfiring) ever tries to grab far more than intended in one
 # pass. Deliberately high by default -- Soulseek clients routinely run
 # dozens of concurrent transfers without any protocol-level issue; this
-# exists for safety, not to throttle the common case. Jared's call
-# (2026-08-10).
+# exists for safety, not to throttle the common case.
 SLSKD_CONCURRENT_TRANSFER_CAP_SETTING_KEY = "automation.slskd_concurrent_transfer_cap"
 SLSKD_CONCURRENT_TRANSFER_CAP_DEFAULT = 20
 SLSKD_CONCURRENT_TRANSFER_CAP_MIN = 1
@@ -8211,10 +9109,19 @@ def download_task_from_attempt(queue_id, wanted_id, series_id, issue_id, attempt
 def download_task_history_message(task):
     if not isinstance(task, dict):
         return "Download task recorded"
+    title = str(task.get("title") or task.get("external_id") or "").strip()
+    if task.get("cleanup_reason") == "inactive verified queue retired active transfer row":
+        # This task's own source never finished the job -- the queue moved to
+        # "verified" some other way (the file was already in the managed
+        # folder, or a different source completed it) while this one was
+        # still mid-flight, and it's only being swept up as stale now.
+        # Crediting its stale source/download_client here would read as
+        # "ComicsCodes verified: Title" for a title ComicsCodes never
+        # actually resolved.
+        return "Already in the library; automatic search stopped" + (f": {title[:160]}" if title else "")
     label = source_display_label(download_task_attribution_source(task))
     state = str(task.get("state") or "").strip().lower()
     status = str(task.get("status") or "").strip().lower()
-    title = str(task.get("title") or task.get("external_id") or "").strip()
     if state == "downloading":
         action = "transfer active"
     elif state == "import_ready":
@@ -9527,13 +10434,17 @@ def record_queue_source_attempt(db_path, queue_id, attempt, attempt_id=None, sta
     attempt = normalize_slskd_terminal_recovery_attempt(attempt)
 
     def _record():
-        queue = queue_item(db_path, queue_id)
-        if not queue:
-            return {"ok": False, "reason": "queue_item_not_found", "queue_id": queue_id}
+        # queue_item() used to run here as a pre-check, then _record() opened
+        # its own connection and re-fetched the identical row by id -- two
+        # full connections and two selects for one row, on every attempt in
+        # a search cycle (a cycle can record dozens). queue_item()'s result
+        # was never used for anything but the existence check and its own id
+        # (which is just queue_id), so the raw refetch below already covers
+        # both jobs on its own.
         now = time.time()
         with connect(db_path) as con:
             init_schema(con)
-            current_queue = con.execute("select * from queue_items where id=?", (queue["id"],)).fetchone()
+            current_queue = con.execute("select * from queue_items where id=?", (queue_id,)).fetchone()
             if not current_queue:
                 return {"ok": False, "reason": "queue_item_not_found", "queue_id": queue_id}
             queue = dict(current_queue)
@@ -16278,6 +17189,69 @@ def collection_guard_exact_manga_volume_proof(queue, raw, record, issue_tokens):
     return True
 
 
+def collection_guard_chapter_satisfied_by_declared_volume(queue, raw, record, issue_tokens):
+    """A wanted CHAPTER is satisfied by a volume archive when the chapter's
+    own structured metadata -- never a filename or query-text guess -- says
+    it belongs to that volume, and the archive's own filename independently
+    agrees.
+
+    ``issue_tokens`` here is the wanted chapter number, not a volume number,
+    so collection_guard_exact_manga_volume_proof() (which requires the target
+    IS a volume) cannot cover this case. The auto-generated search query for
+    a chapter-managed item routinely embeds volume context alongside the
+    chapter (e.g. "Deadman Wonderland Chapter 30 Volume 7"), which makes
+    ``target_has_volume_marker`` true for nearly every chapter target and
+    triggers the unconditional single-part block below even when a real
+    Volume 7 archive legitimately contains chapter 30. This checks the one
+    place that volume containment is recorded as real data instead of prose:
+    the "volume" field copied onto the queue/wanted raw_json from the
+    issue's own provider metadata (upsert_queue_item_from_watch_issue()
+    copies issue.get("volume") verbatim; ComicVine/MangaDex chapter payloads
+    populate it from their real chapter->volume grouping, not a guess).
+    """
+    media_type = str(queue.get("media_type") or raw.get("media_type") or "").strip().lower()
+    if media_type not in MANGA_MEDIA_TYPES or len(issue_tokens) != 1:
+        return False
+    # A wanted item whose own unit type is already "volume" (or a pack) is
+    # covered by collection_guard_exact_manga_volume_proof(); this proof is
+    # only for genuine chapter targets, so it must not double up on that path.
+    explicit_unit_type = str(
+        raw.get("unitType") or raw.get("unit_type") or queue.get("unit_type") or ""
+    ).strip().lower()
+    if explicit_unit_type in {"volume", "pack", "mixed_volume_preferred"}:
+        return False
+    # Real declared containment, sourced only from structured metadata -- not
+    # parsed from the query/title text, which conflates the chapter number
+    # with any volume context into one ambiguous string. Absent or malformed
+    # (e.g. a "7-8" span) leaves this empty, and the block stays in place.
+    declared_volume = collection_guard_issue_tokens(raw.get("volume"), queue.get("volume"))
+    if len(declared_volume) != 1:
+        return False
+    source_path = str(record.get("matched_local_path") or "").strip()
+    if not re.search(r"\.(?:cbz|cbr|pdf)$", source_path, re.I):
+        return False
+    source_name = Path(source_path).name
+    source_norm = collection_guard_normalized_text(source_name)
+    if NON_VOLUME_MANGA_SOURCE_PATTERN.search(source_norm):
+        # The archive's own filename claims a chapter/part/issue/page identity
+        # of its own -- real evidence on the file wins over the declared
+        # containment, so this must not be silently waved through.
+        return False
+    if (
+        collection_guard_explicit_volume_tokens(source_name) != declared_volume
+        or not collection_guard_has_only_exact_singular_volume_tokens(source_name)
+    ):
+        return False
+    # Deliberately no manga_unit_allows_volume gate here (unlike the sibling
+    # volume-target proof above): that gate asks "is this series managed by
+    # volume", which is a target-selection preference. This proof answers a
+    # different question -- "does this exact, already-downloaded archive
+    # provably contain this exact wanted chapter" -- and the overwhelming
+    # majority of chapter-managed manga is chapter_native by policy, which
+    # would make the gate reject every real case this proof exists to fix.
+    return True
+
+
 def exact_manga_volume_target_identity(queue, record=None):
     """Return the durable exact volume identity accepted by the collection guard."""
     queue = dict(queue or {})
@@ -16348,6 +17322,11 @@ def collection_target_single_part_block_reason(queue, record=None):
         # strict import proof and destination unit gate. Only persisted target
         # text and the staged path establish this legacy volume proof; archive
         # metadata and result labels cannot manufacture it.
+        return ""
+    if collection_guard_chapter_satisfied_by_declared_volume(queue, raw, record, issue_tokens):
+        # The wanted chapter's own structured metadata says it belongs to
+        # this exact volume, and the archive's filename independently agrees.
+        # Otherwise identical evidence bar to the volume-target proof above.
         return ""
     if media_type in MANGA_MEDIA_TYPES and target_has_volume_marker and issue_tokens and source_looks_like_archive:
         return "single_part_file_does_not_satisfy_collection_target"
@@ -18123,6 +19102,7 @@ def retire_download_task(con, task, *, status, state, ts, raw_payload=None, sour
             "updated_at": ts,
             "completed_at": task.get("completed_at") or ts,
             "raw_json": json_dumps(raw_payload),
+            "cleanup_reason": raw_payload.get("cleanup_reason"),
         }
     )
     record_download_task_history_event(con, updated)
@@ -18736,25 +19716,60 @@ def cleanup_expired_import_claims(con, now):
         from queue_items q
         where q.active = 1
           and lower(coalesce(q.state, '')) in ('importing', 'import_ready')
-          and coalesce(q.updated_at, 0) < ?
+          -- The plain updated_at freshness guard below only matters for a
+          -- claim with NO download_task evidence yet at all -- the single-
+          -- write-race / just-claimed-this-instant case PASS17/PASS18 were
+          -- guarding. Once any download_task exists for this queue, the
+          -- progress_at-gated subquery below is the accurate liveness
+          -- signal and must not be short-circuited by it: confirmed live
+          -- 2026-08-12 that q.updated_at itself gets touched on every SLSKD
+          -- retry cycle (each failed-candidate retry rewrites the queue
+          -- row), so gating on updated_at alone kept renewing a claim's
+          -- exemption forever even though every one of its download_tasks
+          -- had already failed -- 34 queue rows stuck in 'importing' for
+          -- 4-48 days, only 5 of which this cleanup could even reach before
+          -- this change because the other 29 always looked "just touched".
+          and (
+              coalesce(q.updated_at, 0) < ?
+              or exists (select 1 from download_tasks dt0 where dt0.queue_id = q.id)
+          )
           and not exists (
               select 1
               from download_tasks dt
               where dt.queue_id = q.id
                 and {download_task_non_problem_clause("dt")}
-                -- Task liveness judged WITHOUT the queue-state-coupled work
-                -- clauses on purpose: those each require a specific q.state
-                -- ('importing'/'downloading'/'queued'), so an import_ready
-                -- queue row could never be exempted and a perfectly fresh
-                -- staged task got its claim falsely expired
-                -- (PASS18-CORE-P2-01 -- a regression in this very cleanup).
+                -- Live-import evidence only -- a task still hunting for a
+                -- source (state='queued'/'downloading', status
+                -- 'transfer_in_progress' etc) is a *new attempt*, not proof
+                -- this claim's import is progressing. Confirmed live
+                -- 2026-08-12: the SLSKD retry ladder recreates a fresh
+                -- 'queued'/'downloading' task on every failed-candidate
+                -- retry (as often as every few minutes on a scarce release),
+                -- so with those states counted as "live" here, the claim
+                -- lease this cleanup exists to enforce never got a chance to
+                -- fire -- 34 queue rows sat in state='importing' for 4-48
+                -- days, each cycling through 1-31 download_tasks that all
+                -- ended in state='failed', while every retry's fresh
+                -- 'queued' row renewed this exemption minutes before failing.
+                -- Only a task that actually reached import_ready/importing
+                -- is real progress toward finishing this specific claim; the
+                -- q.state='import_ready' branch keeps its own broader task
+                -- states below since download_task_import_work_clause() only
+                -- ever matches q.state='importing' (PASS18-CORE-P2-01 -- a
+                -- prior regression in this exact cleanup -- protects against
+                -- narrowing that branch too).
                 and (
-                    dt.state in ('queued', 'downloading', 'import_ready', 'importing')
-                    or lower(coalesce(dt.lifecycle_phase, '')) in ('staged_or_importing', 'verifying', 'downloading')
-                    or lower(coalesce(dt.status, '')) in (
-                        'staged_file_ready', 'preview_importable', 'ready_import',
-                        'import_busy', 'verification_pending', 'imported_not_resolved',
-                        'downloading', 'transfer_in_progress', 'transfer_settling'
+                    {download_task_import_work_clause("dt", "q")}
+                    or (
+                        lower(coalesce(q.state, '')) = 'import_ready'
+                        and (
+                            dt.state in ('import_ready', 'importing')
+                            or lower(coalesce(dt.lifecycle_phase, '')) in ('staged_or_importing', 'verifying')
+                            or lower(coalesce(dt.status, '')) in (
+                                'staged_file_ready', 'preview_importable', 'ready_import',
+                                'import_busy', 'verification_pending', 'imported_not_resolved'
+                            )
+                        )
                     )
                 )
                 -- The task itself must show life within the lease: a task
@@ -19187,6 +20202,26 @@ def cleanup_stale_download_client_handoff_tasks(con, now, stale_seconds=STALE_DO
     return retired
 
 
+def queue_item_stall_retry_count(con, queue_id):
+    """How many times a queue item's downloads have already been retired for
+    a genuine stall (see STALL_CLEANUP_REASONS), across every download_task
+    row it has ever had. Indexed via idx_download_tasks_queue_updated -- a
+    per-queue_id scan, not a table scan."""
+    if not con or not queue_id:
+        return 0
+    row = con.execute(
+        """
+        select count(*) as c
+        from download_tasks
+        where queue_id = ?
+          and lower(coalesce(state, '')) in ('failed', 'retired')
+          and json_extract(raw_json, '$.cleanup_reason') in ({placeholders})
+        """.format(placeholders=",".join("?" for _ in STALL_CLEANUP_REASONS)),
+        (queue_id, *STALL_CLEANUP_REASONS),
+    ).fetchone()
+    return int(row["c"]) if row and row["c"] is not None else 0
+
+
 def cleanup_queue_items_with_retired_download_tasks(con, now):
     if not con:
         return 0
@@ -19215,6 +20250,7 @@ def cleanup_queue_items_with_retired_download_tasks(con, now):
         """
     ).fetchall()
     retired = 0
+    max_stall_retries = queue_watchdog_policy(con).get("max_stall_retries", QUEUE_WATCHDOG_MAX_STALL_RETRIES_DEFAULT)
     terminal_tokens = ("superseded", "stale", "failed", "missing", "wrong", "blocked", "error")
     for row in rows:
         item = dict(row)
@@ -19244,6 +20280,62 @@ def cleanup_queue_items_with_retired_download_tasks(con, now):
                 (superseded_by, item["id"]),
             ).fetchone()
             if successor and download_task_is_activeish(dict(successor)):
+                continue
+        cleanup_reason = str(task_raw.get("cleanup_reason") or "").strip()
+        if cleanup_reason in STALL_CLEANUP_REASONS:
+            stall_count = queue_item_stall_retry_count(con, item["id"])
+            if stall_count >= max_stall_retries:
+                now_ts = safe_float(now, time.time()) or time.time()
+                source_label = source_display_label(
+                    download_task_source_key(
+                        {
+                            "source": item.get("task_source"),
+                            "provider": item.get("task_provider"),
+                            "protocol": item.get("task_protocol"),
+                            "download_client": item.get("task_download_client"),
+                        }
+                    )
+                    or item.get("task_source")
+                    or "source"
+                )
+                message = (
+                    f"{source_label} download stalled {stall_count} time(s) in a row; "
+                    "automatic retry stopped, needs a manual look"
+                )
+                raw = json_loads(item.get("raw_json") or "{}", {})
+                raw = raw if isinstance(raw, dict) else {}
+                raw["state"] = "needs_you"
+                raw["outcome"] = "manual_exception"
+                raw["display_phase"] = "manual_review"
+                raw["needs_you_reason"] = "stall_retries_exhausted"
+                raw["last_event"] = message
+                raw["stall_retries_exhausted_count"] = stall_count
+                raw["stall_retries_exhausted_at"] = now_ts
+                raw["stall_retries_exhausted_at_iso"] = utc_stamp(now_ts)
+                con.execute(
+                    """
+                    update queue_items
+                    set state='needs_you',
+                        current_source=NULL,
+                        outcome='manual_exception',
+                        display_phase='manual_review',
+                        last_event=?,
+                        raw_json=?,
+                        provider_status_state=null,
+                        provider_status_phase=null,
+                        provider_status_provider=null,
+                        provider_status_actionability=null,
+                        updated_at=?
+                    where id=?
+                    """,
+                    (message, json_dumps(raw), now_ts, item["id"]),
+                )
+                if item.get("wanted_id"):
+                    con.execute(
+                        "update wanted_items set status=?, updated_at=? where id=?",
+                        (wanted_status_for_queue_state("needs_you"), now_ts, item["wanted_id"]),
+                    )
+                retired += 1
                 continue
         now_ts = safe_float(now, time.time()) or time.time()
         old_event = str(item.get("last_event") or "").strip()
@@ -21207,7 +22299,39 @@ def download_task_problem_rollup(con, health_map=None, limit=5000):
     }
 
 
-def download_task_rollup(con):
+def download_task_problem_count(con, limit=5000):
+    """How many problem transfers there are, without classifying any of them.
+
+    Deliberately mirrors download_task_problem_rollup's predicate, ordering
+    and limit so the count it returns is the same number that rollup would
+    have put in download_task_problem_items -- every row it reads contributes
+    exactly one to by_scope, so the item total was always just the row count.
+    The breakdown keys are absent rather than zeroed: compact_state_view_summary
+    builds by `if key in summary`, so an absent key drops out cleanly, while a
+    zeroed one would render as a real "0 problems" chip on a view that had
+    simply not measured.
+    """
+    try:
+        row = con.execute(
+            """
+            select count(*) as count from (
+                select 1
+                from download_tasks dt
+                left join queue_items q on q.id = dt.queue_id
+                where (q.active = 1 and dt.state in ('failed', 'blocked'))
+                   or ({stale_clause})
+                order by coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) desc
+                limit ?
+            )
+            """.format(stale_clause=STALE_DOWNLOAD_TASK_CLAUSE),
+            (max(1, int(limit or 5000)),),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return {"download_task_problem_items": 0}
+    return {"download_task_problem_items": int((row["count"] if row else 0) or 0)}
+
+
+def download_task_rollup(con, classify_problems=True):
     try:
         health_map = latest_provider_health_map(con)
         by_state = {
@@ -21259,7 +22383,18 @@ def download_task_rollup(con):
         total = 0
         health_map = {}
     problem_states = {"failed", "blocked"}
-    problem_rollup = download_task_problem_rollup(con, health_map)
+    # Classifying every problem transfer is the single most expensive thing in
+    # this rollup: it reads up to 5000 download_tasks rows, JSON-decodes each
+    # one's raw_json and runs the provider-health/problem-reason ladder over
+    # it. Measured against production, that is 0.84s of the Wanted view's
+    # 1.19s and 1.02s of the Series view's 2.82s -- and neither view renders a
+    # single one of the numbers it produces. Callers that only need "how many
+    # problem transfers are there" get the count straight from SQL instead.
+    problem_rollup = (
+        download_task_problem_rollup(con, health_map)
+        if classify_problems
+        else download_task_problem_count(con)
+    )
     return {
         "download_tasks": total,
         "download_task_by_state": by_state,
@@ -22617,6 +23752,7 @@ def media_management_settings_context(db_path):
         "colon_replacement": media_management_text_setting(db_path, "colon_replacement", "smart"),
         "use_series_folders": media_management_bool_setting(db_path, "use_series_folders", True),
         "rename_imported_files": media_management_bool_setting(db_path, "rename_imported_files", True),
+        "hardlink_imports": media_management_bool_setting(db_path, "hardlink_imports", False),
         "delete_empty_folders": media_management_bool_setting(db_path, "delete_empty_folders", False),
         "unmonitor_deleted_issues": media_management_bool_setting(db_path, "unmonitor_deleted_issues", False),
         "apply_planned_path": media_management_apply_planned_path(db_path, True),
@@ -22643,6 +23779,7 @@ MEDIA_MANAGEMENT_SETTING_DEFAULTS = {
     "comic_issue_format": "{Series Title} #{Issue:000} ({Year})",
     "manga_chapter_format": "{Series Title} v{Volume:00} c{Chapter:000}",
     "rename_imported_files": True,
+    "hardlink_imports": False,
     "delete_empty_folders": False,
     "unmonitor_deleted_issues": False,
     "folder_completion_policy": "folder_first",
@@ -22663,6 +23800,7 @@ MEDIA_MANAGEMENT_SETTING_HELP = {
     "comic_issue_format": "Filename template for western comic issues.",
     "manga_chapter_format": "Filename template for manga chapters or volumes.",
     "rename_imported_files": "Apply the configured media filename template during guarded import.",
+    "hardlink_imports": "When a file is placed in your library unchanged (no CBR repack, PDF-to-CBZ conversion, collection rebuild, or ComicInfo.xml injection -- those always write a fresh file), link it into place instead of copying it. A hardlink points a second directory entry at the same bytes on disk, so the original stays there for your torrent client to keep seeding, at zero extra disk. Falls back to a plain copy with no error and no warning whenever the download directory and your library root sit on different filesystems or Docker bind mounts -- hardlinks can't cross that boundary. Off by default; turn it on only if your download client's staging path and your library live on the same filesystem/mount.",
     "delete_empty_folders": "When a move or removal leaves a folder holding nothing, remove the folder too. The library root itself is never touched.",
     "unmonitor_deleted_issues": "If an issue's file disappears from the library, stop monitoring that issue instead of hunting for a replacement. Turn this on if deleting a file is how you say \"I don't want this one.\"",
     "folder_completion_policy": "Choose whether managed-folder proof is sufficient or frontend visibility is also required.",
@@ -23006,6 +24144,169 @@ def _sync_series_library_path_to_canonical_folder(con, work_id, series_folder, n
     )
 
 
+MEDIA_FILE_FOLDER_RESOLUTION_LIMIT = 64
+
+
+def split_path_into_prefix_and_segments(value):
+    """Split a path string into its root prefix and its meaningful segments.
+
+    Drops empty and '.' segments and applies '..' against the segment before it,
+    so "root/Series/../Series (2025)" and "root//Series (2025)/" reduce to the
+    same segments. Without this, one folder written two ways counts as two
+    candidate folders, and a path that walks back out of the library root still
+    passes a naive startswith() containment test.
+    """
+    text = str(value or "").strip().replace("\\", "/")
+    if not text:
+        return "", []
+    prefix_match = re.match(r"^([a-zA-Z]:/|//|/)", text)
+    prefix = prefix_match.group(1) if prefix_match else ""
+    segments = []
+    for segment in text[len(prefix):].split("/"):
+        segment = segment.strip()
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if segments and segments[-1] != "..":
+                segments.pop()
+            elif not prefix:
+                segments.append("..")
+            continue
+        segments.append(segment)
+    return prefix, segments
+
+
+def joined_path_from_prefix_and_segments(prefix, segments):
+    return f"{prefix}{'/'.join(segments)}"
+
+
+def resolved_folder_path_identity(folder, cache):
+    """Return the on-disk identity of a folder, following symlinks when it exists.
+
+    A series whose files were imported through a symlinked path and through the
+    real path underneath it is one folder, not two. Resolution is memoized and
+    only attempted for directories that exist, so a purely notional path (a
+    library on an unmounted volume, a test fixture) stays comparable by its text.
+    """
+    if folder in cache:
+        return cache[folder]
+    resolved = folder
+    try:
+        real = os.path.realpath(folder)
+        if real and os.path.isdir(real):
+            resolved = joined_path_from_prefix_and_segments(*split_path_into_prefix_and_segments(real))
+    except (OSError, ValueError):
+        resolved = folder
+    cache[folder] = resolved
+    return resolved
+
+
+def established_series_folder_from_media_files(con, work_id, library_root):
+    """Report which relative series folder this work's already-imported files live
+    in, as {"series_folder", "ambiguous", "candidates"}.
+
+    persist_series_folder_identity() only has its own canonical_library_identities
+    bookkeeping to check for "the folder this series already uses" -- that table is
+    empty until the first call for a given work_id, so with no prior row it just
+    locks in whatever folder is freshly computed *right now*. If earlier imports
+    landed under a different folder (typically because a year or volume grouping
+    became known only after those imports), the first lock silently adopts the new
+    folder while old files stay where they are, and every future import for this
+    series keeps targeting the new folder -- splitting one series across two
+    physical folders. Checking real media_files rows first lets the lock match
+    where the series' files already are instead of a fresh computation.
+
+    Candidates are canonicalized before they are counted and the answer never
+    depends on the order rows come back in. Two folders left tied for the most
+    files are reported as ambiguous rather than resolved: a tie carries no
+    evidence for either folder, and picking one anyway would hand a coin flip
+    the durable authority that every later import for the series follows.
+    """
+    ambiguous_verdict = {"series_folder": "", "ambiguous": False, "candidates": []}
+    root_prefix, root_segments = split_path_into_prefix_and_segments(library_root)
+    if not root_segments or not table_exists(con, "media_files"):
+        return ambiguous_verdict
+    rows = con.execute(
+        "select path from media_files where series_id=? and active=1 and coalesce(status,'')='present'",
+        (work_id,),
+    ).fetchall()
+    folded_root = (root_prefix.casefold(), [segment.casefold() for segment in root_segments])
+    lexical_counts = {}
+    for row in rows:
+        prefix, segments = split_path_into_prefix_and_segments(row["path"])
+        if len(segments) <= len(root_segments) + 1:
+            continue
+        folder_segments = segments[:-1]
+        if (prefix.casefold(), [segment.casefold() for segment in folder_segments[:len(root_segments)]]) != folded_root:
+            continue
+        folder = joined_path_from_prefix_and_segments(prefix, folder_segments)
+        lexical_counts[folder] = lexical_counts.get(folder, 0) + 1
+    # Resolve symlinks in a fixed order and only for a bounded number of distinct
+    # folders: this runs inside the caller's write transaction, and a series with
+    # pathological folder spread must not hold the lock open across thousands of
+    # stat calls. Sorting first keeps which folders get resolved deterministic.
+    resolution_cache = {}
+    for folder in sorted(lexical_counts)[:MEDIA_FILE_FOLDER_RESOLUTION_LIMIT]:
+        resolved_folder_path_identity(folder, resolution_cache)
+    # Grouping sums counts, so it is order-insensitive on its own; the sorts below
+    # are what make the reported spelling and the candidate order independent of
+    # the order media_files came back in.
+    grouped = {}
+    for folder, count in lexical_counts.items():
+        resolved = resolution_cache.get(folder, folder)
+        _, segments = split_path_into_prefix_and_segments(resolved)
+        relative = "/".join(segments[len(root_segments):])
+        if not relative:
+            continue
+        group = grouped.setdefault(relative.casefold(), {"count": 0, "spellings": {}})
+        group["count"] += count
+        group["spellings"][relative] = group["spellings"].get(relative, 0) + count
+    if not grouped:
+        return ambiguous_verdict
+    candidates = sorted(
+        (
+            (sorted(group["spellings"].items(), key=lambda item: (-item[1], item[0]))[0][0], group["count"])
+            for group in grouped.values()
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    top_count = candidates[0][1]
+    tied = [folder for folder, count in candidates if count == top_count]
+    if len(tied) > 1:
+        return {"series_folder": "", "ambiguous": True, "candidates": candidates}
+    return {"series_folder": tied[0], "ambiguous": False, "candidates": candidates}
+
+
+def flag_established_folder_split_for_review(con, work_id, candidates, now):
+    """Record an unresolvable folder split on the series itself.
+
+    canonical_library_identities cannot carry this: series_folder in that table is
+    the folder authority, so writing any row would name a winner -- which is what a
+    tie means there is no evidence for. The series identity envelope holds the flag
+    instead, and library_path is deliberately left alone so nothing downstream
+    inherits an arbitrary pick as durable truth.
+    """
+    row = con.execute("select raw_json from series where id=? limit 1", (work_id,)).fetchone()
+    if not row:
+        return
+    raw = json_loads(row["raw_json"] or "{}", {})
+    raw = raw if isinstance(raw, dict) else {}
+    current = raw.get("canonical_library_identity_v1")
+    current = current if isinstance(current, dict) else {}
+    current.update({
+        "split_folder_review_required": True,
+        "split_folder_candidates": [
+            {"series_folder": folder, "file_count": count} for folder, count in candidates
+        ],
+        "split_folder_detected_at": now,
+    })
+    raw["canonical_library_identity_v1"] = current
+    con.execute(
+        "update series set raw_json=?,updated_at=max(coalesce(updated_at,0),?) where id=?",
+        (json_dumps(raw), now, work_id),
+    )
+
+
 def persist_series_folder_identity(db_path, work_id, series_folder, *, library_type, now=None):
     work_id = str(work_id or "").strip()
     series_folder = str(series_folder or "").strip()
@@ -23078,14 +24379,6 @@ def persist_series_folder_identity(db_path, work_id, series_folder, *, library_t
         con.execute(
             "create unique index if not exists idx_canonical_library_folder_unique on canonical_library_identities(normalized_library_type,normalized_series_folder)"
         )
-        normalized_library = normalized_library_folder_identity(library_type)
-        normalized_folder = normalized_library_folder_identity(series_folder)
-        collision = con.execute(
-            "select work_id from canonical_library_identities where normalized_library_type=? and normalized_series_folder=? and work_id<>? limit 1",
-            (normalized_library, normalized_folder, work_id),
-        ).fetchone()
-        if collision:
-            return {"ok": False, "reason": "canonical_series_folder_collision", "conflicting_work_id": collision["work_id"]}
         durable = con.execute(
             "select library_type,series_folder from canonical_library_identities where work_id=? limit 1",
             (work_id,),
@@ -23102,9 +24395,42 @@ def persist_series_folder_identity(db_path, work_id, series_folder, *, library_t
                 return {"ok": False, "reason": reason, "library_type": persisted_library, "series_folder": persisted}
             _sync_series_library_path_to_canonical_folder(con, work_id, persisted, now)
             return {"ok": True, "reason": "persisted_folder_identity", "library_type": persisted_library, "series_folder": persisted}
+        # First lock for this work_id: canonical_library_identities has nothing to
+        # compare against yet, so on its own this would just adopt whatever folder
+        # is freshly computed right now -- even if this series already has files
+        # sitting under a different folder from before this table existed or before
+        # a year/volume grouping was known. Seed the lock from where the files
+        # already are instead of silently establishing a second folder.
+        established_review_reason = None
+        library_root_row = con.execute("select library_root from series where id=? limit 1", (work_id,)).fetchone()
+        established = established_series_folder_from_media_files(
+            con, work_id, library_root_row["library_root"] if library_root_row else ""
+        )
+        if established["ambiguous"]:
+            # Equally populated folders give no basis for choosing between them.
+            # Stop here so no folder is locked and no library_path is rewritten;
+            # the import blocks on this reason and the split needs a human call.
+            flag_established_folder_split_for_review(con, work_id, established["candidates"], now)
+            return {
+                "ok": False,
+                "reason": "established_folder_split_requires_review",
+                "candidate_folders": [folder for folder, _count in established["candidates"]],
+            }
+        established_folder = established["series_folder"]
+        if established_folder and normalized_library_folder_identity(established_folder) != normalized_library_folder_identity(series_folder):
+            established_review_reason = "locked_to_established_folder_over_fresh_computation"
+            series_folder = established_folder
+        normalized_library = normalized_library_folder_identity(library_type)
+        normalized_folder = normalized_library_folder_identity(series_folder)
+        collision = con.execute(
+            "select work_id from canonical_library_identities where normalized_library_type=? and normalized_series_folder=? and work_id<>? limit 1",
+            (normalized_library, normalized_folder, work_id),
+        ).fetchone()
+        if collision:
+            return {"ok": False, "reason": "canonical_series_folder_collision", "conflicting_work_id": collision["work_id"]}
         con.execute(
-            "insert into canonical_library_identities(work_id,library_type,series_folder,normalized_library_type,normalized_series_folder,created_at,updated_at) values(?,?,?,?,?,?,?)",
-            (work_id, str(library_type or "unknown"), series_folder, normalized_library, normalized_folder, now, now),
+            "insert into canonical_library_identities(work_id,library_type,series_folder,normalized_library_type,normalized_series_folder,created_at,updated_at,review_reason) values(?,?,?,?,?,?,?,?)",
+            (work_id, str(library_type or "unknown"), series_folder, normalized_library, normalized_folder, now, now, established_review_reason),
         )
         row = con.execute("select raw_json from series where id=? limit 1", (work_id,)).fetchone()
         if not row:
@@ -24738,10 +26064,22 @@ def mark_queue_verified_for_import(con, queue_id, wanted_id, ts, message=None, c
     if not queue_id:
         return False
     queue = con.execute(
-        "select id,wanted_id,series_id,issue_id from queue_items where id=? limit 1",
+        "select id,wanted_id,series_id,issue_id,state from queue_items where id=? limit 1",
         (queue_id,),
     ).fetchone()
     if not queue:
+        return False
+    # ~11 call sites can reach this function, and not all of them filter
+    # q.state before calling (a periodic sync pass, a retried autopilot step,
+    # or a future call site could all race against a row that's already
+    # verified). Without this guard a second call re-touches updated_at on an
+    # already-verified row, and scan_import_verified() (inkdrop_notification_
+    # events.py) watermarks on that same updated_at -- so a redundant call
+    # here is exactly what would cause a real duplicate import_verified
+    # notification days later, once notify_wanted_cleared()'s own 24h dedup
+    # window has expired. No-op immediately rather than relying on every
+    # current and future caller to remember to check state first.
+    if str(queue["state"] or "") == "verified":
         return False
     # This re-derives proof rather than trusting the caller's, so it stays an
     # independent second check. It has to know about sibling issue ids for the
@@ -24963,7 +26301,7 @@ def series_id_for_comicvine_volume(db_path, comicvine_id):
 def reconcile_collected_edition_coverage(con, now, *, limit=500):
     """Satisfy individual issue-wants once a linked collected edition verifies.
 
-    "accept either edition" v1 (Jared's decision, 2026-08-08): grabbing the
+    "accept either edition" v1 (product decision, 2026-08-08): grabbing the
     collected trade satisfies the individual issue-wants it covers -- no
     separate re-acquisition. The link itself (collected_edition_links) is
     only ever created from a real, structured ComicVine cross-reference (see
@@ -25373,6 +26711,7 @@ def wanted_status_rank(status):
         "in_progress": 90,
         "wanted": 50,
         "blocked": 40,
+        "awaiting_release": 35,
         "failed": 30,
         "inactive": 0,
     }.get(str(status or "").lower(), 10)
@@ -25473,6 +26812,10 @@ def merge_wanted_items_group(con, series_id, canonical_issue_id, wanted_rows, no
         con.execute("update queue_items set wanted_id=? where wanted_id=?", (canonical_wanted_id, wanted["id"]))
         con.execute("update source_attempts set wanted_id=? where wanted_id=?", (canonical_wanted_id, wanted["id"]))
         con.execute("update download_tasks set wanted_id=? where wanted_id=?", (canonical_wanted_id, wanted["id"]))
+        con.execute(
+            "update history_events set entity_id=? where entity_type='wanted_item' and entity_id=?",
+            (canonical_wanted_id, wanted["id"]),
+        )
         con.execute("delete from wanted_items where id=?", (wanted["id"],))
         changed += 1
     return changed
@@ -30300,6 +31643,46 @@ def live_folder_import_proof_exists(con, queue_id, stale_import_id, managed_root
     return False
 
 
+def relocated_series_folder_import_proof_path(con, row, managed_roots):
+    """Return the file's new path if its series folder was renamed/consolidated out from under it.
+
+    Series folders get repointed to a canonical path after the fact (see
+    _sync_series_library_path_to_canonical_folder) -- most commonly a
+    title-only folder becoming a year-qualified one once metadata locks in,
+    or a duplicate-series merge. import_results/media_files still carry the
+    old dest_path, so a later integrity sweep sees a "missing" file and
+    reopens the queue for a full re-search/re-download even though the file
+    just moved to series.library_path under the same filename. Checking that
+    exact candidate first avoids treating a folder rename as a lost file.
+    """
+    dest_path = str(row["dest_path"] or "").strip()
+    if not dest_path:
+        return None
+    series_id = str(row["series_id"] or "").strip()
+    if not series_id:
+        return None
+    series_row = con.execute(
+        "select library_path from series where id=? limit 1", (series_id,)
+    ).fetchone()
+    library_path = str((series_row["library_path"] if series_row else "") or "").strip()
+    if not library_path:
+        return None
+    basename = str(dest_path).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if not basename:
+        return None
+    candidate = f"{library_path.rstrip('/')}/{basename}"
+    if media_file_normalized_path(candidate) == media_file_normalized_path(dest_path):
+        return None
+    if not path_under_any_root(candidate, managed_roots):
+        return None
+    try:
+        if not Path(candidate).is_file():
+            return None
+    except OSError:
+        return None
+    return candidate
+
+
 def wrong_unit_page_pack_raw_dicts(row):
     values = (
         row_value(row, "import_raw_json"),
@@ -31630,6 +33013,64 @@ def cleanup_missing_folder_verified_import_proofs(
             dest_exists = False
         if dest_exists:
             continue
+        relocated_path = None
+        if not already_retracted:
+            relocated_path = relocated_series_folder_import_proof_path(con, row, managed_roots)
+        if relocated_path:
+            if dry_run:
+                continue
+            normalized_dest = media_file_normalized_path(dest_path)
+            normalized_relocated = media_file_normalized_path(relocated_path)
+            con.execute(
+                "update import_results set dest_path=? where id=?",
+                (relocated_path, row["id"]),
+            )
+            if table_exists(con, "media_files"):
+                con.execute(
+                    """
+                    update media_files
+                       set path=?, normalized_path=?, last_seen_at=?
+                     where (
+                           import_result_id=?
+                        or (
+                          import_result_id is null
+                          and ? <> '' and normalized_path=?
+                          and series_id=? and issue_id=?
+                          and (queue_id is null or queue_id=?)
+                        )
+                     )
+                       and normalized_path=?
+                    """,
+                    (
+                        relocated_path, normalized_relocated, now,
+                        row["id"], normalized_dest, normalized_dest,
+                        row["series_id"], row["issue_id"], row["queue_id"],
+                        normalized_dest,
+                    ),
+                )
+            con.execute(
+                """
+                insert or ignore into history_events(
+                    id, entity_type, entity_id, series_id, issue_id, event_type,
+                    source, message, outcome, display_phase, created_at, raw_json
+                ) values(?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    stable_id("missing_folder_import_proof_relocated", row["id"], relocated_path),
+                    "import_result",
+                    row["id"],
+                    row["series_id"],
+                    row["issue_id"],
+                    "missing_folder_import_proof_relocated",
+                    "inkdrop_state",
+                    f"Series folder moved; import proof relocated: {dest_path} -> {relocated_path}",
+                    "productive",
+                    row["display_phase"],
+                    now,
+                    json_dumps({"previous_dest_path": dest_path, "relocated_dest_path": relocated_path}),
+                ),
+            )
+            continue
         live_sibling = False
         if not already_retracted:
             live_sibling = live_folder_import_proof_exists(con, row["queue_id"], row["id"], managed_roots)
@@ -32656,6 +34097,13 @@ def sync_state(state_dir, db_path=None, *, retire_absent_json=False):
             watch_count = sync_watches(con, state, now)
             queue_count = sync_queue(con, state, now, retire_absent_json=retire_absent_json)
             import_status_sync = sync_import_status_sources(con, state, now)
+            # Retire right after this stage (autocommit=True already made its
+            # writes durable above) rather than at the end of the ~35-stage
+            # pass below -- see sync_import_results()'s identical fix for why:
+            # a kill partway through left processed event files on disk
+            # forever, confirmed live 2026-08-10 (143 files, oldest from
+            # 2026-08-08, none ever retired).
+            import_status_events_retired = retire_import_status_events(import_status_sync["events"])
             counts = {
                 "watches": watch_count,
                 "queue_items": queue_count,
@@ -32722,7 +34170,7 @@ def sync_state(state_dir, db_path=None, *, retire_absent_json=False):
             counts["media_files"] = sync_managed_media_files(con, now)
             update_sync_meta(con, now, "full", source.get("source_mtime"))
             con.commit()
-        counts["import_status_events"] = retire_import_status_events(import_status_sync["events"])
+        counts["import_status_events"] = import_status_events_retired
         counts["rejected_import_status_events"] = len(import_status_sync["rejected"])
         summary = state_summary(path)
         summary.update(source)
@@ -32737,6 +34185,59 @@ def sync_state(state_dir, db_path=None, *, retire_absent_json=False):
         return summary
 
     return with_db_lock_retry(_sync, attempts=4, initial_delay=1.0)
+
+
+def sync_watch_state(
+    state_dir,
+    db_path=None,
+    *,
+    timeout_seconds=None,
+    busy_timeout_ms=None,
+    lock_attempts=3,
+    lock_initial_delay=0.5,
+):
+    """Ingest comic-series-watches.json and stop there.
+
+    A discovery scan changes exactly one source file, so this is the whole of
+    the database work it owes. It used to reach that ingest through sync_state()
+    -- forty-odd whole-database backfills and cleanups, none of which a scan
+    produced work for -- which cost 430s against production and put the job past
+    its timeout every run.
+
+    Deliberately not stamping source_mtime: only the watch file has been read
+    here, so sync_state_if_stale() must stay free to notice that queue and
+    import sources moved. update_sync_meta() is still called for its cache drop,
+    without which the summaries keep serving pre-ingest numbers.
+    """
+
+    def _sync():
+        state = Path(state_dir)
+        path = Path(db_path or db_path_for_state_dir(state))
+        state.mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        source = state_source_snapshot(state)
+        with connect(
+            path,
+            timeout_seconds=timeout_seconds,
+            busy_timeout_ms=busy_timeout_ms,
+            autocommit=True,
+        ) as con:
+            init_schema(con)
+            watch_count = sync_watches(con, state, now)
+            update_sync_meta(con, now, "watches")
+            con.commit()
+        summary = dict(source)
+        summary.update({
+            "ok": True,
+            "db_path": str(path),
+            "scope": "watches",
+            "synced": {"watches": watch_count},
+            "synced_at": now,
+            "synced_at_iso": utc_stamp(now),
+        })
+        return summary
+
+    return with_db_lock_retry(_sync, attempts=lock_attempts, initial_delay=lock_initial_delay)
 
 
 
@@ -32849,7 +34350,9 @@ def manga_companion_zombie_links(db_path):
     return results
 
 
-def _restore_manga_companion_discovery_locked(con, mangadex_series_id, *, source, reason, now):
+def _restore_manga_companion_discovery_locked(
+    con, mangadex_series_id, *, source, reason, now, allow_reactivating_user_removal=False
+):
     """Undo the hand-written parking pattern for one companion, on an open con.
 
     Keeps `monitored`/`monitor_new` on so due_mangadex_companion_links() and
@@ -32859,6 +34362,17 @@ def _restore_manga_companion_discovery_locked(con, mangadex_series_id, *, source
     or apply_series_shadow_retire_plan(); that refusal is unrelated to and
     unaffected by this transition -- this is a display/monitoring decoupling,
     never an identity-merge decision.
+
+    Refuses outright, writing nothing, when the companion carries a genuine
+    removal (series_raw_user_removed(): the shape the real series_remove
+    action leaves behind) unless the caller passes
+    `allow_reactivating_user_removal=True`. Restoring such a row clears
+    removed_by_user and turns acquisition back on, and a discovery_only
+    companion is hidden from both the series list and the removed view, so
+    an unconfirmed restore would silently reverse a user's explicit removal
+    with no surface left showing that it happened. The flag exists so that
+    reversal can only be an operator's deliberate, per-series decision --
+    never a side effect of an automated heal or a schema upgrade.
     """
     mangadex_series_id = str(mangadex_series_id or "").strip()
     if not mangadex_series_id:
@@ -32877,6 +34391,20 @@ def _restore_manga_companion_discovery_locked(con, mangadex_series_id, *, source
     old_raw = json_loads(series_row["raw_json"] or "{}", {})
     old_raw = old_raw if isinstance(old_raw, dict) else {}
     new_raw = dict(old_raw)
+    was_user_removed = series_raw_user_removed(old_raw)
+    if was_user_removed and not allow_reactivating_user_removal:
+        return {
+            "ok": False,
+            "reason": "companion_removed_by_user",
+            "mangadex_series_id": mangadex_series_id,
+            "comicvine_series_id": link["comicvine_series_id"],
+            "link_id": link["id"],
+            "requires_confirmation": True,
+            "message": (
+                "This companion was removed by a user. Restoring it re-enables acquisition, "
+                "so it needs an explicit per-series confirmation."
+            ),
+        }
     for key in (
         "automation_parked",
         "automation_parked_reason",
@@ -32891,10 +34419,38 @@ def _restore_manga_companion_discovery_locked(con, mangadex_series_id, *, source
         "retired_at_iso",
         "retired_by",
         "retired_reason_detail",
+        # A genuine removal through the real series_remove action (as opposed
+        # to the hand-written series_shadow_retired-shaped workaround this
+        # function was first built for) sets these too. series_id_user_removed()
+        # -- checked at every queue/wanted-item creation guard -- only reads
+        # removed_by_user/automation_parked_reason, but leaving the rest behind
+        # produces a row that claims to be restored while still carrying stale
+        # "removed" breadcrumbs, and a later background preserve-on-sync pass
+        # (see the preserve_removed_or_parked branch in the series upsert path)
+        # only re-parks a row it finds still marked user_removed, so clearing
+        # this fully also keeps the restore durable across that sync.
+        "removed_at",
+        "removed_at_iso",
+        "removed_preserved_at",
+        "removed_preserved_at_iso",
+        "removed_preserved_from_sync",
+        "parked_reason",
+        "parked_at",
+        "parked_at_iso",
+        "parked_context",
+        "parked_preserved_at",
+        "parked_preserved_at_iso",
+        "parked_preserved_from_sync",
+        "series_removed_guard",
+        "series_removed_guard_at",
+        "series_removed_guard_at_iso",
+        "series_removed_guard_message",
+        "series_removed_guard_source",
     ):
         new_raw.pop(key, None)
     new_raw.update(
         {
+            "removed_by_user": False,
             "manga_companion_discovery_only": True,
             "manga_companion_discovery_restored_at": now,
             "manga_companion_discovery_restored_at_iso": utc_stamp(now),
@@ -32902,6 +34458,10 @@ def _restore_manga_companion_discovery_locked(con, mangadex_series_id, *, source
             "manga_companion_discovery_restored_reason": str(reason or "")[:300],
         }
     )
+    if was_user_removed:
+        new_raw["removed_reactivated_by_user"] = True
+        new_raw["removed_reactivated_at"] = now
+        new_raw["removed_reactivated_at_iso"] = utc_stamp(now)
     cur = con.execute(
         "update series set monitored=1, monitor_new=1, updated_at=?, raw_json=? where id=?",
         (now, json_dumps(new_raw), mangadex_series_id),
@@ -32937,21 +34497,149 @@ def _restore_manga_companion_discovery_locked(con, mangadex_series_id, *, source
     }
 
 
-def restore_manga_companion_discovery(db_path, mangadex_series_id, *, source="inkdrop_core", reason=None, now=None):
+def restore_manga_companion_discovery(
+    db_path,
+    mangadex_series_id,
+    *,
+    source="inkdrop_core",
+    reason=None,
+    now=None,
+    allow_reactivating_user_removal=False,
+):
     """Guarded public entry point for `_restore_manga_companion_discovery_locked`.
 
     This is the sanctioned replacement for hand-written raw_json parking: the
-    only supported way to move a MangaDex companion into discovery_only mode.
+    only supported way to move a MangaDex companion into discovery_only mode,
+    and the only supported way to revive one an operator confirms should come
+    back. It is deliberately per-series and never runs on its own -- nothing
+    in schema init, background refresh, or any automated heal calls it for a
+    row a user removed.
+
+    `allow_reactivating_user_removal` defaults to False, so a companion the
+    user genuinely removed is left exactly as it is and the call reports
+    `reason='companion_removed_by_user'` with `requires_confirmation=True`.
+    Pass True only from a code path where an operator has confirmed this
+    specific series, and record why in `reason` -- the one exception is
+    `reconcile_discovery_only_companion_staleness()`, which is allowed to pass
+    True automatically, but only for rows where `discovery_mode` still reads
+    `discovery_only` at the moment it runs; that column is itself never set
+    except through this same confirmed path, so finding it still set is proof
+    the confirmation already happened and nothing new needs asking.
     """
     now = float(now or time.time())
     with connect(Path(db_path)) as con:
         init_schema(con)
         result = _restore_manga_companion_discovery_locked(
-            con, mangadex_series_id, source=source, reason=reason, now=now
+            con,
+            mangadex_series_id,
+            source=source,
+            reason=reason,
+            now=now,
+            allow_reactivating_user_removal=allow_reactivating_user_removal,
         )
     if result.get("ok"):
         clear_state_view_summary_cache()
     return result
+
+
+def reconcile_discovery_only_companion_staleness(db_path, *, now=None, limit=25):
+    """Periodic self-heal + alert for discovery_only companions gone dark.
+
+    `manga_companion_links.discovery_mode='discovery_only'` is the durable
+    signal that a companion's `monitored` flag must stay on -- it is only ever
+    set by a confirmed `_restore_manga_companion_discovery_locked()` call, and
+    only ever cleared by `park_series_automation()`'s
+    `allow_removing_discovery_only=True` path (a deliberate, confirmed
+    removal). Both writers clear or set the flag together with the series'
+    monitored state, so a row that still reads discovery_only while its
+    companion series shows monitored=0 is always an inconsistency introduced
+    somewhere else -- a race, a hand-rolled write bypassing the guarded
+    functions, or a gap this code doesn't know about yet -- never a
+    legitimate parked state. Safe to auto-repair without asking again: the
+    confirmation already happened whichever time discovery_mode was set.
+
+    Found 3 of 5 companions #347 healed on 2026-08-05 (Fire Punch,
+    Gachiakuta, Hunter X Hunter) back in exactly this state on 2026-08-11,
+    four to six days after they broke and unnoticed until a manual re-audit
+    -- this closes that observability gap by running every autopilot pass
+    instead of once at schema init (see heal_zombie_manga_companion_links),
+    and by covering every discovery_only zombie rather than only the one
+    hand-written-parking signature that function targets.
+
+    Writes one `manga_companion_discovery_stale_detected` history event per
+    newly-detected break (deduped against the companion's own `updated_at` so
+    a still-broken row doesn't re-alert every pass) -- visible in the History
+    view without a dedicated diagnostic page.
+    """
+    now = float(now or time.time())
+    checked = []
+    healed = []
+    alerted = []
+    with connect(Path(db_path)) as con:
+        init_schema(con)
+        rows = con.execute(
+            """
+            select l.id as link_id, l.comicvine_series_id, l.mangadex_series_id, l.raw_json as link_raw_json,
+                   c.title as canonical_title, m.updated_at as companion_updated_at
+            from manga_companion_links l
+            join series c on c.id = l.comicvine_series_id
+            join series m on m.id = l.mangadex_series_id
+            where l.status='linked' and l.discovery_mode='discovery_only' and m.monitored=0
+            order by m.updated_at
+            limit ?
+            """,
+            (int(limit),),
+        ).fetchall()
+        for row in rows:
+            checked.append(row["mangadex_series_id"])
+            link_raw = json_loads(row["link_raw_json"] or "{}", {})
+            if not isinstance(link_raw, dict):
+                link_raw = {}
+            is_new_break = link_raw.get("staleness_alerted_for_companion_updated_at") != row["companion_updated_at"]
+            outcome = _restore_manga_companion_discovery_locked(
+                con,
+                row["mangadex_series_id"],
+                source="inkdrop_state.reconcile_discovery_only_companion_staleness",
+                reason=(
+                    "Periodic self-heal: discovery_only companion went dark while "
+                    "manga_companion_links still authorized live discovery"
+                ),
+                now=now,
+                allow_reactivating_user_removal=True,
+            )
+            if outcome.get("ok"):
+                healed.append(row["mangadex_series_id"])
+            if is_new_break:
+                link_raw["staleness_alerted_for_companion_updated_at"] = row["companion_updated_at"]
+                link_raw["staleness_last_alerted_at"] = now
+                link_raw["staleness_last_alerted_at_iso"] = utc_stamp(now)
+                con.execute(
+                    "update manga_companion_links set raw_json=?, updated_at=? where id=?",
+                    (json_dumps(link_raw), now, row["link_id"]),
+                )
+                _record_search_history(
+                    con,
+                    event_type="manga_companion_discovery_stale_detected",
+                    entity_type="series",
+                    entity_id=row["mangadex_series_id"],
+                    series_id=row["mangadex_series_id"],
+                    message=(
+                        f"MangaDex discovery for {row['canonical_title']} went dark "
+                        f"(discovery_only companion {row['mangadex_series_id']} was monitored=0) -- "
+                        + ("auto-healed" if outcome.get("ok") else f"auto-heal failed: {outcome.get('reason')}")
+                    ),
+                    raw={
+                        "link_id": row["link_id"],
+                        "comicvine_series_id": row["comicvine_series_id"],
+                        "heal_outcome": outcome,
+                    },
+                    source="inkdrop_state",
+                    now=now,
+                )
+                alerted.append(row["mangadex_series_id"])
+    if healed:
+        clear_state_view_summary_cache()
+    return {"ok": True, "checked": checked, "healed": healed, "alerted": alerted}
 
 
 def heal_zombie_manga_companion_links(con, now=None):
@@ -33015,6 +34703,22 @@ def heal_zombie_manga_companion_links(con, now=None):
     except sqlite3.Error:
         pass
     return {"ok": True, "healed": len(healed), "healed_mangadex_series_ids": healed, "already_done": already_done}
+
+
+# Reviving a companion a user genuinely removed is deliberately *not* a
+# schema-init step and never will be. A removal is a user decision, and a
+# restored companion runs in discovery_only mode -- hidden from the series
+# list and from the removed view alike -- so a migration that reversed one
+# would turn acquisition back on with no surface left showing it happened.
+# An installation that needs that reversal goes through
+# restore_manga_companion_discovery(..., allow_reactivating_user_removal=True),
+# per series, with an operator's confirmation recorded in `reason`. An
+# earlier build shipped one such revival as an unconditional upgrade step
+# keyed on a single hardcoded provider series id; it is gone, and
+# tests/inkdrop-manga-companion-removal-authority-smoke.py holds the line.
+# Installations that ran it keep a spent
+# `one_piece_manga_companion_discovery_restore_v1` row in schema_meta -- inert,
+# read by nothing, and left alone rather than rewriting applied history.
 
 
 MANUAL_TITLE_SHADOW_SERIES_HEAL_SCHEMA_KEY = "manual_title_shadow_series_retroactive_heal_v1"
@@ -34460,6 +36164,22 @@ def sync_import_results(state_dir, db_path=None):
             # bounded by the slowest stage, not the sum of all of them.
             import_status_sync = sync_import_status_sources(con, state, now)
             con.commit()
+            # Retire right after this stage's own commit, not at the end of
+            # the whole pass -- this import child is routinely killed on
+            # timeout partway through the ~35 stages below (that's the whole
+            # reason each stage commits independently, see above), and a kill
+            # after this point but before the old end-of-pass retire call
+            # left every processed event file on disk forever. Confirmed live
+            # 2026-08-10: import-status-events/ had accumulated 143 files
+            # going back to 2026-08-08 with zero ever retired. Each pass was
+            # re-reading and re-applying the same already-processed events --
+            # harmless to import_results/history_events (both keyed by a
+            # stable id derived from the event's own content, so a replay is
+            # a no-op upsert) but not to queue_items.updated_at via
+            # mark_queue_verified_for_import(), which is exactly the path
+            # that made stale event files a real route to duplicate
+            # import_verified notifications, not just a storage leak.
+            retired_import_status_events = retire_import_status_events(import_status_sync["events"])
             count = import_status_sync["count"]
             reconciliation_count = sync_download_reconciliation(con, state, now)
             con.commit()
@@ -34578,7 +36298,6 @@ def sync_import_results(state_dir, db_path=None):
             con.commit()
             update_sync_meta(con, now, "imports", source.get("source_mtime"))
             con.commit()
-        retired_import_status_events = retire_import_status_events(import_status_sync["events"])
         summary = state_summary(path)
         summary.update(source)
         summary.update({"ok": True, "db_path": str(path), "synced": {"imports": count, "import_status_events": retired_import_status_events, "download_reconciliation": reconciliation_count, "bad_source_candidates": bad_source_candidate_count, "stale_download_task_bad_candidates": stale_download_task_bad_candidates, "stale_slskd_wrong_title_bad_candidates": stale_slskd_wrong_title_bad_candidates, "download_tasks": download_task_count, "provider_contract_backfill": provider_contract_backfill, "superseded_download_tasks_retired": superseded_download_tasks_retired, "superseded_sent_download_tasks_retired": superseded_sent_download_tasks_retired, "local_pack_superseded_handoff_tasks_retired": local_pack_superseded_handoff_tasks_retired, "stale_download_client_handoff_tasks_retired": stale_download_client_handoff_tasks_retired, "wrong_title_active_slskd_download_tasks_retired": wrong_title_active_slskd_download_tasks_retired, "retired_download_queue_items_requeued": retired_download_queue_items_requeued, "superseded_slskd_queue_active_download_tasks_retired": superseded_slskd_queue_active_download_tasks_retired, "duplicate_active_handoff_tasks_retired": duplicate_active_handoff_tasks_retired, "inactive_download_tasks_retired": inactive_download_tasks_retired, "duplicate_download_tasks_removed": download_task_dupes_removed, "download_task_history": download_task_history_count, "legacy_folder_completion_backfill": legacy_folder_completion_backfill, "queue_verified_pending_scan_backfill": queue_verified_pending_scan_backfill, "optional_folder_scan_pending_promoted": optional_folder_scan_pending_promoted, "pending_pack_import_backfill": pending_pack_import_backfill, "direct_import_verification": direct_import_verification, "verified_queue_backfill": verified_backfill_count, "import_source_attempt_links": source_linked_count, "superseded_adapter_import_results": superseded_adapter_import_results, "missing_folder_import_proofs_retracted": missing_folder_import_proofs_retracted, "wrong_unit_page_pack_import_proofs_retracted": wrong_unit_page_pack_import_proofs_retracted, "active_download_queue_settled": active_download_queue_settled_count, "verified_import_queue_settled": verified_import_settled_count, "duplicate_issue_wanted_reconciled": duplicate_issue_wanted_reconciled, "collected_edition_coverage_reconciled": collected_edition_coverage_reconciled, "expired_import_authorities_released": expired_import_authorities_released, "queue_scheduler_evidence_backfilled": queue_scheduler_evidence_backfilled, "optional_folder_import_queue_settled": optional_folder_import_settled_count, "folder_presence_backfill": folder_presence_backfill, "folder_presence_wanted_backfill": folder_presence_wanted_backfill, "collection_single_part_verified_reopened": collection_single_part_verified_reopened, "superseded_duplicates": superseded_count, "duplicate_verified_activity_attempts_removed": verification_dupes_removed, "media_files": media_files}, "synced_at": now, "synced_at_iso": utc_stamp(now)})
@@ -34746,6 +36465,67 @@ def upsert_app_setting(con, setting, now):
         ),
     )
     return True
+
+
+PROVIDER_SETTINGS_STRUCTURAL_KEYS = frozenset({
+    "editable_fields",
+    "secret_fields",
+    "policy",
+    "field_schema",
+    "has_secret_values",
+    "source_template",
+    "source_template_instance",
+    "template_provider_id",
+    "user_addable",
+    "user_enableable",
+})
+
+# Providers whose card is *only* a UI over settings that some other part of
+# the app reads back out of app_settings rather than provider_configs. Maps
+# provider_id -> the app_settings key prefix its fields mirror into. Every
+# provider in this map gets bridged by mirror_provider_settings_to_app_settings()
+# below; a provider absent from this map is fine as long as everything that
+# reads its settings reads provider_configs (via provider_config()) too.
+PROVIDER_APP_SETTINGS_MIRROR_PREFIX = {
+    "media_management": "media_management",
+    "library_paths": "path",
+    "manual_inboxes": "path",
+}
+
+
+def mirror_provider_settings_to_app_settings(con, provider_id, incoming, now):
+    """Bridge a provider-card save into the real app_settings rows it needs to reach.
+
+    Confirmed live 2026-08-11: several provider cards persist edits into
+    provider_configs.settings_json, but a separate set of readers (new-series
+    root assignment, managed-library-root scans for OPDS/dedupe/verification,
+    and inkdrop_web's own runtime-paths helper) only ever query app_settings via
+    app_setting_value()/media_management_root_for_media_type(). Without this
+    bridge those readers keep the value from whenever app_settings was last
+    seeded (first-run "sync settings", if ever) no matter what the card now
+    shows as saved -- delete_empty_folders and hardlink_imports on the Media
+    Management card, and manual_ebooks_inbox on the Manual Inboxes card,
+    were all confirmed silently ignored this way. Mirror every non-structural
+    changed field so each card actually controls the behavior it displays.
+    """
+    prefix = PROVIDER_APP_SETTINGS_MIRROR_PREFIX.get(provider_id)
+    if not prefix:
+        return
+    for key, value in incoming.items():
+        if key in PROVIDER_SETTINGS_STRUCTURAL_KEYS or str(key).startswith("source_"):
+            continue
+        upsert_app_setting(
+            con,
+            {
+                "key": f"{prefix}.{key}",
+                "scope": prefix,
+                "label": str(key).replace("_", " ").title(),
+                "value": value,
+                "description": "",
+                "source": "user",
+            },
+            now,
+        )
 
 
 # These Prowlarr child-indexer catalog templates briefly shipped with a real,
@@ -35528,14 +37308,16 @@ def settings_snapshot(db_path):
             "first_run_setup": first_run_setup_status(db_path),
         }
     cache_key = str(db_path)
-    cached = SETTINGS_SNAPSHOT_CACHE.get("snapshot")
-    cached_at = float(SETTINGS_SNAPSHOT_CACHE.get("ts") or 0)
+    with SETTINGS_CACHE_LOCK:
+        record = SETTINGS_SNAPSHOT_CACHE.get("record")
+        generation = SETTINGS_CACHE_GENERATION
     if (
-        cached
-        and SETTINGS_SNAPSHOT_CACHE.get("db_path") == cache_key
-        and time.time() - cached_at <= SETTINGS_SNAPSHOT_TTL_SECONDS
+        record
+        and record.get("snapshot")
+        and record.get("db_path") == cache_key
+        and time.time() - float(record.get("ts") or 0) <= SETTINGS_SNAPSHOT_TTL_SECONDS
     ):
-        return clone_jsonish(cached)
+        return clone_jsonish(record["snapshot"])
     with connect_read(db_path) as con:
         activity = provider_activity_snapshot(con)
         providers = []
@@ -35665,7 +37447,13 @@ def settings_snapshot(db_path):
             "media_management": media_management_settings_contract(db_path),
             "first_run_setup": first_run_setup_status(db_path),
         }
-        SETTINGS_SNAPSHOT_CACHE.update({"db_path": cache_key, "ts": time.time(), "snapshot": clone_jsonish(snapshot)})
+        with SETTINGS_CACHE_LOCK:
+            if SETTINGS_CACHE_GENERATION == generation:
+                SETTINGS_SNAPSHOT_CACHE["record"] = {
+                    "db_path": cache_key,
+                    "ts": time.time(),
+                    "snapshot": clone_jsonish(snapshot),
+                }
         return snapshot
 
 
@@ -36134,7 +37922,18 @@ def provider_activity_key(value):
         "pack_import_log_backfill": "pack_import",
         "pack_log_backfill": "pack_import",
     }
-    return aliases.get(text, text)
+    if text in aliases:
+        return aliases[text]
+    # Prowlarr child indexers are named "prowlarr_<slug>" (see
+    # inkdrop_sources.py's PROVIDER_ALIASES/PROVIDER_LABELS -- prowlarr_nyaa,
+    # prowlarr_torrentleech_comics, etc.), and new indexers keep landing in
+    # that same shape. A per-name alias entry here would need updating every
+    # time one is added; collapsing on the shared prefix instead means a
+    # child's source_attempts row satisfies the same backoff/coverage checks
+    # as the parent 'prowlarr' key without a code change.
+    if text.startswith("prowlarr_"):
+        return "prowlarr"
+    return text
 
 
 def source_attempt_outcome(status, lifecycle_phase=None):
@@ -37178,6 +38977,8 @@ def update_provider_config(db_path, provider_id, patch):
             incoming = {key: current.get(key) for key in changed_settings}
             changed_fields.extend(sorted(incoming.keys()))
             updates["settings_json"] = json_dumps(current)
+            if provider_id in PROVIDER_APP_SETTINGS_MIRROR_PREFIX:
+                mirror_provider_settings_to_app_settings(con, provider_id, incoming, now)
         elif needs_template_instance_flag:
             current = dict(current_settings)
             current["source_template_instance"] = True
@@ -37491,8 +39292,14 @@ def queue_watchdog_policy(con):
         IMPORT_AUTHORITY_TTL_HOURS_DEFAULT,
     ) or IMPORT_AUTHORITY_TTL_HOURS_DEFAULT
     import_authority_ttl_hours = max(IMPORT_AUTHORITY_TTL_MIN_HOURS, min(import_authority_ttl_hours, IMPORT_AUTHORITY_TTL_MAX_HOURS))
+    max_stall_retries = int(safe_float(
+        _app_setting_value_from_connection(con, QUEUE_WATCHDOG_MAX_STALL_RETRIES_SETTING_KEY, QUEUE_WATCHDOG_MAX_STALL_RETRIES_DEFAULT),
+        QUEUE_WATCHDOG_MAX_STALL_RETRIES_DEFAULT,
+    ) or QUEUE_WATCHDOG_MAX_STALL_RETRIES_DEFAULT)
+    max_stall_retries = max(QUEUE_WATCHDOG_MAX_STALL_RETRIES_MIN, min(max_stall_retries, QUEUE_WATCHDOG_MAX_STALL_RETRIES_MAX))
     return {
         "enabled": enabled,
+        "max_stall_retries": max_stall_retries,
         "slskd_stale_seconds": slskd_stall["seconds"],
         "slskd_stall": slskd_stall,
         "slskd_queued_wait_stale_seconds": slskd_queued_wait["seconds"],
@@ -38213,6 +40020,940 @@ def annotate_duplicate_series_rows(rows):
                 + (f"; {active_work} active/wanted items across the group" if active_work else "")
             )
     return rows
+
+
+def _series_row_parked_or_removed(row):
+    """series_row_user_removed() only recognizes removed_by_user/user_removed
+    -- it predates SERIES_REMOVED_PARK_REASONS and was never widened to match
+    it, so a series parked with series_shadow_retired/adapter_shadow_retired/
+    series_merged reads as "not removed" to that function even though
+    series_removed_sql() (used everywhere series lists/dashboards filter)
+    already excludes it. apply_series_duplicate_merge()'s blockers need the
+    same predicate series_removed_sql() uses, or a second merge attempt
+    against an already-parked series would sail through undetected.
+    """
+    if not row:
+        return False
+    raw = _json_obj(row["raw_json"])
+    if bool(raw.get("removed_by_user")):
+        return True
+    return str(raw.get("automation_parked_reason") or "").strip().lower() in SERIES_REMOVED_PARK_REASONS
+
+
+def _manga_companion_link_status_rank(status):
+    return {"linked": 2, "preparing": 1}.get(str(status or "").strip().lower(), 0)
+
+
+def _manga_companion_job_status_rank(status):
+    return {"running": 3, "scheduled": 2, "completed": 1}.get(str(status or "").strip().lower(), 0)
+
+
+def _resolve_manga_companion_link_retarget(con, row, new_comicvine, new_mangadex, now):
+    """Retarget one manga_companion_links row onto its post-merge series ids.
+
+    The schema only unique-constrains comicvine_series_id/mangadex_series_id
+    where status='linked' (a partial index) plus the composite
+    unique(comicvine_series_id, mangadex_series_id) pair -- so a 'preparing'
+    row on the target side would NOT raise sqlite3.IntegrityError against an
+    incoming 'linked' retarget from the shadow, even though the application
+    layer (schedule_manga_companion_job/link_manga_companion) treats
+    comicvine_series_id/mangadex_series_id as a one-active-companion-per-side
+    slot. Check for that slot conflict directly rather than relying on the
+    DB to reject it, or the retarget would leave two rows silently racing
+    for the same series. On conflict, keep whichever row is further along
+    (linked > preparing > anything else) and drop the other.
+    """
+    for _ in range(4):
+        conflict = con.execute(
+            "select * from manga_companion_links where id<>? and (comicvine_series_id=? or mangadex_series_id=?)",
+            (row["id"], new_comicvine, new_mangadex),
+        ).fetchone()
+        if not conflict:
+            con.execute(
+                "update manga_companion_links set comicvine_series_id=?, mangadex_series_id=?, updated_at=? where id=?",
+                (new_comicvine, new_mangadex, now, row["id"]),
+            )
+            return
+        if _manga_companion_link_status_rank(row["status"]) >= _manga_companion_link_status_rank(conflict["status"]):
+            con.execute("delete from manga_companion_links where id=?", (conflict["id"],))
+            continue
+        con.execute("delete from manga_companion_links where id=?", (row["id"],))
+        return
+    con.execute("delete from manga_companion_links where id=?", (row["id"],))
+
+
+def _resolve_manga_companion_job_retarget(con, row, new_seed, new_comicvine, new_mangadex, now):
+    """Same shape as _resolve_manga_companion_link_retarget() for
+    manga_companion_jobs, which unique-constrains comicvine_series_id and
+    mangadex_series_id directly (unlike the links table's partial index,
+    these are plain uniques -- but the conflict is checked proactively here
+    too, for the same reason: it's simpler than reasoning about which path
+    is exception-safe, and it stays correct if the schema ever changes.
+    seed_series_id carries no uniqueness of its own, so it never triggers
+    the collision path on its own).
+    """
+    for _ in range(4):
+        conflict = con.execute(
+            "select * from manga_companion_jobs where id<>? and (comicvine_series_id=? or mangadex_series_id=?)",
+            (row["id"], new_comicvine, new_mangadex),
+        ).fetchone()
+        if not conflict:
+            con.execute(
+                """
+                update manga_companion_jobs
+                set seed_series_id=?, comicvine_series_id=?, mangadex_series_id=?, updated_at=?
+                where id=?
+                """,
+                (new_seed, new_comicvine, new_mangadex, now, row["id"]),
+            )
+            return
+        if _manga_companion_job_status_rank(row["status"]) >= _manga_companion_job_status_rank(conflict["status"]):
+            con.execute("delete from manga_companion_jobs where id=?", (conflict["id"],))
+            continue
+        con.execute("delete from manga_companion_jobs where id=?", (row["id"],))
+        return
+    con.execute("delete from manga_companion_jobs where id=?", (row["id"],))
+
+
+def _series_merge_side_metrics(con, series_id):
+    def scalar(sql, params):
+        row = con.execute(sql, params).fetchone()
+        return int((row[0] if row else 0) or 0)
+
+    return {
+        "issue_count": scalar("select count(*) from issues where series_id=?", (series_id,)),
+        "wanted_count": scalar("select count(*) from wanted_items where series_id=?", (series_id,)),
+        "active_queue_count": scalar(
+            "select count(*) from queue_items where series_id=? and active=1 and state != 'superseded_duplicate'",
+            (series_id,),
+        ),
+        "source_attempts": scalar("select count(*) from source_attempts where series_id=?", (series_id,)),
+        "download_tasks": scalar("select count(*) from download_tasks where series_id=?", (series_id,)),
+        "verified_imports": scalar("select count(*) from import_results where series_id=? and verified=1", (series_id,)),
+    }
+
+
+def series_merge_candidate_detail(db_path, series_id_a, series_id_b):
+    """Human-facing comparison for a possible series merge.
+
+    Deliberately does not decide anything -- it only gathers real signal
+    (identity fields, per-side counts, issue-number overlap) so an operator
+    can confirm two series rows are genuinely the same real-world series
+    before calling apply_series_duplicate_merge(). `suggested_target_*` is a
+    default suggestion only (more active work, then more issues, then
+    older/first-created row wins the tiebreak) -- the caller is free to pick
+    either side as the keeper. Read-only; opens no write transaction.
+    """
+    series_id_a = str(series_id_a or "").strip()
+    series_id_b = str(series_id_b or "").strip()
+    if not series_id_a or not series_id_b:
+        return {"ok": False, "error": "both series ids are required"}
+    if series_id_a == series_id_b:
+        return {"ok": False, "error": "the two series ids must be different"}
+
+    with connect_read(Path(db_path)) as con:
+        row_a = con.execute("select * from series where id=?", (series_id_a,)).fetchone()
+        row_b = con.execute("select * from series where id=?", (series_id_b,)).fetchone()
+        if not row_a:
+            return {"ok": False, "error": f"series not found: {series_id_a}"}
+        if not row_b:
+            return {"ok": False, "error": f"series not found: {series_id_b}"}
+
+        def build_item(series_id, row):
+            metrics = _series_merge_side_metrics(con, series_id)
+            return {
+                "series_id": series_id,
+                "title": row["title"],
+                "media_type": row["media_type"],
+                "year": row["year"],
+                "publisher": row["publisher"],
+                "metadata_provider": row["metadata_provider"],
+                "metadata_id": row["metadata_id"],
+                "kapowarr_id": row["kapowarr_id"],
+                "source": row["source"],
+                "ownership": series_ownership(row["source"], row["metadata_provider"], row["kapowarr_id"]),
+                "monitored": bool(row["monitored"]),
+                "monitor_new": bool(row["monitor_new"]),
+                "auto_grab": bool(row["auto_grab"]),
+                "library_root": row["library_root"],
+                "library_path": row["library_path"],
+                "library_path_source": row["library_path_source"],
+                "created_at": row["created_at"],
+                "removed_or_parked": series_row_user_removed(row),
+                **metrics,
+                "wanted_items": metrics["wanted_count"],
+                "active_queue_items": metrics["active_queue_count"],
+            }
+
+        numbers_a = {
+            row["normalized_number"]
+            for row in con.execute(
+                "select normalized_number from issues where series_id=? and coalesce(normalized_number,'')<>''",
+                (series_id_a,),
+            )
+        }
+        numbers_b = {
+            row["normalized_number"]
+            for row in con.execute(
+                "select normalized_number from issues where series_id=? and coalesce(normalized_number,'')<>''",
+                (series_id_b,),
+            )
+        }
+        shared = sorted(numbers_a & numbers_b)
+        only_a = sorted(numbers_a - numbers_b)
+        only_b = sorted(numbers_b - numbers_a)
+
+        item_a = build_item(series_id_a, row_a)
+        item_b = build_item(series_id_b, row_b)
+        classification = classify_duplicate_series_group([item_a, item_b])
+
+        work_a = duplicate_series_item_work(item_a)
+        work_b = duplicate_series_item_work(item_b)
+        if work_a != work_b:
+            suggested_target_id = series_id_a if work_a > work_b else series_id_b
+            suggested_reason = "more active/wanted work on this side"
+        elif item_a["issue_count"] != item_b["issue_count"]:
+            suggested_target_id = series_id_a if item_a["issue_count"] > item_b["issue_count"] else series_id_b
+            suggested_reason = "more issues on record on this side"
+        else:
+            suggested_target_id = (
+                series_id_a if float(item_a["created_at"] or 0) <= float(item_b["created_at"] or 0) else series_id_b
+            )
+            suggested_reason = "older/first-created row"
+
+    return {
+        "ok": True,
+        "series_a": item_a,
+        "series_b": item_b,
+        "shared_issue_numbers": shared[:50],
+        "shared_issue_count": len(shared),
+        "only_in_a": only_a[:50],
+        "only_in_a_count": len(only_a),
+        "only_in_b": only_b[:50],
+        "only_in_b_count": len(only_b),
+        "suggested_target_series_id": suggested_target_id,
+        "suggested_target_reason": suggested_reason,
+        **classification,
+    }
+
+
+def apply_series_duplicate_merge(
+    db_path,
+    shadow_series_id,
+    target_series_id,
+    *,
+    confirm_shadow_series_id=None,
+    confirm_target_series_id=None,
+    enable_apply=False,
+    dry_run=True,
+    source="manual_merge",
+    now=None,
+):
+    """Human-in-the-loop merge of two confirmed-duplicate series rows.
+
+    This is deliberately NOT automatic. series_shadow_kind() classifies two
+    independently metadata-sourced series rows for the same real series as
+    "metadata_peer", and apply_series_shadow_retire_plan() unconditionally
+    refuses to auto-retire that shape -- verified live that the tool's own
+    target/shadow scoring can pick the wrong side to keep (the "Absolute
+    Batman" incident: an empty TPB-collection stub outscored the real
+    22-issue series on an active-ref tiebreak). This function never picks a
+    side either: shadow_series_id/target_series_id must both be supplied by
+    a human who has already reviewed series_merge_candidate_detail(), and
+    confirm_shadow_series_id/confirm_target_series_id must exactly echo them
+    back before a single row is written -- the same double-confirmation shape
+    apply_series_shadow_retire_plan() and apply_series_shadow_ref_merge_plan()
+    already use. Called with dry_run=True (the default) or without
+    enable_apply, this only returns a preview -- no writes happen.
+
+    Unlike apply_series_shadow_retire_plan(), this does not require zero
+    active_operational_refs on the shadow side: a real duplicate-series merge
+    routinely has to fold live wanted/queue/download work from both sides
+    onto one canonical series, not just retire an inert row. Issues are
+    matched onto the target by normalized issue number where the target
+    already has one; where it doesn't, the shadow's issue is re-minted under
+    target_series_id via upsert_issue() (using its own stored payload) so
+    every future catalog/sync worker recognizes it by the target's series_id
+    from then on -- this is what stops the shadow's issues/wanted rows from
+    silently reappearing on the next sync cycle (see the manual-series-merge
+    incident this mirrors: a bare series_id reassignment without matching id
+    rewrites let live workers recreate the "merged" rows within minutes).
+
+    The shadow series row is parked (SERIES_REMOVED_PARK_REASONS +=
+    "series_merged"), never deleted -- its full pre-merge snapshot is kept in
+    its own raw_json, and a series_duplicate_merged history_events row is
+    written on the target, so the merge is fully auditable and forensically
+    reversible even though there's no one-click "undo" button.
+
+    Known scope boundary: the newer identity_editions/identity_units tables
+    (core/inkdrop_manual_search_core.py) are not retargeted here. As of this
+    change nothing outside that module writes to them, and
+    identity_editions.legacy_series_id is UNIQUE, so blindly retargeting it
+    risks a constraint violation if the target already has its own row. Since
+    the shadow series row is parked rather than deleted, any FK pointing at
+    it (declared or not) stays valid either way.
+    """
+    db_path = Path(db_path)
+    shadow_series_id = str(shadow_series_id or "").strip()
+    target_series_id = str(target_series_id or "").strip()
+    confirm_shadow_series_id = str(confirm_shadow_series_id or "").strip() or None
+    confirm_target_series_id = str(confirm_target_series_id or "").strip() or None
+    now = float(now or time.time())
+
+    if not shadow_series_id or not target_series_id:
+        return {"ok": False, "error": "shadow_series_id and target_series_id are required"}
+    if shadow_series_id == target_series_id:
+        return {"ok": False, "error": "shadow_series_id and target_series_id must be different"}
+
+    with connect(db_path) as con:
+        init_schema(con)
+        shadow = con.execute("select * from series where id=?", (shadow_series_id,)).fetchone()
+        target = con.execute("select * from series where id=?", (target_series_id,)).fetchone()
+
+        blockers = []
+        if not shadow:
+            blockers.append("shadow_series_not_found")
+        if not target:
+            blockers.append("target_series_not_found")
+        if shadow and _series_row_parked_or_removed(shadow):
+            blockers.append("shadow_already_removed_or_merged")
+        if target and _series_row_parked_or_removed(target):
+            blockers.append("target_already_removed_or_merged")
+
+        # A collected_edition_links row directly between these two series is
+        # not a duplicate to be folded up -- it is a human-or-provider
+        # assertion that they are DISTINCT publication units, one collecting
+        # the other. Retargeting collapses both halves onto target_series_id,
+        # at which point new_collection == new_source and the loop below
+        # deletes the row as self-referential. That silently destroys the
+        # only evidence that these were ever judged separate, and History
+        # stores counts rather than before-images, so recovering it needs a
+        # pre-merge backup. Refuse instead. Both orientations count: which
+        # side is the collection and which the source is a statement about
+        # the relationship, not about which row is the merge target. Every
+        # status counts too -- a pending link is an unresolved judgement, not
+        # a weaker one. Links from either series to some unrelated third
+        # series are untouched by this and still retarget normally.
+        if shadow and target:
+            explicit_distinct = con.execute(
+                """
+                select id from collected_edition_links
+                where (collection_series_id=? and source_series_id=?)
+                   or (collection_series_id=? and source_series_id=?)
+                limit 1
+                """,
+                (shadow_series_id, target_series_id, target_series_id, shadow_series_id),
+            ).fetchone()
+            if explicit_distinct:
+                blockers.append("explicit_distinct_series_relationship")
+
+        # _resolve_manga_companion_job_retarget() deletes the losing row of a
+        # unique-constraint collision by status rank alone. It never reads
+        # lease_token/lease_expires_at, so a merge can delete a job another
+        # worker is actively holding -- that worker's later
+        # finish_manga_companion_job() call then fails on its own valid token
+        # and its durable retry record is gone. Block while any job touching
+        # either series holds a live lease.
+        #
+        # "Live" has to mean exactly what the lease lifecycle means by it, or
+        # this guard and the claim path disagree about the same row:
+        # claim_manga_companion_jobs() re-claims a running job once
+        # coalesce(lease_expires_at,0) <= now, and renew/finish require
+        # coalesce(lease_expires_at,0) > now. So strictly-greater-than is the
+        # boundary; a lease expiring exactly at now is already reclaimable and
+        # does not block. Jobs on the target side matter as much as the shadow
+        # side -- the collision path deletes whichever row loses on rank, and
+        # that can be either one.
+        if shadow and target:
+            leased = con.execute(
+                """
+                select id from manga_companion_jobs
+                where status='running'
+                  and coalesce(lease_expires_at, 0) > ?
+                  and (seed_series_id in (?, ?)
+                       or comicvine_series_id in (?, ?)
+                       or mangadex_series_id in (?, ?))
+                limit 1
+                """,
+                (
+                    now,
+                    shadow_series_id,
+                    target_series_id,
+                    shadow_series_id,
+                    target_series_id,
+                    shadow_series_id,
+                    target_series_id,
+                ),
+            ).fetchone()
+            if leased:
+                blockers.append("manga_companion_job_lease_active")
+
+        # When both series carry an explicit series_source_profile_overrides
+        # row, the merge below keeps the target's and deletes the shadow's.
+        # Each row is a deliberate human choice of provider order, enabled
+        # sources, language, and pack policy for that series; picking one by
+        # which side happens to be the merge target is not a resolution, and
+        # the discarded choice is unrecoverable. Refuse and let a human
+        # reconcile the two policies first.
+        #
+        # Only a real conflict blocks. If the two rows express the same policy
+        # there is nothing to lose by dropping the duplicate, so compare the
+        # policy columns rather than row identity -- raw_json is an opaque
+        # payload blob and created_at/updated_at are bookkeeping, so neither
+        # says anything about what the operator actually chose.
+        if shadow and target:
+            policy_columns = "profile_id, provider_order_json, enabled_sources_json, language, pack_policy_json"
+            shadow_policy = con.execute(
+                f"select {policy_columns} from series_source_profile_overrides where series_id=?",
+                (shadow_series_id,),
+            ).fetchone()
+            target_policy = con.execute(
+                f"select {policy_columns} from series_source_profile_overrides where series_id=?",
+                (target_series_id,),
+            ).fetchone()
+            if shadow_policy and target_policy and tuple(shadow_policy) != tuple(target_policy):
+                blockers.append("conflicting_source_profile_overrides")
+
+        preview = {
+            "ok": True,
+            "shadow_series_id": shadow_series_id,
+            "target_series_id": target_series_id,
+            "shadow_title": shadow["title"] if shadow else None,
+            "target_title": target["title"] if target else None,
+            "blockers": blockers,
+            "apply_supported": not blockers,
+        }
+
+        if blockers:
+            preview.update({"dry_run": True, "apply_enabled": False, "reason": "blocked"})
+            return preview
+
+        target_title = target["title"] or shadow["title"]
+        target_identity = target_series_id
+
+        target_issue_by_number = {
+            row["normalized_number"]: row["id"]
+            for row in con.execute(
+                "select id, normalized_number from issues where series_id=? and coalesce(normalized_number,'')<>''",
+                (target_series_id,),
+            )
+        }
+        shadow_issues = con.execute("select * from issues where series_id=?", (shadow_series_id,)).fetchall()
+
+        preview.update(
+            {
+                "shadow_issue_count": len(shadow_issues),
+                "shadow_wanted_count": con.execute(
+                    "select count(*) from wanted_items where series_id=?", (shadow_series_id,)
+                ).fetchone()[0],
+                "shadow_queue_count": con.execute(
+                    "select count(*) from queue_items where series_id=?", (shadow_series_id,)
+                ).fetchone()[0],
+            }
+        )
+
+        confirmed = (
+            bool(enable_apply)
+            and not dry_run
+            and confirm_shadow_series_id == shadow_series_id
+            and confirm_target_series_id == target_series_id
+        )
+        if not confirmed:
+            if not enable_apply or dry_run:
+                reason = "dry_run"
+            elif confirm_shadow_series_id != shadow_series_id:
+                reason = "confirm_shadow_series_id_mismatch"
+            else:
+                reason = "confirm_target_series_id_mismatch"
+            preview.update({"dry_run": True, "apply_enabled": False, "reason": reason})
+            return preview
+
+        # ---- Real merge below; everything above this point is read-only. ----
+
+        issue_map = {}
+        minted_count = 0
+        for old_issue in shadow_issues:
+            number = old_issue["normalized_number"] or normalize_issue_number(old_issue["issue_number"])
+            existing_target_id = target_issue_by_number.get(number) if number else None
+            if existing_target_id:
+                issue_map[old_issue["id"]] = existing_target_id
+                continue
+            payload = _json_obj(old_issue["raw_json"])
+            payload.setdefault("issueNumber", old_issue["issue_number"])
+            new_issue_id = upsert_issue(con, target_series_id, payload, now)
+            issue_map[old_issue["id"]] = new_issue_id
+            if number:
+                target_issue_by_number[number] = new_issue_id
+            minted_count += 1
+
+        wanted_rows = con.execute("select * from wanted_items where series_id=?", (shadow_series_id,)).fetchall()
+        wanted_map = {}
+        for row in wanted_rows:
+            new_issue_id = issue_map.get(row["issue_id"])
+            new_wanted_id = f"wanted:{new_issue_id or stable_id(target_series_id, row['reason'] or 'series_merge')}"
+            wanted_map[row["id"]] = new_wanted_id
+            existing = con.execute("select * from wanted_items where id=?", (new_wanted_id,)).fetchone()
+            if existing and new_issue_id:
+                # Two wanted_items rows now point at the same canonical issue
+                # (the shadow's and the target's) -- this is exactly the shape
+                # merge_wanted_items_group() exists to collapse (furthest-along
+                # status via wanted_status_rank(), full audit trail, and
+                # queue_items/source_attempts/download_tasks retargeting), so
+                # reuse it instead of the hand-rolled status pick this used to
+                # do (which diverged from wanted_status_rank() and dropped the
+                # loser's audit trail entirely).
+                merge_wanted_items_group(
+                    con,
+                    target_series_id,
+                    new_issue_id,
+                    [row, existing],
+                    now,
+                    default_reason=row["reason"] or "series_merge",
+                )
+                continue
+            raw = _json_obj(row["raw_json"])
+            raw["series_merged_from_series_id"] = shadow_series_id
+            raw["series_merged_from_wanted_id"] = row["id"]
+            raw["series_merged_at"] = now
+            if existing:
+                # No canonical issue id to anchor a full merge_wanted_items_group()
+                # call (new_issue_id is unresolved), so this is a collision on the
+                # stable_id(...) fallback naming alone. Fold in place using the
+                # same furthest-along-status rule merge_wanted_items_group() uses.
+                chosen_status = (
+                    row["status"]
+                    if wanted_status_rank(row["status"]) > wanted_status_rank(existing["status"])
+                    else existing["status"]
+                )
+                con.execute(
+                    """
+                    update wanted_items
+                    set series_id=?, issue_id=coalesce(?, issue_id), reason=coalesce(reason, ?),
+                        status=?, priority=max(priority, ?), updated_at=?, raw_json=?
+                    where id=?
+                    """,
+                    (
+                        target_series_id,
+                        new_issue_id,
+                        row["reason"],
+                        chosen_status,
+                        int(row["priority"] or 50),
+                        now,
+                        json_dumps(raw),
+                        new_wanted_id,
+                    ),
+                )
+            else:
+                con.execute(
+                    """
+                    insert into wanted_items(id, series_id, issue_id, reason, status, priority, created_at, updated_at, raw_json)
+                    values(?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        new_wanted_id,
+                        target_series_id,
+                        new_issue_id,
+                        row["reason"],
+                        row["status"],
+                        int(row["priority"] or 50),
+                        row["created_at"] or now,
+                        now,
+                        json_dumps(raw),
+                    ),
+                )
+
+        queue_rows = con.execute("select * from queue_items where series_id=?", (shadow_series_id,)).fetchall()
+        queue_map = {}
+        for row in queue_rows:
+            raw = _json_obj(row["raw_json"])
+            issue_number = _issue_number_from_row(
+                con.execute(
+                    "select issue_number, normalized_number from issues where id=?", (row["issue_id"],)
+                ).fetchone(),
+                raw,
+            )
+            new_issue_id = issue_map.get(row["issue_id"])
+            if not issue_number and new_issue_id:
+                new_issue_row = con.execute("select issue_number from issues where id=?", (new_issue_id,)).fetchone()
+                issue_number = str(_row_value(new_issue_row, "issue_number", "") or "").strip()
+            if not issue_number:
+                new_queue_id = stable_id("queue", target_series_id, row["id"])
+            else:
+                new_queue_id = queue_key_for_series_issue(target_title, issue_number, target_identity)
+            queue_map[row["id"]] = new_queue_id
+            new_wanted_id = wanted_map.get(row["wanted_id"])
+            query = f"{target_title} {issue_number}".strip() if issue_number else (row["query"] or target_title)
+            raw.update(
+                {
+                    "key": new_queue_id,
+                    "queue_identity": target_identity,
+                    "series": target_title,
+                    "series_merged_from_series_id": shadow_series_id,
+                    "series_merged_from_queue_id": row["id"],
+                    "series_merged_at": now,
+                }
+            )
+            existing = con.execute("select * from queue_items where id=?", (new_queue_id,)).fetchone()
+            if existing:
+                chosen_state = existing["state"]
+                chosen_source = existing["current_source"]
+                chosen_event = existing["last_event"]
+                chosen_active = existing["active"]
+                if queue_state_rank(row["state"]) > queue_state_rank(existing["state"]):
+                    chosen_state = row["state"]
+                    chosen_source = row["current_source"]
+                    chosen_event = row["last_event"]
+                    chosen_active = row["active"]
+                status_columns = queue_provider_status_column_values(
+                    chosen_state, chosen_source, chosen_event or "series merged", raw,
+                )
+                con.execute(
+                    """
+                    update queue_items
+                    set wanted_id=coalesce(?, wanted_id), series_id=?, issue_id=coalesce(?, issue_id),
+                        state=?, current_source=?, query=?, last_event=?,
+                        active=max(active, ?), updated_at=?, outcome=?, display_phase=?,
+                        provider_status_state=?, provider_status_phase=?, provider_status_provider=?,
+                        provider_status_actionability=?, raw_json=?
+                    where id=?
+                    """,
+                    (
+                        new_wanted_id,
+                        target_series_id,
+                        new_issue_id,
+                        chosen_state,
+                        chosen_source,
+                        query,
+                        chosen_event or "series merged",
+                        int(chosen_active or 0),
+                        now,
+                        *status_columns,
+                        json_dumps(raw),
+                        new_queue_id,
+                    ),
+                )
+            else:
+                status_columns = queue_provider_status_column_values(
+                    row["state"], row["current_source"], row["last_event"] or "series merged", raw,
+                )
+                con.execute(
+                    """
+                    insert into queue_items(
+                        id, wanted_id, series_id, issue_id, state, current_source, query,
+                        last_event, active, created_at, updated_at, source_order_json,
+                        recovery_steps_json, outcome, display_phase, provider_status_state,
+                        provider_status_phase, provider_status_provider,
+                        provider_status_actionability, raw_json
+                    ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        new_queue_id,
+                        new_wanted_id,
+                        target_series_id,
+                        new_issue_id,
+                        row["state"],
+                        row["current_source"],
+                        query,
+                        row["last_event"] or "series merged",
+                        int(row["active"] or 0),
+                        row["created_at"] or now,
+                        now,
+                        row["source_order_json"],
+                        row["recovery_steps_json"],
+                        *status_columns,
+                        json_dumps(raw),
+                    ),
+                )
+
+        for old_queue_id, new_queue_id in queue_map.items():
+            con.execute("update source_attempts set queue_id=? where queue_id=?", (new_queue_id, old_queue_id))
+            con.execute("update import_results set queue_id=? where queue_id=?", (new_queue_id, old_queue_id))
+            con.execute("update download_tasks set queue_id=? where queue_id=?", (new_queue_id, old_queue_id))
+            con.execute(
+                "update history_events set entity_id=? where entity_type='queue_item' and entity_id=?",
+                (new_queue_id, old_queue_id),
+            )
+            # queue_claims.queue_id is the primary key with an ON DELETE CASCADE
+            # FK to queue_items(id), so the delete below would otherwise drop a
+            # live claim on the shadow row silently instead of moving it to the
+            # surviving queue row. Transfer it explicitly; if the surviving row
+            # already has its own claim, the shadow's would collide on that same
+            # primary key anyway, so drop it here where the loss is visible
+            # instead of leaving it to an implicit cascade.
+            old_claim = con.execute("select 1 from queue_claims where queue_id=?", (old_queue_id,)).fetchone()
+            if old_claim:
+                existing_claim = con.execute(
+                    "select 1 from queue_claims where queue_id=?", (new_queue_id,)
+                ).fetchone()
+                if existing_claim:
+                    con.execute("delete from queue_claims where queue_id=?", (old_queue_id,))
+                else:
+                    con.execute(
+                        "update queue_claims set queue_id=? where queue_id=?",
+                        (new_queue_id, old_queue_id),
+                    )
+            con.execute("delete from queue_items where id=?", (old_queue_id,))
+
+        for old_wanted_id, new_wanted_id in wanted_map.items():
+            con.execute("update queue_items set wanted_id=? where wanted_id=?", (new_wanted_id, old_wanted_id))
+            con.execute("update source_attempts set wanted_id=? where wanted_id=?", (new_wanted_id, old_wanted_id))
+            con.execute("update download_tasks set wanted_id=? where wanted_id=?", (new_wanted_id, old_wanted_id))
+            con.execute(
+                "update history_events set entity_id=? where entity_type='wanted_item' and entity_id=?",
+                (new_wanted_id, old_wanted_id),
+            )
+            con.execute("delete from wanted_items where id=?", (old_wanted_id,))
+
+        for old_issue_id, new_issue_id in issue_map.items():
+            for table in (
+                "source_attempts", "download_tasks", "import_results", "media_files",
+                "review_exceptions", "history_events", "manual_search_runs",
+            ):
+                con.execute(
+                    f"update {table} set issue_id=? where series_id=? and issue_id=?",
+                    (new_issue_id, shadow_series_id, old_issue_id),
+                )
+            # history_events.entity_id is a polymorphic reference, independent
+            # of the issue_id column updated just above -- a row recorded
+            # against the shadow's issue (entity_type='issue') still points
+            # at old_issue_id here until this runs. Match on entity_id alone
+            # (not scoped by series_id) since issue ids are globally unique,
+            # same as the series/queue_item entity_id remaps below/above.
+            con.execute(
+                "update history_events set entity_id=? where entity_type='issue' and entity_id=?",
+                (new_issue_id, old_issue_id),
+            )
+
+        for table in (
+            "source_attempts", "download_tasks", "import_results", "media_files",
+            "review_exceptions", "history_events", "manual_search_runs",
+        ):
+            con.execute(f"update {table} set series_id=? where series_id=?", (target_series_id, shadow_series_id))
+        con.execute(
+            "update history_events set entity_id=? where entity_type='series' and entity_id=?",
+            (target_series_id, shadow_series_id),
+        )
+
+        # ---- Identity-authority tables keyed directly off series_id (not
+        # issue_id) -- collected_edition_links (coverage projection),
+        # manga_companion_links/_jobs/_reconcile_attempts (active/backoff
+        # decisions), and series_source_profile_overrides (per-series
+        # provider/language/pack policy). Left on the parked shadow, each
+        # silently strands the state its own consumer needs to find under
+        # the surviving target_series_id -- unwanted re-acquisition, lost
+        # companion-job state, or a canonical series quietly reverting to
+        # default search policy. Three of these carry uniqueness
+        # constraints the target side may already occupy, so those go
+        # through explicit conflict resolution rather than a blind UPDATE.
+        collected_edition_links_moved = 0
+        for row in con.execute(
+            "select * from collected_edition_links where collection_series_id=? or source_series_id=?",
+            (shadow_series_id, shadow_series_id),
+        ).fetchall():
+            new_collection = target_series_id if row["collection_series_id"] == shadow_series_id else row["collection_series_id"]
+            new_source = target_series_id if row["source_series_id"] == shadow_series_id else row["source_series_id"]
+            if new_collection == new_source:
+                # Both halves of the collects-relationship collapsed onto the
+                # same series -- no valid relationship remains, drop it
+                # rather than insert the self-referential row
+                # upsert_collected_edition_link() itself refuses to create.
+                con.execute("delete from collected_edition_links where id=?", (row["id"],))
+                continue
+            existing = con.execute(
+                "select id, status from collected_edition_links where id<>? and collection_series_id=? and source_series_id=?",
+                (row["id"], new_collection, new_source),
+            ).fetchone()
+            if existing:
+                if str(existing["status"]) != "linked" and str(row["status"]) == "linked":
+                    con.execute(
+                        "update collected_edition_links set status='linked', updated_at=? where id=?",
+                        (now, existing["id"]),
+                    )
+                con.execute("delete from collected_edition_links where id=?", (row["id"],))
+            else:
+                con.execute(
+                    "update collected_edition_links set collection_series_id=?, source_series_id=?, updated_at=? where id=?",
+                    (new_collection, new_source, now, row["id"]),
+                )
+            collected_edition_links_moved += 1
+
+        manga_companion_links_moved = 0
+        for row in con.execute(
+            "select * from manga_companion_links where comicvine_series_id=? or mangadex_series_id=?",
+            (shadow_series_id, shadow_series_id),
+        ).fetchall():
+            new_comicvine = target_series_id if row["comicvine_series_id"] == shadow_series_id else row["comicvine_series_id"]
+            new_mangadex = target_series_id if row["mangadex_series_id"] == shadow_series_id else row["mangadex_series_id"]
+            _resolve_manga_companion_link_retarget(con, row, new_comicvine, new_mangadex, now)
+            manga_companion_links_moved += 1
+
+        manga_companion_jobs_moved = 0
+        for row in con.execute(
+            "select * from manga_companion_jobs where seed_series_id=? or comicvine_series_id=? or mangadex_series_id=?",
+            (shadow_series_id, shadow_series_id, shadow_series_id),
+        ).fetchall():
+            new_seed = target_series_id if row["seed_series_id"] == shadow_series_id else row["seed_series_id"]
+            new_comicvine = target_series_id if row["comicvine_series_id"] == shadow_series_id else row["comicvine_series_id"]
+            new_mangadex = target_series_id if row["mangadex_series_id"] == shadow_series_id else row["mangadex_series_id"]
+            _resolve_manga_companion_job_retarget(con, row, new_seed, new_comicvine, new_mangadex, now)
+            manga_companion_jobs_moved += 1
+
+        manga_companion_reconcile_attempts_moved = 0
+        shadow_reconcile = con.execute(
+            "select * from manga_companion_reconcile_attempts where series_id=?", (shadow_series_id,)
+        ).fetchone()
+        if shadow_reconcile:
+            target_reconcile = con.execute(
+                "select * from manga_companion_reconcile_attempts where series_id=?", (target_series_id,)
+            ).fetchone()
+            if not target_reconcile:
+                con.execute(
+                    "update manga_companion_reconcile_attempts set series_id=? where series_id=?",
+                    (target_series_id, shadow_series_id),
+                )
+            else:
+                # Keep whichever side has the more recent attempt -- that
+                # reflects the latest known companion-reconcile state --
+                # but never shrink the accumulated backoff attempt_count.
+                if float(shadow_reconcile["last_attempt_at"] or 0) > float(target_reconcile["last_attempt_at"] or 0):
+                    con.execute(
+                        """
+                        update manga_companion_reconcile_attempts
+                        set status=?, attempt_count=?, last_attempt_at=?, next_retry_at=?, raw_json=?
+                        where series_id=?
+                        """,
+                        (
+                            shadow_reconcile["status"],
+                            max(int(shadow_reconcile["attempt_count"] or 0), int(target_reconcile["attempt_count"] or 0)),
+                            shadow_reconcile["last_attempt_at"],
+                            shadow_reconcile["next_retry_at"],
+                            shadow_reconcile["raw_json"],
+                            target_series_id,
+                        ),
+                    )
+                con.execute("delete from manga_companion_reconcile_attempts where series_id=?", (shadow_series_id,))
+            manga_companion_reconcile_attempts_moved = 1
+
+        source_profile_override_moved = 0
+        shadow_override = con.execute(
+            "select 1 from series_source_profile_overrides where series_id=?", (shadow_series_id,)
+        ).fetchone()
+        if shadow_override:
+            target_override = con.execute(
+                "select 1 from series_source_profile_overrides where series_id=?", (target_series_id,)
+            ).fetchone()
+            if not target_override:
+                # The target has no explicit policy of its own -- move the
+                # shadow's over rather than let source_profile_for_series()
+                # silently fall back to the default profile/language/pack
+                # policy for the surviving canonical series.
+                con.execute(
+                    "update series_source_profile_overrides set series_id=? where series_id=?",
+                    (target_series_id, shadow_series_id),
+                )
+                source_profile_override_moved = 1
+            else:
+                # The target already has its own explicit override -- that's
+                # the one a human set for the series identity that survives,
+                # so it wins; drop the shadow's rather than leave it stranded.
+                con.execute("delete from series_source_profile_overrides where series_id=?", (shadow_series_id,))
+
+        for old_issue in shadow_issues:
+            old_issue_id = old_issue["id"]
+            referenced = False
+            for table in (
+                "wanted_items", "queue_items", "source_attempts", "download_tasks",
+                "import_results", "media_files", "review_exceptions", "history_events", "manual_search_runs",
+            ):
+                if con.execute(f"select 1 from {table} where issue_id=? limit 1", (old_issue_id,)).fetchone():
+                    referenced = True
+                    break
+            if not referenced and not con.execute(
+                "select 1 from identity_units where legacy_issue_id=? limit 1", (old_issue_id,)
+            ).fetchone():
+                con.execute("delete from issues where id=?", (old_issue_id,))
+
+        dedupe_changed = dedupe_series_issue_numbers(con, target_series_id, now)
+
+        pre_merge_snapshot = dict(shadow)
+        shadow_raw = _json_obj(shadow["raw_json"])
+        shadow_raw.update(
+            {
+                "automation_parked_reason": "series_merged",
+                "merged_into_series_id": target_series_id,
+                "merged_at": now,
+                "merged_at_iso": utc_stamp(now),
+                "pre_merge_series_snapshot": pre_merge_snapshot,
+            }
+        )
+        con.execute(
+            """
+            update series
+            set monitored=0, monitor_new=0, auto_grab=0, updated_at=?, raw_json=?
+            where id=?
+            """,
+            (now, json_dumps(shadow_raw), shadow_series_id),
+        )
+
+        event_id = stable_id("series_duplicate_merged", shadow_series_id, target_series_id, now)
+        con.execute(
+            """
+            insert or ignore into history_events(
+                id, entity_type, entity_id, series_id, issue_id, event_type,
+                source, message, created_at, raw_json
+            ) values(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                event_id,
+                "series",
+                target_series_id,
+                target_series_id,
+                None,
+                "series_duplicate_merged",
+                source,
+                f"{shadow['title']} merged into {target_title}",
+                now,
+                json_dumps(
+                    {
+                        "shadow_series_id": shadow_series_id,
+                        "shadow_title": shadow["title"],
+                        "target_series_id": target_series_id,
+                        "target_title": target_title,
+                        "issue_mapped": len(issue_map),
+                        "issue_minted": minted_count,
+                        "wanted_moved": len(wanted_map),
+                        "queue_moved": len(queue_map),
+                        "dedupe_changed": dedupe_changed,
+                        "collected_edition_links_moved": collected_edition_links_moved,
+                        "manga_companion_links_moved": manga_companion_links_moved,
+                        "manga_companion_jobs_moved": manga_companion_jobs_moved,
+                        "manga_companion_reconcile_attempts_moved": manga_companion_reconcile_attempts_moved,
+                        "source_profile_override_moved": source_profile_override_moved,
+                    }
+                ),
+            ),
+        )
+        update_sync_meta(con, now, "series_duplicate_merged")
+
+    preview.update(
+        {
+            "dry_run": False,
+            "apply_enabled": True,
+            "reason": None,
+            "issue_mapped": len(issue_map),
+            "issue_minted": minted_count,
+            "wanted_moved": len(wanted_map),
+            "queue_moved": len(queue_map),
+            "collected_edition_links_moved": collected_edition_links_moved,
+            "manga_companion_links_moved": manga_companion_links_moved,
+            "manga_companion_jobs_moved": manga_companion_jobs_moved,
+            "manga_companion_reconcile_attempts_moved": manga_companion_reconcile_attempts_moved,
+            "source_profile_override_moved": source_profile_override_moved,
+            "merged_at": now,
+            "merged_at_iso": utc_stamp(now),
+        }
+    )
+    return preview
 
 
 SERIES_DISPLAY_COLLAPSE_COUNT_KEYS = {
@@ -41720,17 +44461,6 @@ def review_exception_state_counts(con):
     }
 
 
-def review_exception_counts(db_path):
-    path = Path(db_path)
-    if not path.exists():
-        return {}
-    try:
-        with connect_read(path, timeout_seconds=0.75, busy_timeout_ms=750) as con:
-            return review_exception_state_counts(con)
-    except sqlite3.OperationalError:
-        return {}
-
-
 def review_exception_row_from_record(row):
     out = dict(row or {})
     raw = json_loads(out.get("raw_json") or "{}", {})
@@ -41993,6 +44723,8 @@ def state_summary(db_path, use_cache=True):
         out = clone_jsonish(cached)
         out["summary_cache"] = "hit"
         out["summary_cache_age_seconds"] = round(now - cached_at, 3)
+        diag_ts = out.get("queue_diagnostic_cache_ts")
+        out["queue_diagnostic_cache_age_seconds"] = round(max(0.0, now - diag_ts), 3) if diag_ts is not None else 0
         return out
 
     def _summary():
@@ -42049,8 +44781,11 @@ def state_summary(db_path, use_cache=True):
             media_files = media_file_inventory_rollup(con)
             completion_gates = completion_gate_rollup(con)
             source_attempts = source_attempt_count_from_connection(con)
+            history_events_count = table_count(con, "history_events")
+            queue_diagnostic_cache_ts = _queue_diagnostic_rollup_cache_min_ts(con)
             return {
                 "ok": True,
+                "queue_diagnostic_cache_ts": queue_diagnostic_cache_ts,
                 "schema_version": int(meta.get("schema_version") or SCHEMA_VERSION),
                 "last_sync_at": float(meta["last_sync_at"]) if meta.get("last_sync_at") else None,
                 "last_sync_at_iso": meta.get("last_sync_at_iso"),
@@ -42083,8 +44818,8 @@ def state_summary(db_path, use_cache=True):
                 "review_exceptions_by_state": review_rows,
                 "manual_review_actionable_count": review_actionable,
                 "manual_review_parked_count": review_parked,
-                "history_events": table_count(con, "history_events"),
-                "history_count": table_count(con, "history_events"),
+                "history_events": history_events_count,
+                "history_count": history_events_count,
                 "provider_configs": table_count(con, "provider_configs"),
                 "app_settings": table_count(con, "app_settings"),
                 "provider_outcomes": provider_outcomes,
@@ -42213,7 +44948,7 @@ def state_summary(db_path, use_cache=True):
                     source_attempts=source_attempts,
                     download_tasks=download_tasks["download_tasks"],
                     import_results=table_count(con, "import_results"),
-                    history_events=table_count(con, "history_events"),
+                    history_events=history_events_count,
                     provider_configs=table_count(con, "provider_configs"),
                     app_settings=table_count(con, "app_settings"),
                     manual_review_actionable_count=review_actionable,
@@ -42228,6 +44963,8 @@ def state_summary(db_path, use_cache=True):
         summary["manual_review_parked_count"] = int(review_snapshot["counts"].get("parked") or 0)
         summary["summary_cache"] = "miss"
         summary["summary_cache_age_seconds"] = 0
+        diag_ts = summary.get("queue_diagnostic_cache_ts")
+        summary["queue_diagnostic_cache_age_seconds"] = round(max(0.0, time.time() - diag_ts), 3) if diag_ts is not None else 0
         with STATE_SUMMARY_CACHE_LOCK:
             STATE_SUMMARY_CACHE.update({
                 "db_path": cache_key,
@@ -42453,7 +45190,7 @@ def state_sections_from_summary(summary, db_path=None, fast=False):
             summary.get("bad_source_candidates_top") or [],
             impact=source_memory_impact,
         )
-    return [
+    sections = [
         {
             "key": "series",
             "label": "Series",
@@ -42561,6 +45298,14 @@ def state_sections_from_summary(summary, db_path=None, fast=False):
             "target": "inkdropSettings",
         },
     ]
+    if "history_events" not in summary:
+        # The operational-table summary omits this key on purpose (see the
+        # comment where it's built) to skip an expensive count(*) over a
+        # multi-million-row table. Rendering a tile anyway would show a
+        # confident "0" for a table nobody actually counted -- drop the
+        # tile instead of lying about it.
+        sections = [section for section in sections if section.get("key") != "history"]
+    return sections
 
 
 def state_sections(db_path):
@@ -42630,10 +45375,6 @@ def wanted_filter_statuses(wanted_filter):
     if value in {"blocked", "in_progress", "wanted", "grabbed", "satisfied"}:
         return value, (value,)
     return "active", WANTED_FILTERS["active"][1]
-
-
-def provider_wait_rows(rows):
-    return [row for row in (rows or []) if row_source_wait(row)]
 
 
 def scoped_series_ids(series_ids):
@@ -42825,13 +45566,14 @@ def source_display_label(value):
     key = str(value or "").strip().lower()
     labels = {
         "local": "Local Library Check",
-        "source_ladder": "Source ladder",
-        "failed_retry": "Retry ladder",
+        "source_ladder": "Source Ladder",
+        "failed_retry": "Retry",
         "prowlarr": "Prowlarr",
         "rss": "RSS",
         "comicscodes": "ComicsCodes",
         "comicvine": "ComicVine",
         "mangadex": "MangaDex",
+        "metron": "Metron",
         "suwayomi": "Suwayomi",
         "slskd": "SLSKD",
         "download_client": "Download client",
@@ -42849,10 +45591,10 @@ def source_display_label(value):
     if key in labels:
         return labels[key]
     if not key:
-        return "Source ladder"
+        return "Source Ladder"
     acronym_words = {"slskd", "sab", "sabnzbd", "nzb", "rss", "cbr", "cbz"}
     words = str(value).replace("_", " ").split(" ")
-    return " ".join(word.upper() if word.lower() in acronym_words else word.title() for word in words if word) or "Source ladder"
+    return " ".join(word.upper() if word.lower() in acronym_words else word.title() for word in words if word) or "Source Ladder"
 
 
 def library_visibility_provider_label(value):
@@ -46627,6 +49369,15 @@ def source_timeout_origin_label(origin):
 
 
 def queue_provider_timeout_pressure_rollup(con, now=None, limit=8):
+    return _queue_diagnostic_rollup_cached(
+        "provider_timeout_pressure",
+        con,
+        limit,
+        lambda: _queue_provider_timeout_pressure_rollup_uncached(con, now=now, limit=limit),
+    )
+
+
+def _queue_provider_timeout_pressure_rollup_uncached(con, now=None, limit=8):
     out = {
         "queue_backlog_provider_timeout_items": 0,
         "queue_backlog_provider_timeout_by_source": {},
@@ -46843,6 +49594,15 @@ def queue_provider_timeout_pressure_rollup(con, now=None, limit=8):
 
 
 def queue_throughput_rollup(con, now=None, limit=8):
+    return _queue_diagnostic_rollup_cached(
+        "throughput",
+        con,
+        limit,
+        lambda: _queue_throughput_rollup_uncached(con, now=now, limit=limit),
+    )
+
+
+def _queue_throughput_rollup_uncached(con, now=None, limit=8):
     now = time.time() if now is None else float(now)
     max_rows = max(1, min(int(limit or 8), 20))
     stale_active_seconds = QUEUE_THROUGHPUT_STALE_ACTIVE_SECONDS
@@ -54235,6 +56995,182 @@ def request_queue_retry(db_path, queue_id, source_order=None, recovery_steps=Non
     }
 
 
+def reopen_stuck_import(db_path, queue_id, *, source="inkdrop_core", expected_revision=None):
+    """Reopen one item stuck in import/verification, without discarding a file still on disk.
+
+    Runs the same check-then-rescue sequence sync_download_reconciliation() applies
+    automatically in its background loop, but scoped to a single caller-chosen item so
+    a human can trigger it directly rather than waiting for that loop to happen to
+    revisit this row (it only touches rows with a live download-client history record,
+    so a genuinely stuck item can otherwise sit untouched indefinitely):
+      1. If the import is already provably fine (verified_import_for_queue), do nothing.
+      2. Otherwise try to re-prove it from the file already on disk
+         (reverify_managed_file_import_proof) -- this is what avoids a redundant
+         re-download when the recorded proof merely went stale.
+      3. Only if neither holds, fall back to a fresh search. This branch uses the same
+         revision-CAS + history-event discipline as request_queue_retry(), unlike
+         sync_download_reconciliation()'s trust-the-caller update, because a user-facing
+         button can race other UI actions in a way a locked background job cannot.
+    """
+    queue_id = str(queue_id or "").strip()
+    if not queue_id:
+        return {"ok": False, "reason": "missing_queue_id"}
+    now = time.time()
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return {"ok": False, "reason": "state_db_missing", "queue_id": queue_id}
+    with connect(db_path) as con:
+        init_schema(con)
+        row = con.execute(
+            """
+            select q.id, q.wanted_id, q.series_id, q.issue_id, q.revision,
+                   q.state, q.current_source, q.last_event, q.active,
+                   q.created_at, q.updated_at, q.raw_json,
+                   s.title as series
+            from queue_items q
+            left join series s on s.id = q.series_id
+            where q.id=?
+            limit 1
+            """,
+            (queue_id,),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "reason": "queue_item_not_found", "queue_id": queue_id}
+        current_revision = int(row["revision"] or 1)
+        if expected_revision is not None and int(expected_revision) != current_revision:
+            return {
+                "ok": False,
+                "reason": "revision_conflict",
+                "queue_id": queue_id,
+                "current_revision": current_revision,
+            }
+        previous_state = str(row["state"] or "").strip().lower()
+        series_id = row["series_id"]
+        issue_id = row["issue_id"]
+        proof = (
+            verified_import_for_queue(con, queue_id, series_id, issue_id, require_existing_destination=True)
+            if series_id and issue_id
+            else None
+        )
+        if proof:
+            return {
+                "ok": True,
+                "queue_id": queue_id,
+                "action": "already_verified",
+                "previous_state": previous_state,
+                "state": previous_state,
+                "revision": current_revision,
+                "message": "This issue's import is already verified against the library; nothing to reopen.",
+            }
+        reverified_proof_id = (
+            reverify_managed_file_import_proof(con, dict(row), now) if series_id and issue_id else None
+        )
+        if reverified_proof_id:
+            next_state = "verified"
+            message = "Found this issue's file still in the library; import re-verified without re-downloading."
+            action = "reverified"
+        else:
+            next_state = "searching"
+            message = "Reopened from a stuck import -- this item's import could not be confirmed, searching again."
+            action = "reset_to_searching"
+        raw = json_loads(row["raw_json"] or "{}", {})
+        raw = raw if isinstance(raw, dict) else {}
+        raw.setdefault("key", queue_id)
+        raw.setdefault("series", row["series"])
+        raw["state"] = next_state
+        raw["last_event"] = message
+        raw["reopen_import_requested_from"] = "inkdrop_state"
+        raw["reopen_import_requested_at"] = now
+        raw["reopen_import_requested_at_iso"] = utc_stamp(now)
+        raw["reopen_import_previous_state"] = previous_state
+        raw["reopen_import_action"] = action
+        raw.pop("retry_after", None)
+        raw.pop("retry_after_iso", None)
+        raw.pop("needs_you_reason", None)
+        next_revision = current_revision + 1
+        cursor = con.execute(
+            """
+            update queue_items
+            set state=?, last_event=?,
+                active=case when ?='verified' then 0 else 1 end,
+                updated_at=?,
+                revision=?,
+                retry_after=null,
+                retry_after_iso=null,
+                raw_json=?
+            where id=? and revision=?
+            """,
+            (
+                next_state,
+                message,
+                next_state,
+                now,
+                next_revision,
+                json_dumps(raw),
+                queue_id,
+                current_revision,
+            ),
+        )
+        if cursor.rowcount != 1:
+            # Same compare-and-swap reasoning as request_queue_retry(): someone else
+            # wrote this exact row in the gap between the SELECT above and this UPDATE.
+            con.rollback()
+            return {
+                "ok": False,
+                "reason": "revision_conflict",
+                "queue_id": queue_id,
+                "current_revision": int(
+                    (con.execute("select revision from queue_items where id=?", (queue_id,)).fetchone() or {"revision": current_revision})["revision"]
+                    or current_revision
+                ),
+            }
+        if row["wanted_id"]:
+            con.execute(
+                "update wanted_items set status=?, updated_at=? where id=?",
+                (wanted_status_for_queue_state(next_state), now, row["wanted_id"]),
+            )
+        history_id = stable_id("queue_import_reopened", "queue_item", queue_id, int(now * 1000))
+        con.execute(
+            """
+            insert or ignore into history_events(
+                id, entity_type, entity_id, series_id, issue_id, event_type,
+                source, message, created_at, raw_json
+            ) values(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                history_id,
+                "queue_item",
+                queue_id,
+                row["series_id"],
+                row["issue_id"],
+                "queue_import_reopened",
+                source,
+                message,
+                now,
+                json_dumps(
+                    {
+                        "queue_id": queue_id,
+                        "previous_state": previous_state,
+                        "action": action,
+                        "reverified_proof_id": reverified_proof_id,
+                    }
+                ),
+            ),
+        )
+        update_sync_meta(con, now, "queue_import_reopened")
+        con.commit()
+    return {
+        "ok": True,
+        "queue_id": queue_id,
+        "previous_state": previous_state,
+        "state": next_state,
+        "action": action,
+        "revision": next_revision,
+        "message": message,
+        "history": {"ok": True, "event_id": history_id, "created_at": now, "created_at_iso": utc_stamp(now)},
+    }
+
+
 def series_watch_payload_from_row(row, auto_grab=True):
     row = row if isinstance(row, dict) else {}
     metadata_provider = str(row.get("metadata_provider") or "").strip().lower()
@@ -54724,7 +57660,7 @@ SERIES_FILTERS = {
 }
 
 
-SERIES_REMOVED_PARK_REASONS = {"user_removed", "series_shadow_retired", "adapter_shadow_retired"}
+SERIES_REMOVED_PARK_REASONS = {"user_removed", "series_shadow_retired", "adapter_shadow_retired", "series_merged"}
 
 
 def series_removed_sql(alias="s"):
@@ -54736,8 +57672,38 @@ def series_removed_sql(alias="s"):
     )
 
 
+def series_discovery_only_sql(alias="s"):
+    """A MangaDex companion restored via restore_manga_companion_discovery() --
+    monitored and searched like any other series, but never a real user
+    choice to see it as its own browsable entry. Kept out of the series
+    list/cards/duplicate-title surfaces the same way a removed series is,
+    without being "removed": series_removed_sql intentionally does not
+    include this, so a discovery-only companion never shows up in the
+    "removed" admin view, and nothing that gates acquisition (monitored/
+    monitor_new/auto_grab) reads this flag at all.
+
+    A correlated EXISTS against manga_companion_links.discovery_mode, not the
+    series row's own raw_json.manga_companion_discovery_only -- confirmed live
+    that a routine catalog refresh (record_provider_series_catalog's default
+    path) rebuilds a series' raw_json from the fresh provider payload alone
+    (row_raw = dict(row)) rather than merging the existing one, so a flag
+    stamped only into raw_json does not survive the companion's own next
+    metadata refresh (both of PR #347's still-active discovery_only
+    companions, Battle Angel Alita and Pluto, had already lost the raw_json
+    copy of this flag by 2026-08-10 while manga_companion_links.discovery_mode
+    -- a real column on a table nothing else overwrites wholesale -- still
+    correctly read 'discovery_only' for both). This needs no join at any call
+    site: it is a self-contained predicate, like series_removed_sql.
+    """
+    alias = str(alias or "s").strip() or "s"
+    return (
+        f"exists (select 1 from manga_companion_links l "
+        f"where l.mangadex_series_id = {alias}.id and l.discovery_mode = 'discovery_only')"
+    )
+
+
 def series_not_removed_sql(alias="s"):
-    return f"not {series_removed_sql(alias)}"
+    return f"not ({series_removed_sql(alias)} or {series_discovery_only_sql(alias)})"
 
 
 def series_filter_and_not_removed(sql):
@@ -55544,6 +58510,7 @@ def series_rows(db_path, limit=80, series_filter=None):
                 "automation_parked": bool(raw.get("automation_parked")),
                 "automation_parked_reason": raw.get("automation_parked_reason"),
                 "automation_parked_message": raw.get("automation_parked_message"),
+                "edition_indifferent_override": bool(raw.get("edition_indifferent_override")),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
                 "wanted_count": int(row["wanted_count"] or 0),
@@ -55703,6 +58670,7 @@ def series_compact_card_rows(db_path, limit=80, series_filter=None):
             "monitor_new": bool(row["monitor_new"]),
             "auto_grab": bool(row["auto_grab"]),
             "removed_by_user": removed_by_user,
+            "edition_indifferent_override": bool(raw.get("edition_indifferent_override")),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "wanted_count": int(row["wanted_count"] or 0),
@@ -56513,7 +59481,7 @@ def series_issue_availability_rollup(con, series_ids=None):
     return out
 
 
-CANONICAL_SERIES_ROUTE_PROVIDERS = {"comicvine", "mangadex"}
+CANONICAL_SERIES_ROUTE_PROVIDERS = {"comicvine", "mangadex", "metron"}
 
 
 def resolve_series_route_identity(db_path, series_identity_value):
@@ -56610,6 +59578,22 @@ def series_item(db_path, series_id):
         out["automation_parked_reason"] = raw.get("automation_parked_reason")
         out["automation_parked_message"] = raw.get("automation_parked_message")
         out["manga_unit_model_override"] = str(raw.get("manga_unit_model_override") or "")
+        out["edition_indifferent_override"] = bool(raw.get("edition_indifferent_override"))
+        # Single-series lookup only -- lazy import avoids a circular import
+        # (inkdrop_source_worker_coordinator already imports this module).
+        # collected_singleton_proof gates whether the "Edition Indifferent"
+        # toggle is anything but a no-op for this series (its tracked target
+        # must itself be a collected/omnibus edition), so the UI needs it to
+        # decide whether to show the control at all.
+        try:
+            from core import inkdrop_source_worker_coordinator as source_coordinator
+
+            singleton_context = source_coordinator.singleton_issue_contexts_by_series_id(
+                db_path, [series_id], con=con
+            ).get(series_id) or {}
+        except Exception:
+            singleton_context = {}
+        out["collected_singleton_proof"] = bool(singleton_context.get("collected_singleton_proof"))
         out["ownership"] = series_ownership(out.get("source"), out.get("metadata_provider"), out.get("kapowarr_id"))
         provenance = series_provenance(out.get("source"), out.get("metadata_provider"), out.get("kapowarr_id"), raw)
         out["provenance"] = provenance
@@ -57142,7 +60126,7 @@ def apply_series_library_migration(
             updated = con.execute(
                 """
                 update series
-                set media_type=?,library_root=?,library_path=?,library_path_source='user',
+                set media_type=?,media_type_source='user',library_root=?,library_path=?,library_path_source='user',
                     library_adapter_path=null,raw_json=?,updated_at=?
                 where id=? and coalesce(raw_json,'')=? and coalesce(library_path,'')=?
                 """,
@@ -57399,6 +60383,8 @@ def series_detail_contract(db_path, series_id, recent_limit=20):
         "monitor_new": bool(item.get("monitor_new")),
         "auto_grab": bool(item.get("auto_grab")),
         "removed_by_user": removed,
+        "edition_indifferent_override": bool(item.get("edition_indifferent_override")),
+        "collected_singleton_proof": bool(item.get("collected_singleton_proof")),
         "metadata": {
             "provider_id": item.get("metadata_provider"),
             "provider_item_id": item.get("metadata_id"),
@@ -57774,6 +60760,388 @@ def wanted_compact_rows(db_path, limit=80, statuses=None, provider_status_filter
             rows = con.execute(select_sql, (*params, limit, offset)).fetchall()
         provider_health = latest_provider_health_map(con)
         return [wanted_row_from_record(row, provider_health) for row in rows]
+
+
+RELIABILITY_STAGE_ORDER = ("searched", "found", "grabbed", "downloading", "importing", "verified")
+
+RELIABILITY_STAGE_LABELS = {
+    "searched": "Searched",
+    "found": "Found",
+    "grabbed": "Grabbed",
+    "downloading": "Downloading",
+    "importing": "Importing",
+    "verified": "Verified",
+}
+
+# Kept intentionally distinct from queue_wait_reason_key()'s vocabulary
+# (core/inkdrop_state.py's queue_wait_reason_from_values) -- these are the
+# exact buckets the 2026-08-11 Wanted-backlog audit found by hand (see
+# inkdrop_wanted_backlog_throughput_audit_20260811 memory / PR #502) and are
+# meant to stay mutually exclusive and sum to the item universe, which the
+# generic cause taxonomy does not guarantee.
+RELIABILITY_BUCKET_ORDER = (
+    "manual_review_needed",
+    "import_recheck_loop",
+    "known_bad_blocked",
+    "budget_starved",
+    "actively_processing",
+    "no_source_found_yet",
+    "other",
+)
+
+RELIABILITY_BUCKET_LABELS = {
+    "manual_review_needed": "Needs manual review",
+    "import_recheck_loop": "Import recheck loop",
+    "known_bad_blocked": "Known-bad blocked",
+    "budget_starved": "Budget-starved",
+    "actively_processing": "Actively processing",
+    "no_source_found_yet": "No source found yet",
+    "other": "Other",
+}
+
+RELIABILITY_DEFAULT_STATUSES = ("blocked", "in_progress", "wanted", "grabbed")
+
+_RELIABILITY_KNOWN_BAD_STATUSES = {"known_bad_source_candidate", "known_bad_candidate_skipped"}
+
+_RELIABILITY_RECHECK_MESSAGE_NEEDLE = "a recheck could not confirm this import"
+
+# Three real message shapes observed live (verified against production
+# 2026-08-11/12, not guessed): runtime_budget_skip_reason()'s detailed
+# per-source string ("runtime budget has X left; Y needs about Z"), the
+# generic per-pass message mark_budget_retry()/inkdrop_series_autopilot.py
+# write straight to queue_items.last_event ("autopilot runtime budget
+# reached; retry scheduled for the next pass" -- 7/7 live budget-flagged
+# queue rows used this exact shape, none used the detailed one), and the
+# scheduler-level "did not start before the worker runtime budget" text
+# (inkdrop_source_worker_scheduler.py / the Suwayomi finding in
+# inkdrop_wanted_backlog_throughput_audit_20260811). This mirrors the
+# existing, already-battle-tested source_attempt_did_not_run() classifier in
+# inkdrop_state_view_public() (core/inkdrop_web.py) rather than inventing a
+# fourth pattern.
+_RELIABILITY_BUDGET_DETAIL_RE = re.compile(
+    r"runtime budget has (?P<remaining>[^;]+) left;\s*(?P<source>.+?) needs about (?P<minimum>.+?)\.?$",
+    re.IGNORECASE,
+)
+_RELIABILITY_BUDGET_NEEDLES = (
+    "autopilot runtime budget reached",
+    "runtime budget has",
+    "did not start before the worker runtime budget",
+)
+_RELIABILITY_BUDGET_STATUS_VALUES = {"source_runtime_budget_skipped"}
+
+
+def relative_time_label(seconds_ago):
+    # Deliberately its own tiny formatter rather than autopilot's duration_label()
+    # (minutes/seconds only, meant for "budget remaining") -- this needs
+    # hours/days for "last retried 6h ago"-style item reasons, and importing
+    # inkdrop_series_autopilot from here would be a circular import (autopilot
+    # already imports this module).
+    try:
+        seconds_ago = int(float(seconds_ago or 0))
+    except (TypeError, ValueError):
+        return ""
+    if seconds_ago < 0:
+        seconds_ago = 0
+    if seconds_ago < 90:
+        return "just now"
+    minutes = seconds_ago // 60
+    if minutes < 90:
+        return f"{minutes}m ago"
+    hours = seconds_ago // 3600
+    if hours < 36:
+        return f"{hours}h ago"
+    days = seconds_ago // 86400
+    return f"{days}d ago"
+
+
+def reliability_stage_for_item(queue_state, last_attempt_status, last_attempt_lifecycle_phase):
+    queue_state = str(queue_state or "").strip().lower()
+    if queue_state == "verified":
+        return "verified"
+    if queue_state == "importing":
+        return "importing"
+    if queue_state == "downloading":
+        return "downloading"
+    if queue_state == "source_wait":
+        # A candidate was matched and sent to the client/provider, just not
+        # transferring yet -- "grabbed, waiting to download".
+        return "grabbed"
+    lifecycle_phase = str(last_attempt_lifecycle_phase or "").strip().lower()
+    status = str(last_attempt_status or "").strip().lower()
+    if lifecycle_phase in {"downloading", "staged_or_importing", "verifying", "verified"} or status == "sent":
+        # A productive candidate exists but the queue row hasn't advanced past
+        # it yet (transient) -- matches source_attempt_outcome()'s productive
+        # lifecycle_phase set.
+        return "found"
+    return "searched"
+
+
+def _reliability_known_bad_signal(last_attempt_status, last_attempt_failure_reason):
+    status = str(last_attempt_status or "").strip().lower()
+    failure_reason = str(last_attempt_failure_reason or "").strip().lower()
+    return status in _RELIABILITY_KNOWN_BAD_STATUSES or failure_reason in _RELIABILITY_KNOWN_BAD_STATUSES
+
+
+def _reliability_budget_signal(last_event, last_attempt_status=None, last_attempt_display_phase=None, last_attempt_failure_reason=None):
+    if str(last_attempt_status or "").strip().lower() in _RELIABILITY_BUDGET_STATUS_VALUES:
+        return True
+    if str(last_attempt_display_phase or "").strip().lower() in _RELIABILITY_BUDGET_STATUS_VALUES:
+        return True
+    combined = " ".join(
+        str(value or "").strip().lower()
+        for value in (last_event, last_attempt_failure_reason)
+        if value
+    )
+    return any(needle in combined for needle in _RELIABILITY_BUDGET_NEEDLES)
+
+
+def _reliability_recheck_signal(queue_state, last_event):
+    return (
+        str(queue_state or "").strip().lower() == "searching"
+        and _RELIABILITY_RECHECK_MESSAGE_NEEDLE in str(last_event or "").strip().lower()
+    )
+
+
+def reliability_bucket_for_item(row):
+    queue_state = str(row.get("queue_state") or "").strip().lower()
+    last_event = row.get("last_event") or ""
+    if queue_state in {"needs_you", "failed", "blocked"}:
+        return "manual_review_needed"
+    if _reliability_recheck_signal(queue_state, last_event):
+        return "import_recheck_loop"
+    if queue_state in {"queued", "searching", ""} and _reliability_known_bad_signal(
+        row.get("last_attempt_status"), row.get("last_attempt_failure_reason")
+    ):
+        return "known_bad_blocked"
+    if queue_state in {"queued", "searching", ""} and _reliability_budget_signal(
+        last_event,
+        row.get("last_attempt_status"),
+        row.get("last_attempt_display_phase"),
+        row.get("last_attempt_failure_reason"),
+    ):
+        return "budget_starved"
+    if queue_state in {"searching", "downloading", "importing", "source_wait"}:
+        return "actively_processing"
+    if queue_state in {"queued", ""}:
+        return "no_source_found_yet"
+    return "other"
+
+
+def reliability_item_reason(bucket, row, now):
+    queue_state = row.get("queue_state")
+    last_event = str(row.get("last_event") or "").strip()
+    attempt_count = int(row.get("attempt_count") or 0)
+
+    def ago_from(ts):
+        try:
+            ts = float(ts)
+        except (TypeError, ValueError):
+            return ""
+        if not ts:
+            return ""
+        return relative_time_label(now - ts)
+
+    if bucket == "known_bad_blocked":
+        ago = ago_from(row.get("last_attempt_completed_at") or row.get("last_attempt_started_at"))
+        suffix = f", last retried {ago}" if ago else ""
+        return f"Blocked: known-bad candidate{suffix}."
+    if bucket == "budget_starved":
+        detail_text = last_event or str(row.get("last_attempt_failure_reason") or "").strip()
+        match = _RELIABILITY_BUDGET_DETAIL_RE.search(detail_text)
+        if match:
+            source = match.group("source").strip().rstrip(".")
+            remaining = match.group("remaining").strip()
+            minimum = match.group("minimum").strip().rstrip(".")
+            return f"Budget-starved: {source} didn't get a search slot this cycle ({remaining} left, needed {minimum})."
+        if "did not start before the worker runtime budget" in detail_text.lower():
+            return f"Budget-starved: {detail_text.rstrip('.')}."
+        return "Budget-starved: the runtime budget ran out this cycle before this item's next source could run; InkDrop will retry next pass."
+    if bucket == "import_recheck_loop":
+        ago = ago_from(row.get("queue_updated_at"))
+        suffix = f" (searching again since {ago})" if ago else " Searching again."
+        return f"Recheck could not confirm this import.{suffix}"
+    if bucket == "manual_review_needed":
+        return last_event or "Needs manual review."
+    if bucket == "actively_processing":
+        return last_event or f"In progress ({queue_state})."
+    if bucket == "no_source_found_yet":
+        # Prefer the real recorded event over a synthesized claim -- last_event
+        # sometimes says candidates *are* available and autopick is pending,
+        # which "no safe candidate matched" would misstate.
+        if last_event:
+            return last_event
+        if attempt_count:
+            return f"Queued -- no source has converted to a grab yet, after {compact_count(attempt_count)} attempt{'s' if attempt_count != 1 else ''}."
+        return "No source found yet -- search hasn't run for this item yet."
+    return last_event or "Queued."
+
+
+def _reliability_source_rows_sql(where_sql):
+    return f"""
+        select w.id as wanted_id, w.series_id, w.issue_id, w.status as wanted_status,
+               w.created_at as wanted_created_at, w.updated_at as wanted_updated_at,
+               s.title as series, s.media_type,
+               i.issue_number, i.title as issue_title,
+               q.id as queue_id, q.state as queue_state, q.current_source, q.last_event,
+               q.active as queue_active, q.updated_at as queue_updated_at,
+               (select count(*) from source_attempts sa2 where sa2.wanted_id = w.id) as attempt_count,
+               la.id as last_attempt_id,
+               la.status as last_attempt_status,
+               la.failure_reason as last_attempt_failure_reason,
+               la.lifecycle_phase as last_attempt_lifecycle_phase,
+               la.display_phase as last_attempt_display_phase,
+               la.source as last_attempt_source,
+               la.completed_at as last_attempt_completed_at,
+               la.started_at as last_attempt_started_at
+        from wanted_items w
+        left join series s on s.id = w.series_id
+        left join issues i on i.id = w.issue_id
+        left join queue_items q on q.id = (
+            -- A handful of wanted_items carry more than one queue_items row
+            -- (a superseded_duplicate left behind alongside its replacement,
+            -- both with the same wanted_id) -- a plain q.wanted_id = w.id
+            -- join fans those out, double-counting the item in every rollup
+            -- bucket. Confirmed live 2026-08-12: 5 wanted_items had >1 queue
+            -- row; picking active=1 first (else most-recently-updated) drops
+            -- that to zero without ever excluding a legitimately single-row
+            -- item.
+            select q2.id
+            from queue_items q2
+            where q2.wanted_id = w.id
+            order by q2.active desc, q2.updated_at desc, q2.id desc
+            limit 1
+        )
+        left join source_attempts la on la.id = (
+            select sa.id
+            from source_attempts sa
+            where sa.wanted_id = w.id
+            order by coalesce(sa.completed_at, sa.started_at, 0) desc, sa.id desc
+            limit 1
+        )
+        {where_sql}
+        order by coalesce(q.updated_at, w.updated_at, w.created_at, 0) desc, w.id desc
+    """
+
+
+def reliability_view_rows(db_path, statuses=None, now=None):
+    """Lean per-item rows (lifecycle stage + reliability bucket + reason) for
+    every wanted/in-progress item -- the same underlying tables the Attempts
+    panel (PR #212) and the Wanted-backlog audit (PR #502) used, projected for
+    this diagnostic. Not paginated at the SQL level: the true-Wanted universe
+    is a few thousand rows (~2,053 at last measurement), small enough to scan
+    in Python once and then bucket/paginate in memory, same tradeoff
+    bad_source_candidate_rollup() and queue_wait_reason_rollup() already make
+    for their own rollups.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return []
+    now = float(now) if now is not None else time.time()
+    status_values = [str(value).strip().lower() for value in (statuses or RELIABILITY_DEFAULT_STATUSES) if str(value or "").strip()]
+    clauses = []
+    params = []
+    if status_values:
+        clauses.append("w.status in ({})".format(",".join("?" for _ in status_values)))
+        params.extend(status_values)
+    where = f"where {' and '.join(clauses)}" if clauses else ""
+    select_sql = _reliability_source_rows_sql(where)
+    with connect_read(db_path) as con:
+        rows = con.execute(select_sql, params).fetchall()
+    out = []
+    for row in rows:
+        item = {
+            "wanted_id": row["wanted_id"],
+            "series_id": row["series_id"],
+            "issue_id": row["issue_id"],
+            "wanted_status": row["wanted_status"],
+            "wanted_created_at": row["wanted_created_at"],
+            "wanted_updated_at": row["wanted_updated_at"],
+            "series": row["series"],
+            "media_type": row["media_type"],
+            "issue_number": row["issue_number"],
+            "issue_title": row["issue_title"],
+            "queue_id": row["queue_id"],
+            "queue_state": row["queue_state"],
+            "current_source": row["current_source"],
+            "last_event": row["last_event"],
+            "queue_active": bool(row["queue_active"]) if row["queue_active"] is not None else False,
+            "queue_updated_at": row["queue_updated_at"],
+            "attempt_count": int(row["attempt_count"] or 0),
+            "last_attempt_id": row["last_attempt_id"],
+            "last_attempt_status": row["last_attempt_status"],
+            "last_attempt_failure_reason": row["last_attempt_failure_reason"],
+            "last_attempt_lifecycle_phase": row["last_attempt_lifecycle_phase"],
+            "last_attempt_display_phase": row["last_attempt_display_phase"],
+            "last_attempt_source": row["last_attempt_source"],
+            "last_attempt_completed_at": row["last_attempt_completed_at"],
+            "last_attempt_started_at": row["last_attempt_started_at"],
+        }
+        item["stage"] = reliability_stage_for_item(
+            item["queue_state"], item["last_attempt_status"], item["last_attempt_lifecycle_phase"]
+        )
+        item["stage_label"] = RELIABILITY_STAGE_LABELS.get(item["stage"], item["stage"])
+        item["bucket"] = reliability_bucket_for_item(item)
+        item["bucket_label"] = RELIABILITY_BUCKET_LABELS.get(item["bucket"], item["bucket"])
+        item["reason"] = reliability_item_reason(item["bucket"], item, now)
+        out.append(item)
+    return out
+
+
+def reliability_rollup(items):
+    counts = {key: 0 for key in RELIABILITY_BUCKET_ORDER}
+    for item in items:
+        bucket = item.get("bucket") or "other"
+        counts[bucket] = counts.get(bucket, 0) + 1
+    return {
+        "total": len(items),
+        "buckets": [
+            {"key": key, "label": RELIABILITY_BUCKET_LABELS.get(key, key), "count": counts.get(key, 0)}
+            for key in RELIABILITY_BUCKET_ORDER
+        ],
+        "by_bucket": counts,
+    }
+
+
+def reliability_state_view(db_path, limit=80, offset=0, statuses=None, bucket_filter=None, focus=None):
+    path = Path(db_path)
+    if not path.exists():
+        return {"ok": False, "reason": "state_db_missing", "view": "reliability", "db_path": str(path)}
+    limit = max(1, min(int(limit or 80), 500))
+    try:
+        offset = max(0, min(int(offset or 0), 1000000))
+    except (TypeError, ValueError):
+        offset = 0
+    bucket_filter = str(bucket_filter or "").strip().lower()
+    if bucket_filter not in RELIABILITY_BUCKET_ORDER:
+        bucket_filter = ""
+    now = time.time()
+    items = reliability_view_rows(path, statuses=statuses, now=now)
+    rollup = reliability_rollup(items)
+    filtered = [item for item in items if not bucket_filter or item.get("bucket") == bucket_filter]
+    total_count = len(filtered)
+    page = filtered[offset:offset + limit]
+    return {
+        "ok": True,
+        "view": "reliability",
+        "summary": {
+            "ok": True,
+            "db_path": str(path),
+            "generated_at": now,
+            **rollup,
+        },
+        "count": len(page),
+        "loaded_count": len(page),
+        "total_count": total_count,
+        "has_more": total_count > offset + len(page),
+        "limit": limit,
+        "offset": offset,
+        "rows": page,
+        "db_path": str(path),
+        "focus": normalize_focus_entities(focus),
+        "focused": False,
+        "bucket_filter": bucket_filter,
+        "stages": [{"key": key, "label": RELIABILITY_STAGE_LABELS[key]} for key in RELIABILITY_STAGE_ORDER],
+    }
 
 
 def wanted_item(db_path, wanted_id):
@@ -58889,8 +62257,12 @@ def apply_manga_import_migration(
                 validation_errors.append("current_path_required")
             if not str(planned_path):
                 validation_errors.append("planned_path_required")
-            current_norm = str(current_path).replace("\\", "/").lower()
-            if "/downloads/" in current_norm and not allow_downloads_source:
+            # A literal "/downloads/" substring match misses any install whose
+            # qBittorrent save path doesn't happen to contain that word (e.g.
+            # /data/torrents/comics); check the actual configured
+            # download-client root instead so this gate can't be silently
+            # bypassed by a non-default save path.
+            if inkdrop_runtime_config.path_is_download_client_owned(current_path) and not allow_downloads_source:
                 validation_errors.append("downloads_source_requires_allow_downloads_source")
             if validation_errors:
                 ok = False
@@ -59326,6 +62698,7 @@ SOURCE_PROVIDER_FILTERS = {
 
 SOURCE_PROVIDER_CAPABILITIES = {
     "comicvine": ("metadata", "series search", "issue sync"),
+    "metron": ("metadata", "series search", "issue catalog"),
     "mangadex": ("download_source", "manga search/download", "chapter catalog and direct download"),
     "kapowarr": ("metadata adapter", "legacy bridge"),
     "prowlarr": ("indexer search", "torrent/usenet candidates"),
@@ -59346,6 +62719,7 @@ SOURCE_PROVIDER_CAPABILITIES = {
 
 SOURCE_PROVIDER_ROLES = {
     "comicvine": "Primary metadata source",
+    "metron": "Fallback metadata source",
     "mangadex": "Manga metadata and direct download",
     "kapowarr": "Temporary metadata adapter",
     "prowlarr": "Indexer source",
@@ -59366,6 +62740,7 @@ SOURCE_PROVIDER_ROLES = {
 
 SOURCE_PROVIDER_CONSUMERS = {
     "comicvine": ("Add Series", "Metadata sync"),
+    "metron": ("Add Series search",),
     "mangadex": ("Add Series search", "MangaDex feed", "MangaDex direct downloader"),
     "kapowarr": ("Adapter sync", "Legacy fallback"),
     "prowlarr": ("Autopilot", "Failed retry", "Download clients"),
@@ -60211,7 +63586,9 @@ def cached_source_provider_rows(db_path):
     db_path = Path(db_path)
     cache_key = str(db_path)
     now = time.time()
-    cached = SOURCE_PROVIDER_VIEW_CACHE.get(cache_key)
+    with SETTINGS_CACHE_LOCK:
+        cached = SOURCE_PROVIDER_VIEW_CACHE.get(cache_key)
+        generation = SETTINGS_CACHE_GENERATION
     if (
         isinstance(cached, dict)
         and cached.get("rows") is not None
@@ -60227,7 +63604,9 @@ def cached_source_provider_rows(db_path):
             provider_queue_impact = provider_queue_impact_snapshot(con)
             provider_recommendations = source_provider_recommendation_snapshot(con)
         rows = source_provider_rows_from_snapshot(snapshot, provider_health, provider_queue_impact, provider_recommendations)
-    SOURCE_PROVIDER_VIEW_CACHE[cache_key] = {"ts": time.time(), "rows": clone_jsonish(rows)}
+    with SETTINGS_CACHE_LOCK:
+        if SETTINGS_CACHE_GENERATION == generation:
+            SOURCE_PROVIDER_VIEW_CACHE[cache_key] = {"ts": time.time(), "rows": clone_jsonish(rows)}
     return rows
 
 
@@ -60965,8 +64344,8 @@ def backfill_history_event_activity_columns(con, batch_size=1000, limit=None):
             with target as (
                 select id
                 from history_events
-                where nullif(trim(coalesce(outcome, '')), '') is null
-                   or nullif(trim(coalesce(display_phase, '')), '') is null
+                where outcome is null or trim(outcome) = ''
+                   or display_phase is null or trim(display_phase) = ''
                 order by created_at desc, id desc
                 limit ?
             )
@@ -61884,10 +65263,32 @@ def history_filter_options(db_path, exact_download_count=True):
     return options
 
 
+HISTORY_VIEW_SUMMARY_CACHE = {}
+HISTORY_VIEW_SUMMARY_TTL_SECONDS = 20
+
+
 def history_view_summary(db_path):
+    # Called on every History page load, page turn, filter switch and search
+    # keystroke (history_state_view's only caller) with no cache at all --
+    # nine table_count()/group-by queries re-run against a 1.5M+ row
+    # history_events table on a 40GB+ production database every time,
+    # including the plain "how many events exist" count nothing in the UI
+    # currently displays (History's own masthead deliberately shows no
+    # stats; the nav badge and System page read a separate, already-cached
+    # core summary instead). Same bounded-age tradeoff as
+    # state_view_operational_table_summary: this is a background stat
+    # bundle, not the row data, which the caller always fetches fresh.
     path = Path(db_path)
     if not path.exists():
         return {"ok": False, "reason": "state_db_missing", "db_path": str(path)}
+    cache_key = str(path)
+    cached = HISTORY_VIEW_SUMMARY_CACHE.get(cache_key)
+    cached_at = float(cached.get("ts") or 0) if cached else 0
+    if cached and time.time() - cached_at <= HISTORY_VIEW_SUMMARY_TTL_SECONDS:
+        hit = clone_jsonish(cached.get("summary"))
+        if isinstance(hit, dict):
+            hit["summary_cache_age_seconds"] = round(time.time() - cached_at, 1)
+        return hit
     try:
         mtime_ns = path.stat().st_mtime_ns
     except OSError:
@@ -61930,6 +65331,7 @@ def history_view_summary(db_path):
             "provider_configs": table_count(con, "provider_configs"),
             "app_settings": table_count(con, "app_settings"),
         }
+    HISTORY_VIEW_SUMMARY_CACHE[cache_key] = {"summary": summary, "ts": time.time()}
     return summary
 
 
@@ -62613,18 +66015,19 @@ def state_view_summary(db_path, scope=STATE_SUMMARY_SCOPE_FULL):
     cache_key = f"{path}::{scope}"
     now = time.time()
     with STATE_SUMMARY_CACHE_LOCK:
-        cached = STATE_VIEW_SUMMARY_CACHE.get("summary")
-        cached_at = float(STATE_VIEW_SUMMARY_CACHE.get("ts") or 0)
-        cached_key = STATE_VIEW_SUMMARY_CACHE.get("db_path")
+        slot = STATE_VIEW_SUMMARY_CACHE.get(cache_key)
+        cached = slot.get("summary") if isinstance(slot, dict) else None
+        cached_at = float(slot.get("ts") or 0) if isinstance(slot, dict) else 0.0
     if (
         isinstance(cached, dict)
         and cached.get("ok")
-        and cached_key == cache_key
         and now - cached_at <= STATE_VIEW_SUMMARY_TTL_SECONDS
     ):
         out = clone_jsonish(cached)
         out["summary_cache"] = "hit"
         out["summary_cache_age_seconds"] = round(now - cached_at, 3)
+        diag_ts = out.get("queue_diagnostic_cache_ts")
+        out["queue_diagnostic_cache_age_seconds"] = round(max(0.0, now - diag_ts), 3) if diag_ts is not None else None
         return out
 
     def _summary():
@@ -62690,9 +66093,11 @@ def state_view_summary(db_path, scope=STATE_SUMMARY_SCOPE_FULL):
                 "queue_throughput_stale_active_items": queue_throughput["queue_throughput_stale_active_items"],
                 }
             source_attempts = source_attempt_count_from_connection(con)
+            queue_diagnostic_cache_ts = _queue_diagnostic_rollup_cache_min_ts(con) if scope != STATE_SUMMARY_SCOPE_COUNTS else None
             return {
                 "ok": True,
                 "summary_scope": scope,
+                "queue_diagnostic_cache_ts": queue_diagnostic_cache_ts,
                 "schema_version": int(meta.get("schema_version") or SCHEMA_VERSION),
                 "last_sync_at": float(meta["last_sync_at"]) if meta.get("last_sync_at") else None,
                 "last_sync_at_iso": meta.get("last_sync_at_iso"),
@@ -62721,8 +66126,14 @@ def state_view_summary(db_path, scope=STATE_SUMMARY_SCOPE_FULL):
                 "review_exceptions_by_state": review_rows,
                 "manual_review_actionable_count": sum(int(review_rows.get(state) or 0) for state in ("needs_you", "failed", "blocked")),
                 "manual_review_parked_count": int(review_rows.get("provider_wait") or 0),
-                "history_events": table_count(con, "history_events"),
-                "history_count": table_count(con, "history_events"),
+                # No history_events/history_count here on purpose: this summary
+                # backs Queue/Wanted/Manual Review page loads plus the Core
+                # Overview drawer, none of which render a history total -- the
+                # History page's own view (history_view_summary) counts that
+                # table itself when it actually needs it. This was previously
+                # a full count(*) over history_events (1.8M+ rows and growing)
+                # run twice (identical query, two keys) on every one of those
+                # page loads for a number nothing displayed.
                 "provider_configs": table_count(con, "provider_configs"),
                 "app_settings": table_count(con, "app_settings"),
                 **provider_health,
@@ -62763,12 +66174,13 @@ def state_view_summary(db_path, scope=STATE_SUMMARY_SCOPE_FULL):
     if isinstance(summary, dict) and summary.get("ok"):
         summary["summary_cache"] = "miss"
         summary["summary_cache_age_seconds"] = 0
+        diag_ts = summary.get("queue_diagnostic_cache_ts")
+        summary["queue_diagnostic_cache_age_seconds"] = round(max(0.0, time.time() - diag_ts), 3) if diag_ts is not None else None
         with STATE_SUMMARY_CACHE_LOCK:
-            STATE_VIEW_SUMMARY_CACHE.update({
-                "db_path": cache_key,
+            STATE_VIEW_SUMMARY_CACHE[cache_key] = {
                 "ts": time.time(),
                 "summary": clone_jsonish(summary),
-            })
+            }
     return summary
 
 
@@ -62808,7 +66220,15 @@ def state_view_operational_table_summary(db_path, view=None):
             review_rows = review_exception_state_counts(con)
             meta = {row["key"]: row["value"] for row in con.execute("select key, value from schema_meta")}
             retry = queue_retry_rollup(con)
-            download_tasks = download_task_rollup(con)
+            # No view at all means a caller that wants the whole summary and
+            # did not say which page it is for; that one keeps the breakdown.
+            # Only a named view that is known not to render it opts out.
+            download_tasks = download_task_rollup(
+                con,
+                classify_problems=(
+                    not view_key or view_key in DOWNLOAD_TASK_PROBLEM_SUMMARY_VIEWS
+                ),
+            )
             provider_health = provider_health_rollup(con, limit=4)
 
             _filter, states = queue_filter_states("all")
@@ -62873,8 +66293,14 @@ def state_view_operational_table_summary(db_path, view=None):
                 "review_exceptions_by_state": review_rows,
                 "manual_review_actionable_count": sum(int(review_rows.get(state) or 0) for state in ("needs_you", "failed", "blocked")),
                 "manual_review_parked_count": int(review_rows.get("provider_wait") or 0),
-                "history_events": table_count(con, "history_events"),
-                "history_count": table_count(con, "history_events"),
+                # No history_events/history_count here on purpose: this summary
+                # backs Queue/Wanted/Manual Review page loads plus the Core
+                # Overview drawer, none of which render a history total -- the
+                # History page's own view (history_view_summary) counts that
+                # table itself when it actually needs it. This was previously
+                # a full count(*) over history_events (1.8M+ rows and growing)
+                # run twice (identical query, two keys) on every one of those
+                # page loads for a number nothing displayed.
                 "provider_configs": table_count(con, "provider_configs"),
                 "app_settings": table_count(con, "app_settings"),
                 **provider_health,
@@ -63006,6 +66432,7 @@ COMPACT_STATE_VIEW_SUMMARY_KEYS = {
     "db_path",
     "summary_cache",
     "summary_cache_age_seconds",
+    "queue_diagnostic_cache_age_seconds",
     "summary_scope",
     "series",
     "issues",
@@ -63149,6 +66576,22 @@ OPERATOR_SECTION_SUMMARY_DROP_KEYS = {
 # visible, recoverable mistake. The reverse default would silently hand every
 # new view the multi-second rollups, which is how this cost spread in the
 # first place.
+# Views that render a transfer-problem number, and so have to pay for the
+# per-row classification behind it. Same allowlist shape, and for the same
+# reason, as QUEUE_ANALYTICS_SUMMARY_VIEWS above: a view left off this list
+# loads fast and shows one fewer chip, which someone will notice and can undo;
+# a denylist would hand every new view a second of rollup nobody asked for.
+#   queue          -- renders the "transfer problems" section chip
+#   sections       -- backs the Downloads nav badge and masthead card
+#   download_tasks -- renders the full by-reason/by-scope breakdown
+#   dashboard      -- the whole-summary consumer
+DOWNLOAD_TASK_PROBLEM_SUMMARY_VIEWS = {
+    "queue",
+    "sections",
+    "download_tasks",
+    "dashboard",
+}
+
 QUEUE_ANALYTICS_SUMMARY_VIEWS = {
     "queue",
     "queue_diagnostics",
@@ -63226,6 +66669,7 @@ SERIES_COMPACT_ROW_KEYS = {
     "year",
     "publisher",
     "image",
+    "edition_indifferent_override",
     "description",
     "deck",
     "site_url",
@@ -63507,6 +66951,7 @@ ISSUE_COMPACT_ROW_KEYS = {
 
 
 MANUAL_REVIEW_COMPACT_ROW_KEYS = QUEUE_COMPACT_ROW_KEYS | {
+    "revision",
     "review_id",
     "origin",
     "source",
@@ -65279,13 +68724,6 @@ def managed_folder_artifact_semantic_guard(path, series_row, issue_row):
         "comicinfo_evidence": comicinfo,
         "reason": reason,
     }
-
-
-def readiness_file_matches_issue(path, issue_row, *, require_issue_number=True):
-    wanted_keys = issue_number_keys(issue_row.get("issue_number") or issue_row.get("normalized_number"))
-    if not wanted_keys:
-        return not require_issue_number
-    return bool(wanted_keys & issue_number_keys_in_text(Path(path).name))
 
 
 def readiness_managed_folder_index(folder, scan_limit=1000):
@@ -68980,6 +72418,14 @@ def state_view(db_path, view, limit=80, source_filter=None, provider_filter=None
             row_mode=row_mode,
             focus=focus,
         )
+    if key in ("reliability", "acquisition_reliability", "acquisition-reliability", "reliability_view", "reliability-view"):
+        return reliability_state_view(
+            db_path,
+            limit=limit,
+            offset=offset,
+            bucket_filter=source_filter,
+            focus=focus,
+        )
     if key in ("source_memory", "bad_source_candidates", "bad-sources", "bad_sources", "bad-source-candidates"):
         path = Path(db_path)
         if not path.exists():
@@ -69097,8 +72543,15 @@ def state_view(db_path, view, limit=80, source_filter=None, provider_filter=None
     # reaching this code at all -- see history_state_view() and the early
     # "source_memory" branch for their own, separate offset fixes.)
     operational_query = key in {"queue", "wanted", "manual_review"} and not focus and (offset > 0 or sort_key != "default")
+    # download_tasks used to always fall through to the full-scope summary
+    # below (queue_backlog_rollup + the unindexable LIKE-scan in
+    # queue_provider_timeout_pressure_rollup, ~5-8s measured against
+    # production) even though state_view_operational_table_summary already
+    # computes everything it needs via download_task_rollup. It only missed
+    # the fast path because the frontend never requested a compact row mode
+    # for this view -- see inkdropSectionEndpoint's rows="compact" branch.
     operational_table_summary = (
-        key in {"queue", "wanted", "manual_review"}
+        key in {"queue", "wanted", "manual_review", "download_tasks"}
         and summary_mode_key in {"compact", "minimal"}
         and row_mode_key in COMPACT_ROW_MODES
     )

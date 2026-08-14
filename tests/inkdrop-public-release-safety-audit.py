@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_FILES = (
     "README.md",
     "Dockerfile",
+    "inkdrop-docker-entrypoint.sh",
     "docker-compose.yml",
     ".env.example",
     ".dockerignore",

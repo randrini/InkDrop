@@ -282,6 +282,20 @@ def main() -> int:
                 inkdrop_runtime_config.state_db_path(),
                 batch_size=100,
             )
+            # Two more small, separate transactions after the main queue sync
+            # released its write lock -- same pattern as the two steps above.
+            # Revival runs before parking so an item that just crossed the
+            # awaiting_release threshold still gets its next chance on the
+            # very next revival window rather than being immediately eligible
+            # to park again in the same pass.
+            result["wanted_release_revival"] = inkdrop_state.sweep_wanted_release_revival(
+                inkdrop_runtime_config.state_db_path(),
+                limit=200,
+            )
+            result["wanted_awaiting_release"] = inkdrop_state.sweep_wanted_awaiting_release(
+                inkdrop_runtime_config.state_db_path(),
+                limit=200,
+            )
     except sqlite3.OperationalError as exc:
         if not inkdrop_state.is_database_locked_error(exc):
             raise

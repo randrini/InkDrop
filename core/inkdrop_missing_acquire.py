@@ -37,6 +37,7 @@ from core import inkdrop_internal_jobs
 from core import inkdrop_artifact_acceptance
 from core import inkdrop_manga_unit_policy
 from core import inkdrop_manual_search
+from core import inkdrop_sources
 
 try:
     from core import inkdrop_language
@@ -1017,7 +1018,12 @@ def mark_pack_identity_in_flight(actions, review_id, item, candidate=None, statu
 
 
 def normalize(text):
-    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    # Fold "&" / "&amp;" to "and" before stripping non-alphanumerics -- see
+    # core/inkdrop_completed_import.py's clean_words() for the root cause.
+    # A bare title-symbol strip drops "&" entirely, so "Love & Rockets" and
+    # "Love and Rockets" tokenize to different word sequences here too.
+    text = (text or "").lower().replace("&amp;", " and ").replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def normalize_pack_archive_title(text):
@@ -1174,18 +1180,34 @@ def creator_possessive_title_variants(title):
     if not text:
         return []
     match = re.match(
-        r"^(?:[A-Z][\w.\-]+(?:\s+[A-Z][\w.\-]+){0,3})['’]s\s+(.+)$",
+        r"^([A-Z][\w.\-]+(?:\s+[A-Z][\w.\-]+){0,3})['’]s\s+(.+)$",
         text,
     )
     if not match:
         return []
-    remainder = re.sub(r"\s+", " ", match.group(1).strip())
+    creator_prefix = re.sub(r"\s+", " ", match.group(1).strip())
+    prefix_words = re.findall(r"[a-z0-9]+", creator_prefix.lower())
+    # A one-token prefix is commonly the title's actual subject (Assassin's
+    # Creed, Hell's Paradise, Marvel's Voices), not a credited person's name
+    # -- promoting the remainder as a standalone alias would waste a search
+    # slot on a false title. Same guard as slskd_source_probe.py's copy of
+    # this function.
+    if len(prefix_words) < 2 or prefix_words[0] in {"a", "an", "the"}:
+        return []
+    remainder = re.sub(r"\s+", " ", match.group(2).strip())
     if not remainder:
         return []
     words = re.findall(r"[a-z0-9]+", remainder.lower())
-    if len(words) < 2 and not re.match(r"^\d", remainder):
-        return []
-    return [remainder]
+    if len(words) >= 2 or re.match(r"^\d", remainder):
+        return [remainder]
+    # A single-word remainder is still a plausible standalone title --
+    # "Naoki Urasawa's Monster" is exactly this shape, and real uploads are
+    # commonly filed as "Monster", never under the creator credit -- but a
+    # short one is too likely to be an unrelated common word, so only trust
+    # it starting at a modest length. Same threshold as the slskd copy.
+    if words and len(words[0]) >= 4:
+        return [remainder]
+    return []
 
 
 def leading_article_title_variants(title):
@@ -1200,8 +1222,21 @@ def leading_article_title_variants(title):
 
 
 def expanded_search_titles(title, alt_titles=()):
+    seed_names = [title, *(alt_titles or [])]
+    # Metadata titles are commonly filed as "Work by Creator" (contributor
+    # byline) or "Qualified Edition: Subtitle" (collected-edition subtitle),
+    # while real provider uploads use the bare work title. inkdrop_sources's
+    # contributor_title_aliases()/collected_title_aliases() are the shared,
+    # canonical helpers that already strip these forms for the SLSKD/source
+    # worker path (see inkdrop_slskd_source_probe.source_title_variants());
+    # calling them here keeps this file's Prowlarr query builder on the same
+    # identity rules instead of re-deriving a narrower, drifting copy.
+    alias_names = []
+    for name in seed_names:
+        alias_names.extend(inkdrop_sources.contributor_title_aliases(name))
+        alias_names.extend(inkdrop_sources.collected_title_aliases(name))
     values = []
-    for name in [title, *(alt_titles or [])]:
+    for name in [*seed_names, *alias_names]:
         for article_variant in leading_article_title_variants(name):
             variants = stylized_x_title_variants(article_variant)
             values.extend(variants)
@@ -5183,6 +5218,13 @@ def _safe_exact_unit_suffix(value, *, allow_volume_reference=False):
         "digital", "retail", "official", "english", "eng", "hq", "hd",
         "web", "webdl", "scan", "scans", "fixed", "repack", "cbz", "cbr",
         "pdf", "epub", "jko", "fullcolor", "darkhorse",
+        # Known official English-language manga publisher/imprint credits --
+        # a release naming its own English publisher is stating provenance,
+        # not evidence of a multi-item pack (same rationale as "digital").
+        "viz", "vizmedia", "yenpress", "sevenseas", "sevenseasentertainment",
+        "kodanshausa", "kodanshacomics", "kodanshacomicsusa",
+        "darkhorsemanga", "squareenixmanga", "verticalcomics", "tokyopop",
+        "udonentertainment", "onepeacebooks", "denpa",
     }
     for group in re.findall(r"\(([^()]*)\)|\[([^\[\]]*)\]|\{([^{}]*)\}", suffix):
         content = next((part.strip() for part in group if part), "")
@@ -5200,6 +5242,25 @@ def _safe_exact_unit_suffix(value, *, allow_volume_reference=False):
             continue
         return False
     return True
+
+
+def _issue_number_decimal_suffix(issue_number):
+    """The exact post-decimal digit pattern for a fractional want, e.g.
+    "23.10" -> r"1(?:0)*" (matches "23.1" and "23.10" but not "23.15"), or
+    None when the want is a whole number (including "6.0").
+
+    Comics like Batman #23.1 are a genuinely distinct issue from #23, not a
+    loose variant of it -- see SEL-03 in the search/acquisition audit. A
+    twin copy of this exists in inkdrop_source_providers.py's
+    _indexer_title_has_wanted_number(), since that path replays candidates
+    against the same wanted number independently of this one."""
+    match = re.fullmatch(r"\s*0*(\d+)\.(\d+)\s*", str(issue_number or ""))
+    if not match:
+        return None
+    frac = match.group(2).rstrip("0")
+    if not frac:
+        return None
+    return re.escape(frac) + r"(?:0)*"
 
 
 def result_quality(
@@ -5317,13 +5378,31 @@ def result_quality(
     # Unattended grabs must match the exact series title followed immediately by
     # the requested issue/volume number. This rejects franchise-adjacent titles
     # like "Invincible Universe" or "The Invincible Red Sonja" for Invincible #1.
+    #
+    # The boundary after the number must not just reject another digit -- it
+    # must also reject a decimal point followed by a digit, or "#6" silently
+    # accepts "6.5" as an exact match (a real, separately-numbered issue, not
+    # a variant of #6). When the want itself is fractional (e.g. "23.1"),
+    # require that exact fractional suffix instead, so "#23.1" doesn't fall
+    # back to accepting a bare "#23".
+    # A dot immediately after the number is not always a decimal point --
+    # scene-style releases spell "<series>.<issue>.<year>.<group>" (e.g.
+    # "300.005.1998.Digital-Empire"), where the dot-year is release metadata,
+    # not a fractional continuation of the issue number. Only reject the dot
+    # when what follows it isn't a 4-digit year.
+    _decimal_suffix = _issue_number_decimal_suffix(issue_number)
+    _number_boundary = (
+        rf"\.{_decimal_suffix}(?![0-9])"
+        if _decimal_suffix
+        else r"(?![0-9])(?!\.(?!(?:19|20)\d{2}(?!\d))[0-9])"
+    )
     issue_patterns = [
-        rf"^\s*{series_pattern}[\W_]+#?\s*0*{n}([^0-9]|$)",
-        rf"^\s*{series_pattern}[\W_]+issue[\W_]+0*{n}([^0-9]|$)",
+        rf"^\s*{series_pattern}[\W_]+#?\s*0*{n}{_number_boundary}",
+        rf"^\s*{series_pattern}[\W_]+issue[\W_]+0*{n}{_number_boundary}",
     ]
     volume_patterns = [
-        rf"^\s*{series_pattern}[\W_]+v0*{n}([^0-9]|$)",
-        rf"^\s*{series_pattern}[\W_]+vol(?:ume)?\.?[\W_]+0*{n}([^0-9]|$)",
+        rf"^\s*{series_pattern}[\W_]+v0*{n}{_number_boundary}",
+        rf"^\s*{series_pattern}[\W_]+vol(?:ume)?\.?[\W_]+0*{n}{_number_boundary}",
     ]
     chapter_patterns = [
         rf"^\s*{series_pattern}[\W_]+chapter[\W_]+0*{n}([^0-9]|$)",
@@ -5402,6 +5481,36 @@ def format_preference_score(title):
     return sum(weight for pattern, weight in FORMAT_PREFERENCE_TERMS if pattern.search(text))
 
 
+ENGLISH_MANGA_PUBLISHER_TERMS = (
+    (re.compile(r"\bviz(?:\s*media)?\b", re.I), 150),
+    (re.compile(r"\byen\s*press\b", re.I), 150),
+    (re.compile(r"\bseven\s*seas(?:\s*entertainment)?\b", re.I), 150),
+    (re.compile(r"\bdark\s*horse\s*manga\b", re.I), 150),
+    (re.compile(r"\bsquare\s*enix\s*manga\b", re.I), 150),
+    (re.compile(r"\bkodansha\s*(?:usa|comics(?:\s*usa)?)\b", re.I), 150),
+    (re.compile(r"\bvertical\s*comics\b", re.I), 150),
+    (re.compile(r"\btokyopop\b", re.I), 150),
+    (re.compile(r"\budon\s*entertainment\b", re.I), 150),
+    (re.compile(r"\bone\s*peace\s*books\b", re.I), 150),
+    (re.compile(r"\bdenpa\b", re.I), 150),
+)
+
+
+def english_publisher_preference_score(title, is_manga, requires_english):
+    """Tiebreak among already-acceptable manga candidates, same shape as
+    format_preference_score() -- only nudges which already-acceptable
+    release wins when a search wants English, preferring a release that
+    names an official English-language publisher (VIZ, Yen Press, Seven
+    Seas, Kodansha USA, ...) over an otherwise-equal release that doesn't.
+    Comics and non-English searches score 0 -- this never excludes a
+    candidate, it only breaks ties among candidates that already passed
+    every identity/language gate."""
+    if not is_manga or not requires_english:
+        return 0
+    text = str(title or "")
+    return sum(weight for pattern, weight in ENGLISH_MANGA_PUBLISHER_TERMS if pattern.search(text))
+
+
 def acceptable_result(title, issue_number, result, is_manga=False, unit_model=None, quality_rules=None, wanted_unit_type=None):
     return result_quality(
         title, issue_number, result, is_manga, unit_model,
@@ -5423,11 +5532,13 @@ def choose_acceptable(title, issue_number, results, is_manga=False, unit_model=N
     ]
     if not eligible:
         return None
+    requires_english = language_rule_requires_english(quality_rules)
     selected = sorted(
         eligible,
         key=lambda r: (
             protocol_rank(r.get("protocol")),
             -format_preference_score(r.get("title")),
+            -english_publisher_preference_score(r.get("title"), is_manga, requires_english),
             -(r.get("seeders") or 0) if normalize_protocol_name(r.get("protocol")) == "torrent" else 0,
             r.get("size") or 0,
         ),

@@ -114,6 +114,7 @@ function Overview({ row }: { row: SeriesDetailRow }) {
   const metadata = useMemo(() => seriesDetailMetadata(row), [row]);
   const adapterBacked = row.ownership === "adapter";
   const libraryPath = row.library_path;
+  const metadataSourceLabel = sourceBucketLabel(row.metadata_provider || "comicvine") || "ComicVine";
   return (
     <div className="series-detail-overview" data-operator-control="series-detail-overview">
       <p className={`series-detail-description ${metadata.description ? "" : "missing"}`.trim()} title={metadata.description || undefined}>
@@ -124,7 +125,7 @@ function Overview({ row }: { row: SeriesDetailRow }) {
         <Fact label="Issues" value={metadata.issueCount ? compactNumber(metadata.issueCount) : ""} />
         <Fact label="Added" value={metadata.added} />
         <Fact label="Updated" value={metadata.updated} />
-        <Fact label="ComicVine" value={metadata.siteUrl ? "Open" : ""} href={metadata.siteUrl || undefined} />
+        <Fact label={metadataSourceLabel} value={metadata.siteUrl ? "Open" : ""} href={metadata.siteUrl || undefined} />
         <span className={`series-detail-fact ${adapterBacked ? "warn" : "good"}`.trim()}>
           <strong>Tracked by</strong>
           {adapterBacked ? "Legacy adapter" : "InkDrop"}

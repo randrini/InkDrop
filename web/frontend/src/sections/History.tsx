@@ -5,6 +5,20 @@ import type { HistoryRow, HistoryViewPayload } from "./historyTypes";
 const PAGE_SIZE_OPTIONS = [25, 50, 80, 150] as const;
 const DEFAULT_PAGE_SIZE = 80;
 
+// Every other table in the app (Queue/Wanted's section-table-series-link,
+// Series itself) already lets you click straight through to a series --
+// History was the one place that data-carrying cell looked identical but
+// silently did nothing, because the row's own click target was already
+// spoken for by the detail-row toggle below. window.InkDropSeriesNav is the
+// same shell bridge SeriesDetail.tsx and Wanted.tsx already call through
+// for the same reason: it's the one navigation callback the vanilla shell
+// still owns.
+const shell = window as unknown as {
+  InkDropSeriesNav?: {
+    openDetail?: (row: { series_id?: string; series?: string }) => void;
+  };
+};
+
 function titleCase(raw: string): string {
   return raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -257,10 +271,7 @@ export function History({ payload }: { payload: HistoryViewPayload }) {
                     <td colSpan={7}>{day}</td>
                   </tr>
                 )}
-                <tr
-                  className={`history-row ${expanded ? "expanded" : ""}`}
-                  onClick={() => setExpandedId(expanded ? null : row.id)}
-                >
+                <tr className={`history-row ${expanded ? "expanded" : ""}`}>
                   <td data-label="Time" className="history-col-time">{rowTime(row)}</td>
                   <td data-label="Event">
                     <span className="history-event">
@@ -268,14 +279,42 @@ export function History({ payload }: { payload: HistoryViewPayload }) {
                       <strong>{event.label}</strong>
                     </span>
                   </td>
-                  <td data-label="Series / issue">{seriesTitle(row)}</td>
+                  <td data-label="Series / issue">
+                    {row.series_id ? (
+                      <button
+                        type="button"
+                        className="section-table-series-link"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          shell.InkDropSeriesNav?.openDetail?.({ series_id: row.series_id, series: row.series });
+                        }}
+                      >
+                        <strong>{seriesTitle(row)}</strong>
+                      </button>
+                    ) : (
+                      seriesTitle(row)
+                    )}
+                  </td>
                   <td data-label="Result">
                     <span className={`core-state history-result-pill ${pill.tone}`}>{pill.label}</span>
                   </td>
                   <td data-label="Source">{sourceLabel(row)}</td>
                   <td data-label="Details" className="history-col-details">{detailText(row)}</td>
-                  <td className="history-col-chevron" aria-hidden="true">
-                    <span className={`history-chevron ${expanded ? "open" : ""}`}>&rsaquo;</span>
+                  <td className="history-col-chevron">
+                    <button
+                      type="button"
+                      className="history-chevron-btn"
+                      aria-expanded={expanded}
+                      aria-label={expanded ? "Hide event details" : "Show event details"}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setExpandedId(expanded ? null : row.id);
+                      }}
+                    >
+                      <span className={`history-chevron ${expanded ? "open" : ""}`} aria-hidden="true">
+                        &rsaquo;
+                      </span>
+                    </button>
                   </td>
                 </tr>
                 {expanded && (

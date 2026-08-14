@@ -17,6 +17,8 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from core import inkdrop_library_paths
+
 # ComicInfo.xml is metadata -- a handful of short tags. Reading it unbounded on
 # every guard pass is what makes a single poisoned archive a crash loop rather
 # than a one-off failure: this sweep re-walks the library on a timer, so the
@@ -78,6 +80,25 @@ MIN_REPAIR_AGE_SECONDS = int(os.environ.get("INKDROP_MANGA_METADATA_GUARD_MIN_RE
 MAX_ARCHIVES_DEFAULT = int(os.environ.get("INKDROP_MANGA_METADATA_GUARD_MAX_ARCHIVES", "250") or "250")
 SKIP_IF_STATUS_YOUNGER_SECONDS = int(os.environ.get("INKDROP_MANGA_METADATA_GUARD_SKIP_IF_STATUS_YOUNGER_SECONDS", "900") or "900")
 MANGA_LIBRARY_NAME = "Manga"
+
+
+def refresh_path_settings(errors):
+    """Re-derive MANGA_ROOT/KAVITA_MANGA_ROOT from live settings once per run.
+
+    MANGA_ROOT feeds an rglob() scan over the whole library, so refreshing it
+    at every call site would mean a settings read per archive; refreshing
+    only at process-import time (the env-var default above) would miss a
+    Library Paths card edit made after the container started. This runs once
+    per invocation, before the scan begins, through the same shared accessor
+    other modules use -- fresh for this run without paying a per-file cost.
+    """
+    global MANGA_ROOT, KAVITA_MANGA_ROOT
+    try:
+        paths = inkdrop_library_paths.current_paths()
+        MANGA_ROOT = paths["manga_root"]
+        KAVITA_MANGA_ROOT = paths["kavita_manga_root"]
+    except Exception as exc:
+        errors.append({"path_settings_refresh": True, "error": f"{type(exc).__name__}: {exc}"})
 
 
 def now_slug():
@@ -517,6 +538,7 @@ def main():
         return
     backup_dir = BACKUP_ROOT / f"{run_id}-inkdrop-manga-guard"
     errors = []
+    refresh_path_settings(errors)
 
     internal = move_internal_dirs(args.repair, run_id)
     max_archives = int(args.max_archives or 0)

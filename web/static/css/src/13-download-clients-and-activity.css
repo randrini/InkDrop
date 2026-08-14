@@ -270,6 +270,15 @@
   background: rgba(15, 21, 28, .45);
 }
 
+.settings-backup-restore-disabled-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(230, 162, 62, .4);
+  border-radius: 4px;
+  background: rgba(230, 162, 62, .1);
+  color: #e6a23e;
+}
+
 .settings-backup-restore > p,
 .settings-backup-status {
   margin: 0;
@@ -292,8 +301,38 @@
   cursor: pointer;
 }
 
+/* Retention number box plus its unit word ("most recent", "days"). The box is
+   capped narrow because the values are two digits at most -- a full-width
+   number input next to a three-word suffix reads as a text field. The
+   selector has to carry .settings-form-control to outrank
+   `.settings-form-control input:not([type="checkbox"])`, whose :not() argument
+   makes it more specific than a bare `.settings-backup-retention-input input`
+   would be. */
+.settings-backup-retention-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-form-control .settings-backup-retention-input input {
+  width: 110px;
+  max-width: 110px;
+}
+
+.settings-backup-retention-input > span {
+  white-space: nowrap;
+}
+
 .settings-backup-file input {
   max-width: min(100%, 320px);
+}
+
+.settings-backup-preserve-auth {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
 }
 
 @media (max-width: 600px) {

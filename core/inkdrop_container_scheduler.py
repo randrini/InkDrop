@@ -242,6 +242,16 @@ def build_jobs() -> list[ScheduledJob]:
     state_retention_db_attempts = 2
     state_retention_db_timeout = 15.0
     state_retention_lock_delay = 0.5
+    # Page-reclaim budget. Each step hands back up to batch_pages free pages in
+    # one short write transaction -- measured ~28ms of write-lock hold at 1000
+    # pages (~4MB at the production page_size of 4096), against ~400ms at 16000
+    # for no gain in total reclaim throughput. The per-run page cap keeps one
+    # pass to roughly 1GB so a large backlog is drained over consecutive hours
+    # instead of one long sitting, and the time cap makes the job exit on its
+    # own terms rather than being SIGKILLed partway through.
+    db_maintenance_batch_pages = bounded_int_env("INKDROP_DB_MAINTENANCE_BATCH_PAGES", 1000, 50, 65536)
+    db_maintenance_max_pages = bounded_int_env("INKDROP_DB_MAINTENANCE_MAX_PAGES", 262144, 1000, 4194304)
+    db_maintenance_max_seconds = bounded_int_env("INKDROP_DB_MAINTENANCE_MAX_SECONDS", 120, 10, 1800)
     return [
         ScheduledJob(
             "verified-import-projection",
@@ -546,8 +556,22 @@ def build_jobs() -> list[ScheduledJob]:
                 "scheduled-backup",
                 "--interval-days",
                 str(bounded_int_env("INKDROP_BACKUP_INTERVAL_DAYS", 7, 1, 90)),
-                "--retention-days",
-                str(bounded_int_env("INKDROP_BACKUP_RETENTION_DAYS", 28, 1, 365)),
+                # Neither retention limit is passed here on purpose. Both are
+                # operator policy editable from Settings > General > Full
+                # backups, and run_scheduled_backup() resolves them on every
+                # pass (Settings, then INKDROP_BACKUP_RETENTION_DAYS /
+                # INKDROP_BACKUP_RETENTION_COUNT, then the shipped default of
+                # 28 days / newest 6). Baking the value into argv here instead
+                # would freeze it at container start, so a retention change
+                # made in the UI would not take effect until a restart -- and
+                # would override the saved setting when it finally did.
+                #
+                # Age alone does not bound disk usage: an archive of the
+                # production database is ~2.25GB, so a shorter interval under
+                # the same window silently multiplies the footprint. The
+                # default count cap of 6 holds that at roughly 14GB regardless
+                # of how the interval is configured, while still covering more
+                # than one full retention window at the default weekly cadence.
             ),
             initial_delay_seconds=900,
             # The state database is a full-library SQLite file (tens of GB on
@@ -598,29 +622,85 @@ def build_jobs() -> list[ScheduledJob]:
             critical=False,
         ),
         ScheduledJob(
+            "db-maintenance",
+            int_env("INKDROP_SCHEDULER_DB_MAINTENANCE_INTERVAL_SECONDS", 3600),
+            (
+                py,
+                "-B",
+                _script("inkdrop_db_maintenance.py"),
+                "run",
+                "--batch-pages",
+                str(db_maintenance_batch_pages),
+                "--max-pages",
+                str(db_maintenance_max_pages),
+                "--max-seconds",
+                str(db_maintenance_max_seconds),
+            ),
+            # 780s sits in the gap between state-retention (660) and
+            # completed-import-ebooks (1020), so page reclaim never joins the
+            # startup burst competing for the three concurrency slots.
+            initial_delay_seconds=780,
+            # The child stops itself at --max-seconds; this is a backstop above
+            # that, not the primary bound. Each reclaim step holds the write
+            # lock ~28ms at the default batch, so a kill here can only ever
+            # interrupt between steps -- there is no cursor to lose, and the
+            # next pass simply continues from the current freelist.
+            timeout_seconds=bounded_int_env(
+                "INKDROP_SCHEDULER_DB_MAINTENANCE_TIMEOUT_SECONDS",
+                db_maintenance_max_seconds + 60,
+                60,
+                3600,
+            ),
+            critical=False,
+        ),
+        ScheduledJob(
             "comicvine-scan",
             int_env("INKDROP_SCHEDULER_COMICVINE_SCAN_INTERVAL_SECONDS", 21600),
             (py, "-B", _script("inkdrop_internal_jobs.py"), "comicvine-scan"),
             initial_delay_seconds=600,
-            # 120s killed this job 79 times in a row (rc=124, elapsed pinned at
-            # 120.01 every run) and nobody noticed for about eighteen days, so
-            # the library went that long without a ComicVine discovery pass.
-            # Most of that runtime was never the scan's own work: on build 598
-            # a full run took 488s and its stderr was a wall of "sqlite lock
-            # persisted operation=inkdrop_state_write busy_timeout_ms=60000",
-            # waiting on the reconciliation pass. With that contention removed
-            # the same scan takes 133s with zero lock-wait lines. 300s is
-            # headroom over the measured 133s, not a number picked to make the
-            # counter go green -- the scan also makes live ComicVine calls, so
-            # it has to absorb a slow provider on top of its own work.
-            # The interval beside it was already tunable while this was a bare
-            # literal, which left an operator facing a timeout with the one
-            # knob that cannot help.
+            # Raised 120s -> 300s once already, and it failed 128 more times at
+            # 300.01s. Raising it a third time would have been wrong: the scan's
+            # own work measures 71s (5s of ComicVine calls for a 12-watch batch,
+            # 61s of missing-issue refresh, 4s to enqueue). What overran the
+            # timeout was a full sync_state() pass on the end of the summary,
+            # 430s of whole-database backfills that no scan asked for -- and it
+            # ended in an IntegrityError, so no timeout would ever have let this
+            # job report success. That pass is now its own job, below.
+            # 300s stands: roughly 3x the ~100s a scan needs including its
+            # watch ingest, which is the headroom that absorbs a slow ComicVine
+            # rather than a second job's workload.
             timeout_seconds=bounded_int_env(
                 "INKDROP_SCHEDULER_COMICVINE_SCAN_TIMEOUT_SECONDS",
                 300,
                 120,
                 1800,
+            ),
+            critical=False,
+        ),
+        ScheduledJob(
+            "full-state-sync",
+            # Hourly, which is what this pass already costs the machine: riding
+            # on comicvine-scan it was replayed every 3600s by that job's
+            # failure backoff, and its backfills commit as they go, so the work
+            # landed even though the job never reported success. Moving it to
+            # the scan's own 21600s interval would have cut the history-event
+            # backfill's drain from ~120K rows a day to ~20K against an 861K
+            # backlog that grows by ~10.8K a day -- a regression bought with a
+            # tidier-looking schedule.
+            int_env("INKDROP_SCHEDULER_FULL_STATE_SYNC_INTERVAL_SECONDS", 3600),
+            (py, "-B", _script("inkdrop_internal_jobs.py"), "full-state-sync"),
+            # 1500s is deliberately clear of the 430s a full pass measured on a
+            # 45.7GB production database, because that number is the one that
+            # grows with the library. It starts at 2400s so it never shares a
+            # startup window with comicvine-scan (600s), which reads the same
+            # tables -- overlapping them is how the original lock contention
+            # that got blamed for the first timeout was manufactured.
+            initial_delay_seconds=2400,
+            timeout_seconds=bounded_int_env(
+                "INKDROP_SCHEDULER_FULL_STATE_SYNC_TIMEOUT_SECONDS",
+                1500,
+                300,
+                3600,
             ),
             critical=False,
         ),

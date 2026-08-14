@@ -272,9 +272,18 @@
     const itemDecision = decision(candidate);
     const candidateId = text(candidate.candidate_id);
     const assisted = itemDecision.label === "Assisted";
+    // "Unavailable" used to be the hard fallback here whenever neither field
+    // was set -- which was every SLSKD result, since the backend only ever
+    // wrote remote_availability_state (this checked remote_availability,
+    // missing the _state suffix) and never had a Soulseek-specific queue/slot
+    // summary to put in remote_queue_state. That made every SLSKD candidate
+    // read as "the source is offline" when InkDrop simply had no availability
+    // data for it. Both are now populated for SLSKD (see
+    // inkdrop_manual_search.normalize_candidate); "Not reported" is left as
+    // the true last resort, for providers that still have nothing to say.
     const availability = candidate.seeders !== undefined && candidate.seeders !== null
       ? `${candidate.seeders} seeds`
-      : candidate.remote_availability || candidate.remote_queue_state || "Unavailable";
+      : candidate.remote_availability_state || candidate.remote_queue_state || "Not reported";
     const pack = candidate.pack_candidate ? `${humanize(candidate.pack_type || "Pack")}${candidate.likely_wanted_coverage ? ` · ${candidate.likely_wanted_coverage} wanted` : ""}` : "Single";
     let action = "";
     if (state.grabbed.has(candidateId)) action = '<span class="manual-search-chip good">Sent to queue</span>';

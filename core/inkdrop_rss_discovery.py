@@ -26,6 +26,7 @@ from pathlib import Path
 
 import requests
 
+from core import inkdrop_cloudflare_bypass_proxy as cloudflare_bypass_proxy
 from core import inkdrop_runtime_config
 
 try:
@@ -48,6 +49,7 @@ BAD_MATCHES_FILE = STATE_DIR / "rss-bad-matches.json"
 CACHE_FILE = STATE_DIR / "rss-discovery-cache.json"
 
 FEED_URL = "https://getcomics.org/feed/"
+GETCOMICS_PROXY_TARGET_HOSTS = frozenset({"getcomics.org", "www.getcomics.org"})
 USER_AGENT = "InkDrop-RSS-Discovery/1.0 (+respectful periodic RSS poll)"
 DEFAULT_LIMIT = 12
 DEFAULT_MAX_AUTO = 5
@@ -641,6 +643,27 @@ def pack_auto_approve_action(
     return {"action": action, "pack_item": pack_item, "auto_result": auto_result}
 
 
+def _fetch_feed_via_cloudflare_bypass_proxy():
+    """GetComics doesn't need this today (it's not Cloudflare-fronted), but
+    gets the same resilience fallback as ComicsCodes/Buzzheavier in case that
+    changes. The second tuple item is empty when the proxy is unset so normal
+    backoff/raise behavior is unchanged; an attempted failure carries a
+    bounded, distinct reason into the normal source-status cache."""
+    proxy_url = cloudflare_bypass_proxy.cloudflare_bypass_proxy_url(INKDROP_STATE_DB)
+    if not proxy_url:
+        return None, ""
+    result = cloudflare_bypass_proxy.resolve_via_cloudflare_bypass_proxy(
+        FEED_URL,
+        proxy_url=proxy_url,
+        allowed_target_hosts=GETCOMICS_PROXY_TARGET_HOSTS,
+    )
+    if not result.get("ok"):
+        failure_reason = cloudflare_bypass_proxy.cloudflare_bypass_failure_reason(result)
+        log("getcomics_cloudflare_bypass_proxy_failed", {"reason": failure_reason})
+        return None, failure_reason
+    return result.get("text") or "", ""
+
+
 def fetch_feed(cache, args):
     feed_state = cache.setdefault("feed", {})
     now = time.time()
@@ -672,6 +695,21 @@ def fetch_feed(cache, args):
             feed_state["last_fetch_at"] = now
             feed_state["failure_count"] = 0
             return "", "not_modified"
+        if cloudflare_bypass_proxy.cloudflare_challenge_detected(response.status_code, response.headers, response.text):
+            proxied_text, proxy_failure_reason = _fetch_feed_via_cloudflare_bypass_proxy()
+            if proxied_text is not None:
+                feed_state.update({
+                    "last_status": 200,
+                    "last_poll": now,
+                    "last_fetch_at": now,
+                    "last_xml": proxied_text,
+                    "last_error": None,
+                    "failure_count": 0,
+                    "backoff_until": 0,
+                })
+                return proxied_text, "fetched_via_cloudflare_bypass_proxy"
+            if proxy_failure_reason:
+                raise RuntimeError(proxy_failure_reason)
         response.raise_for_status()
     except Exception as exc:
         failures = int(feed_state.get("failure_count") or 0) + 1

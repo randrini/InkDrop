@@ -1,10 +1,17 @@
 name: inkdrop-public-release
 
 on:
+  # qa intentionally left off push triggers: this pipeline's full_smoke_suite
+  # (90min) and qa_image/validate_qa_image (multi-arch Docker build+push,
+  # ~60min) used to run on every push to qa, and with several sessions
+  # pushing/rebasing onto qa throughout the day that was dozens of full runs
+  # daily. inkdrop-qa-nightly-smoke.yml now covers the "is qa still green"
+  # signal once a day against qa's tip; this workflow is still reachable
+  # against qa via workflow_dispatch for an on-demand run (e.g. to produce a
+  # QA image for beta promotion).
   push:
     branches:
       - main
-      - qa
     paths:
       - ".github/workflows/inkdrop-public-release.yml"
       - ".github/workflows/inkdrop-beta-promotion.yml"
@@ -194,13 +201,13 @@ jobs:
       - name: Run strict container preflight
         timeout-minutes: 5
         run: |
-          docker compose run --rm inkdrop python -B core/inkdrop_preflight.py --create --quiet --strict-dependencies --strict-runtime-tools
-          docker compose run --rm inkdrop python -B core/inkdrop_container_healthcheck.py --preflight-only
+          docker compose run --rm -T inkdrop python -B core/inkdrop_preflight.py --create --quiet --strict-dependencies --strict-runtime-tools
+          docker compose run --rm -T inkdrop python -B core/inkdrop_container_healthcheck.py --preflight-only
 
       - name: Verify container install support summary
         timeout-minutes: 5
         run: |
-          docker compose run --rm inkdrop python -B tools/inkdrop_install_support_summary.py --create --json | tee inkdrop-install-support-summary.json
+          docker compose run --rm -T inkdrop python -B tools/inkdrop_install_support_summary.py --create --json | tee inkdrop-install-support-summary.json
           python - <<'PY'
           import json
           from pathlib import Path

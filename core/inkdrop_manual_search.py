@@ -452,6 +452,11 @@ def structured_search_input(value: dict[str, Any] | None) -> dict[str, Any]:
         "collected_singleton_title_aliases": _list(value.get("collected_singleton_title_aliases"))[:12],
         "collected_singleton_proof": value.get("collected_singleton_proof") is True,
         "collected_singleton_proof_source": _text(value.get("collected_singleton_proof_source")),
+        # Explicit per-series "Edition Indifferent" override -- see
+        # inkdrop_state.set_series_edition_indifferent_override(). Preserved
+        # here so a Manual Search retry honors the same relaxation automatic
+        # acquisition does.
+        "edition_indifferent": value.get("edition_indifferent") is True,
     }
 
 
@@ -1052,6 +1057,25 @@ def _capability(
     return "manual", False
 
 
+def _slskd_remote_queue_state(candidate: dict[str, Any]) -> str:
+    """Soulseek reports real per-peer availability (a free upload slot now, or a
+    queue position behind other requests) that the generic remote_queue_state/
+    remote_availability_state fields never picked up -- they only ever read
+    field names ("availability", "queue_state") that no SLSKD candidate sets,
+    so every SLSKD result fell through to the frontend's "Unavailable" default
+    regardless of whether the peer was actually online. Surface the real
+    signal instead of leaving that default to imply the source is offline.
+    """
+    if "has_free_upload_slot" not in candidate and "queue_length" not in candidate and "upload_speed" not in candidate:
+        return ""
+    if candidate.get("has_free_upload_slot"):
+        return "Free slot now"
+    queue_length = _int(candidate.get("queue_length"))
+    if queue_length:
+        return f"Queued behind {queue_length}"
+    return "No free slot"
+
+
 def normalize_candidate(
     candidate: dict[str, Any] | None,
     search_input: dict[str, Any] | None,
@@ -1193,7 +1217,13 @@ def normalize_candidate(
         "remote_availability_state": _text(
             _first(candidate.get("remote_availability_state"), candidate.get("availability"))
         ),
-        "remote_queue_state": _text(_first(candidate.get("remote_queue_state"), candidate.get("queue_state"))),
+        "remote_queue_state": _text(
+            _first(
+                candidate.get("remote_queue_state"),
+                candidate.get("queue_state"),
+                _slskd_remote_queue_state(candidate) if protocol == "soulseek" else None,
+            )
+        ),
         "remote_identity": remote_identity,
         "direct_url_available": direct_url_available,
         **pack,

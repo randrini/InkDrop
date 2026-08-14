@@ -473,6 +473,34 @@ def seed_provider_timeout_attempt(db_path, provider_id, index, *, completed_at=N
         con.commit()
 
 
+def seed_provider_raw_attempt(db_path, provider_id, index, raw_json, *, completed_at=NOW - 60):
+    with inkdrop_state.connect(db_path) as con:
+        inkdrop_state.init_schema(con)
+        con.execute(
+            """
+            insert into source_attempts(
+                id, source, provider_id, provider, status, display_phase,
+                failure_reason, title, started_at, completed_at, raw_json
+            )
+            values(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                f"typed-timeout:{provider_id}:{index}",
+                provider_id,
+                provider_id,
+                provider_id,
+                "searched_no_candidates",
+                "no_candidate",
+                "",
+                f"{provider_id} typed timeout proof {index}",
+                completed_at,
+                completed_at,
+                raw_json,
+            ),
+        )
+        con.commit()
+
+
 def seed_provider_fetch_failure_attempt(
     db_path,
     provider_id,
@@ -725,6 +753,192 @@ def smoke_provider_timeout_recovery_health_plan():
             providers["prowlarr_nyaa"]["attempt_state"],
             "selected",
             "recovered provider evidence marks selection instead of timeout circuit",
+        )
+
+
+def smoke_provider_timeout_payloads_are_typed():
+    false_payloads = [
+        json.dumps({"command_timed_out": False}),
+        json.dumps({"command_timed_out": None}),
+        json.dumps({"command_timed_out": 30}),
+        json.dumps({"timed_out": "false"}),
+        json.dumps({"timeout_seconds": 30, "command_timed_out_note": True}),
+        json.dumps({"metadata": {"ordinary_key": "command_timed_out"}}),
+        json.dumps({"status": "timeout_recovered"}),
+        json.dumps({"status": "not_timeout"}),
+        json.dumps({"error": "provider did not timeout"}),
+        '{"command_timed_out": true',
+    ]
+    for raw_json in false_payloads:
+        assert_false(
+            scheduler._timeout_signal_from_row({"raw_json": raw_json}),
+            f"non-authoritative timeout payload must not count: {raw_json}",
+        )
+    true_payloads = [
+        json.dumps({"command_timed_out": True}),
+        json.dumps({"error": "prowlarr_search_timeout"}),
+        json.dumps({"partial_errors": [{"message": "provider connect timeout"}]}),
+        json.dumps({"errors": [{"type": "TimeoutExpired"}]}),
+        json.dumps({"status": "timeout"}),
+        json.dumps({"error": "TimeoutError"}),
+        json.dumps({"error": "request timeout"}),
+        "failed_retry_command_timeout",
+    ]
+    for raw_json in true_payloads:
+        assert_true(
+            scheduler._timeout_signal_from_row({"raw_json": raw_json}),
+            f"typed or legacy timeout payload must count: {raw_json}",
+        )
+    assert_true(
+        scheduler._timeout_signal_from_row(
+            {"status": "provider_timeout", "raw_json": json.dumps({"command_timed_out": False})}
+        ),
+        "a genuine row status remains authoritative when JSON carries a false timeout flag",
+    )
+    for row in (
+        {"status": "timeout_recovered"},
+        {"status": "not_timeout"},
+        {"failure_reason": "provider did not timeout"},
+        {"failure_reason": "not a connection timeout"},
+        {"failure_reason": "no provider timeout"},
+        {"failure_reason": "without any timeout"},
+    ):
+        assert_false(
+            scheduler._timeout_signal_from_row(row),
+            f"recovered or explicitly negated row text must not count: {row}",
+        )
+    for row in (
+        {"failure_reason": "first request did not timeout; retry timed out"},
+        {"failure_reason": "timeout recovered, then next request timed out"},
+    ):
+        assert_true(
+            scheduler._timeout_signal_from_row(row),
+            f"a negated or recovered clause must not suppress a later genuine timeout: {row}",
+        )
+    assert_true(
+        scheduler._timeout_sql_function_name() != scheduler._timeout_sql_function_name(),
+        "each timeout circuit query receives a unique SQLite function name",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="inkdrop-source-worker-typed-timeout-") as tmp:
+        db_path = Path(tmp) / "inkdrop-state.sqlite3"
+        seed_settings(db_path)
+        for index in range(16):
+            seed_provider_raw_attempt(
+                db_path,
+                "prowlarr_nyaa",
+                f"false-{index}",
+                false_payloads[index % len(false_payloads)],
+                completed_at=NOW - index,
+            )
+        for index in range(6):
+            seed_provider_raw_attempt(
+                db_path,
+                "rss_getcomics",
+                f"false-{index}",
+                false_payloads[index % len(false_payloads)],
+                completed_at=NOW - index,
+            )
+
+        jobs = [
+            {"provider_id": "prowlarr_nyaa", "health_provider_ids": ["prowlarr"]},
+            {"provider_id": "rss_getcomics", "health_provider_ids": ["rss"]},
+        ]
+        false_circuits = scheduler.provider_timeout_circuit_breakers(
+            db_path,
+            jobs,
+            now=NOW,
+            window_seconds=600,
+            threshold=2,
+            cooldown_seconds=1800,
+        )
+        assert_equal(
+            false_circuits,
+            {},
+            "16 Prowlarr and 6 RSS false timeout flags do not open 30-minute circuits",
+        )
+
+        seed_provider_raw_attempt(
+            db_path,
+            "prowlarr_nyaa",
+            "true-bool",
+            json.dumps({"command_timed_out": True}),
+            completed_at=NOW - 100,
+        )
+        seed_provider_raw_attempt(
+            db_path,
+            "prowlarr_nyaa",
+            "true-error",
+            json.dumps({"error": "prowlarr_search_timeout"}),
+            completed_at=NOW - 110,
+        )
+        seed_provider_raw_attempt(
+            db_path,
+            "rss_getcomics",
+            "true-message",
+            json.dumps({"partial_errors": [{"message": "read timed out"}]}),
+            completed_at=NOW - 100,
+        )
+        seed_provider_raw_attempt(
+            db_path,
+            "rss_getcomics",
+            "legacy",
+            "failed_retry_command_timeout",
+            completed_at=NOW - 110,
+        )
+        cleanup_function_name = "inkdrop_source_timeout_signal_cleanup_smoke"
+        original_name_factory = scheduler._timeout_sql_function_name
+        with inkdrop_state.connect_read(db_path) as borrowed:
+            borrowed.create_function(
+                "inkdrop_source_timeout_signal",
+                4,
+                lambda *_args: 77,
+                deterministic=True,
+            )
+            scheduler._timeout_sql_function_name = lambda: cleanup_function_name
+            try:
+                true_circuits = scheduler.provider_timeout_circuit_breakers(
+                    db_path,
+                    jobs,
+                    now=NOW,
+                    window_seconds=600,
+                    threshold=2,
+                    cooldown_seconds=1800,
+                    limit=4,
+                    con=borrowed,
+                )
+            finally:
+                scheduler._timeout_sql_function_name = original_name_factory
+            try:
+                borrowed.execute(
+                    f"select {cleanup_function_name}('', '', '', '')"
+                ).fetchone()
+            except Exception:
+                pass
+            else:
+                fail("borrowed connection retained a callable timeout UDF after the query")
+            assert_equal(
+                borrowed.execute(
+                    "select inkdrop_source_timeout_signal('', '', '', '')"
+                ).fetchone()[0],
+                77,
+                "per-call timeout UDF does not overwrite a borrowed connection's existing function",
+            )
+            borrowed.create_function("inkdrop_source_timeout_signal", 4, None)
+        assert_equal(
+            set(true_circuits),
+            {"prowlarr_nyaa", "rss_getcomics"},
+            "typed JSON and legacy timeout evidence still open their provider circuits",
+        )
+        assert_equal(
+            true_circuits["prowlarr_nyaa"]["recent_timeout_count"],
+            2,
+            "false Prowlarr payloads are excluded from the circuit count",
+        )
+        assert_equal(
+            true_circuits["rss_getcomics"]["recent_timeout_count"],
+            2,
+            "false RSS payloads are excluded from the circuit count",
         )
 
 
@@ -1681,6 +1895,7 @@ def main():
     smoke_retryable_handoff_recovery_due_plan()
     smoke_retryable_stage_failure_unblocks_page_pack_handoff()
     smoke_provider_timeout_recovery_health_plan()
+    smoke_provider_timeout_payloads_are_typed()
     smoke_comicscodes_assist_source_can_be_scheduled()
     smoke_prowlarr_aggregate_timeout_hidden_by_concrete_child()
     smoke_provider_fetch_failure_sibling_selection()

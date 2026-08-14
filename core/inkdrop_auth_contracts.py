@@ -81,6 +81,18 @@ _add("POST", {
     "/api/inkdrop-settings/backup/archives/delete",
 }, "full_backup_delete", "admin", admin=True, destructive=True, high_impact=True)
 _add("POST", {
+    "/api/inkdrop-settings/backup/archives/upload",
+}, "full_backup_upload", "admin", admin=True, high_impact=True)
+_add("POST", {
+    "/api/inkdrop-settings/backup/archives/restore/preview",
+}, "full_backup_restore_preview", "admin", admin=True, high_impact=True, idempotent=True)
+_add("POST", {
+    "/api/inkdrop-settings/backup/archives/restore/apply",
+}, "full_backup_restore_apply", "admin", admin=True, destructive=True, high_impact=True)
+_add("POST", {
+    "/api/inkdrop-settings/backup/archives/merge/preview",
+}, "full_backup_merge_preview", "admin", admin=True, high_impact=True, idempotent=True)
+_add("POST", {
     "/api/library-adoption/plan",
 }, "library_adoption_plan", "admin", admin=True, high_impact=True)
 _add("POST", {
@@ -101,12 +113,15 @@ for method in ("PATCH", "PUT"):
     }, "settings_update", "settings")
 
 _add("POST", {
-    "/api/search", "/api/mangadex/search", "/api/mangadex/feed",
+    "/api/search", "/api/mangadex/search", "/api/mangadex/feed", "/api/metron/search",
     "/api/comicvine/search", "/api/comicvine/scan", "/api/watch/scan",
-    "/api/comicvine/add", "/api/mangadex/add", "/api/watch/add", "/api/watch/add-result",
+    "/api/comicvine/add", "/api/mangadex/add", "/api/metron/add", "/api/watch/add", "/api/watch/add-result",
     "/api/comicvine/update", "/api/watch/update", "/api/comicvine/replace-metadata",
     "/api/comicvine/grab", "/api/watch/grab", "/api/grab", "/api/import",
-    "/api/inkdrop-state/series/run", "/api/inkdrop-state/series/update", "/api/inkdrop-state/series/manga-unit-override/set", "/api/inkdrop-state/wanted/run", "/api/inkdrop-state/queue/run", "/api/inkdrop-state/queue/remove",
+    "/api/inkdrop-state/series/run", "/api/inkdrop-state/series/update", "/api/inkdrop-state/series/manga-unit-override/set",
+    "/api/inkdrop-state/series/media-type/set", "/api/inkdrop-state/series/edition-indifferent-override/set",
+    "/api/inkdrop-state/wanted/run", "/api/inkdrop-state/queue/run", "/api/inkdrop-state/queue/remove",
+    "/api/inkdrop-state/queue/retry-new-source", "/api/inkdrop-state/queue/reopen-import",
     "/api/inkdrop-state/series/covers/refresh", "/api/inkdrop-state/library-frontends/sync",
     "/api/inkdrop-state/sync", "/api/manga-unit/set", "/api/issue-monitor/set",
     "/api/missing/process", "/api/missing/recheck", "/api/missing/fresh", "/api/missing/hot",
@@ -121,6 +136,7 @@ _add("POST", {
 _add("POST", {
     "/api/inkdrop-state/source-memory/allow",
     "/api/inkdrop-state/source-memory/remove",
+    "/api/inkdrop-state/source-memory/block",
 }, "acquisition", "acquisition", idempotent=True)
 
 
@@ -174,11 +190,13 @@ _add("POST", {
     "/api/inkdrop-state/series-shadow-ref-merge/apply", "/api/inkdrop-state/series_shadow_ref_merge/apply",
     "/api/inkdrop-state/series-shadow-retire/apply", "/api/inkdrop-state/series_shadow_retire/apply",
     "/api/inkdrop-state/source-attempts/clear",
+    "/api/inkdrop-state/series-merge/apply", "/api/inkdrop-state/series_merge/apply",
 }, "destructive_maintenance", "admin", admin=True, destructive=True, high_impact=True)
 
 _add("POST", {
     "/api/inkdrop-state/duplicate-series-ref-merge/preview", "/api/inkdrop-state/duplicate_series_ref_merge/preview",
     "/api/inkdrop-state/series-shadow-ref-merge/preview", "/api/inkdrop-state/series_shadow_ref_merge/preview",
+    "/api/inkdrop-state/series-merge/candidate", "/api/inkdrop-state/series_merge/candidate",
 }, "maintenance_preview", "maintenance", idempotent=True)
 
 _add("POST", {

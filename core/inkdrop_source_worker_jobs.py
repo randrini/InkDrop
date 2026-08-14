@@ -2008,11 +2008,35 @@ def _partial_mangadex_deadline_wait_reason(job, fetch_result, evaluations):
     return ""
 
 
+def _partial_rss_detail_provider_wait_reason(job, fetch_result, evaluations):
+    """Keep incomplete native RSS detail coverage retryable, not a clean miss."""
+
+    job = _dict(job)
+    fetch_plan = _dict(job.get("fetch_plan"))
+    if str(fetch_plan.get("payload_mode") or "").strip() != "rss_feed_then_direct_file_pages":
+        return ""
+    candidate_count = sum(int((row or {}).get("candidate_count") or 0) for row in evaluations or [])
+    if candidate_count:
+        return ""
+    partial_errors = _fetch_payload_list(fetch_result, "partial_errors")
+    if any(
+        str((error or {}).get("stage") or "").strip() == "rss_detail_direct_page"
+        and (
+            bool((error or {}).get("retryable"))
+            or str((error or {}).get("request_id") or "").startswith("direct_file_detail_page_")
+        )
+        for error in partial_errors
+    ):
+        return "rss_detail_fetch_incomplete"
+    return ""
+
+
 def _partial_provider_wait_reason(job, fetch_result, evaluations):
     return (
         _partial_indexer_provider_wait_reason(job, fetch_result, evaluations)
         or _partial_suwayomi_provider_wait_reason(job, fetch_result, evaluations)
         or _partial_mangadex_deadline_wait_reason(job, fetch_result, evaluations)
+        or _partial_rss_detail_provider_wait_reason(job, fetch_result, evaluations)
     )
 
 

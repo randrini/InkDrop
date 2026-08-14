@@ -12,6 +12,7 @@ import os
 import re
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from urllib.parse import quote, quote_plus, urlparse
 
@@ -29,6 +30,7 @@ STANDARD_EBOOKS_OPDS_URL = "https://standardebooks.org/feeds/opds"
 GUTENDEX_BOOKS_URL = "https://gutendex.com/books"
 INTERNET_ARCHIVE_SEARCH_URL = "https://archive.org/services/search/v1/scrape"
 INTERNET_ARCHIVE_METADATA_BASE = "https://archive.org/metadata"
+INTERNET_ARCHIVE_TITLE_QUERY_MAX_CHARS = 240
 MANGADEX_API_BASE = "https://api.mangadex.org"
 # MangaDex's own API default is safe + suggestive + erotica; it excludes only
 # pornographic. InkDrop defaulted to safe + suggestive, which is stricter than
@@ -59,6 +61,7 @@ COMICSCODES_LIST_URLS = (
 PROWLARR_SEARCH_PATH = "/api/v1/search"
 INDEXER_PACK_DETAIL_MAX_BYTES = 5 * 1024 * 1024
 INDEXER_PACK_DETAIL_SIDECAR_MAX_BYTES = 1024 * 1024
+RSS_DETAIL_FETCH_MAX_WORKERS = 5
 INDEXER_PACK_DETAIL_HEADER_KEYS = (
     "x-dnzb-nfo",
     "x-nzb-nfo",
@@ -796,6 +799,25 @@ def indexer_source_queries(wanted_item=None, *, max_queries=3, policy=None, incl
     ):
         add(f"{series} {issue_variants[0]}", include_ascii=True)
 
+    # Creator-possessive titles ("Naoki Urasawa's Monster") are the licensed
+    # English series name, but most uploads use the bare de-prefixed alias.
+    # Without this, the 3-query automatic budget spends two slots on bare
+    # (no issue number) title forms in the discovery_stems loop below, and
+    # the precise de-prefixed+issue form ("Monster 1") only surfaces via the
+    # zero-result expansion tail -- which never fires here because the bare
+    # possessive-stripped query alone (a common word like "Monster") reliably
+    # returns raw catalog noise, never the clean zero expansion requires.
+    # Same gap PR #158 fixed in inkdrop_slskd_source_probe.py; this is the
+    # indexer/Prowlarr-side twin.
+    if (
+        not is_volume_wanted
+        and not wanted_item.get("manual_search")
+        and series_without_creator
+        and series_without_creator != series
+        and issue_variants
+    ):
+        add(f"{series_without_creator} {issue_variants[0]}", include_ascii=True)
+
     if not wanted_item.get("manual_search"):
         collected_aliases = inkdrop_sources.collected_title_aliases(series)
         contributor_aliases = inkdrop_sources.contributor_title_aliases(series)
@@ -1419,8 +1441,56 @@ def gutendex_request(row, plan, wanted_item=None, limit=20):
     )
 
 
+def _internet_archive_automatic_title_query(wanted_item=None):
+    wanted_item = wanted_item if isinstance(wanted_item, dict) else {}
+    canonical = providers.normalized_query(
+        providers.first_text(
+            wanted_item.get("canonical_work_title"),
+            wanted_item.get("series_title"),
+            wanted_item.get("series"),
+            wanted_item.get("manga_title"),
+        )
+    )
+    if canonical:
+        return canonical
+
+    # Some legacy queue rows have only one flattened query. Remove only
+    # structured suffixes we can prove belong to that row; do not guess that a
+    # number embedded in the work title is an issue or publication year.
+    raw_query = source_query(wanted_item)
+    cleaned = raw_query
+    years = []
+    for key in ("issue_year", "publication_year", "release_year", "year", "start_year"):
+        value = str(wanted_item.get(key) or "").strip()
+        if re.fullmatch(r"(?:18|19|20)\d{2}", value) and value not in years:
+            years.append(value)
+    for year in years:
+        cleaned = re.sub(rf"\s+(?:\({re.escape(year)}\)|{re.escape(year)})$", "", cleaned).strip()
+    unit_number = providers.first_text(
+        wanted_item.get("issue_number"),
+        wanted_item.get("normalized_number"),
+        wanted_item.get("chapter_number"),
+        wanted_item.get("chapter"),
+        wanted_item.get("number"),
+        wanted_item.get("volume_number"),
+    )
+    if unit_number:
+        cleaned = re.sub(
+            rf"\s+(?:(?:issue|chapter|chap|ch|volume|vol|v|book|part|pt|#)\.?\s*)?{re.escape(str(unit_number).strip())}$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+    return providers.normalized_query(cleaned or raw_query)[:INTERNET_ARCHIVE_TITLE_QUERY_MAX_CHARS].strip()
+
+
 def internet_archive_search_query(wanted_item=None):
-    query = source_query(wanted_item)
+    wanted_item = wanted_item if isinstance(wanted_item, dict) else {}
+    query = (
+        source_query(wanted_item)
+        if wanted_item.get("manual_search")
+        else _internet_archive_automatic_title_query(wanted_item)
+    )
     terms = []
     if query:
         escaped = query.replace('"', " ")
@@ -1653,6 +1723,49 @@ def mangadex_search_requests(row, plan, wanted_item=None, limit=20):
                 request_id="mangadex_manga_search" if index == 0 else f"mangadex_manga_search_{index + 1}",
             )
         )
+    return requests
+
+
+def _mangadex_query_expansion_pool(wanted_item, *, policy, planned_max_queries, max_expansion=None):
+    """The untried tail of the same rotated query pool the planned batch was cut from.
+
+    Mirrors _indexer_query_expansion_pool()'s shape: mangadex_series_queries()
+    already applies _mangadex_query_offset rotation before truncating, so the
+    tail has to be computed from that same rotated ordering, not the raw pool.
+    """
+    if max_expansion is None:
+        max_expansion = SEARCH_EXPANSION_MAX_QUERIES
+    planned_queries = mangadex_series_queries(wanted_item, max_queries=planned_max_queries, policy=policy)
+    full_pool = mangadex_series_queries(wanted_item, max_queries=planned_max_queries + max_expansion, policy=policy)
+    already_planned = {str(query or "").strip().lower() for query in planned_queries}
+    return [
+        query for query in full_pool
+        if str(query or "").strip().lower() not in already_planned
+    ][:max_expansion]
+
+
+def mangadex_search_expansion_requests(row, plan, wanted_item=None, limit=20):
+    max_queries = providers.int_value(
+        _policy_value(row, "mangadex_max_query_variants", _policy_value(row, "max_query_variants", 3)),
+        3,
+    )
+    expansion_queries = _mangadex_query_expansion_pool(
+        wanted_item,
+        policy=_source_query_alias_policy(row),
+        planned_max_queries=max_queries,
+    )
+    requests = []
+    for index, query in enumerate(expansion_queries):
+        request = mangadex_search_request(
+            row,
+            plan,
+            wanted_item,
+            limit=limit,
+            query=query,
+            request_id=f"mangadex_manga_search_expansion_{index}",
+        )
+        request["query_expansion"] = True
+        requests.append(request)
     return requests
 
 
@@ -2572,11 +2685,18 @@ def prowlarr_search_request(row, plan, wanted_item=None, limit=20, *, query=None
         params["indexerIds"] = indexer_ids[0]
     elif indexer_ids:
         params["indexerIds"] = indexer_ids
+    # Header-only by default: a query-param apikey lands in reverse-proxy/
+    # ingress access logs and Prowlarr's own request logs regardless of
+    # anything InkDrop redacts locally. Only add it when the operator has
+    # explicitly opted in (apikey_query_param_fallback), for the rare proxy
+    # in front of Prowlarr that strips the X-Api-Key header.
+    secret_params = _secret_query_params(row, "apikey") if (row or {}).get("apikey_query_param_fallback") else {}
     return _request(
         request_id,
         "GET",
         search_url,
         params=params,
+        secret_params=secret_params,
         headers={"Accept": "application/json", **_secret_header(row)},
         purpose="search_prowlarr",
     )
@@ -3818,6 +3938,9 @@ def adapter_fetch_plan(row, plan, wanted_item=None, limit=20):
             requests = mangadex_search_requests(row, plan, wanted_item, limit=limit)
             out["requests"].extend(requests)
             out["query_variants"] = [request.get("params", {}).get("title") for request in requests]
+            expansion_requests = mangadex_search_expansion_requests(row, plan, wanted_item, limit=limit) if requests else []
+            if expansion_requests:
+                out["expansion_requests"] = expansion_requests
         if (
             providers.volume_page_pack_enabled(row)
             and providers.wanted_item_is_volume_unit(wanted_item)
@@ -3825,7 +3948,10 @@ def adapter_fetch_plan(row, plan, wanted_item=None, limit=20):
         ):
             out["estimated_request_count"] = min(
                 80,
-                len(out["requests"]) + _mangadex_feed_max_pages(row) + providers.volume_page_pack_max_chapters(row),
+                len(out["requests"])
+                + len(out.get("expansion_requests") or [])
+                + _mangadex_feed_max_pages(row)
+                + providers.volume_page_pack_max_chapters(row),
             )
     elif provider_id == "suwayomi" or adapter_family == "suwayomi_api":
         out["payload_mode"] = "suwayomi_search_then_chapters"
@@ -4099,6 +4225,23 @@ def _safe_response_payload(http_get, request):
         return {}, f"{type(exc).__name__}: {reason}"
 
 
+def _rss_detail_response_batch(http_get, requests):
+    """Fetch one bounded RSS-detail wave and retain request order.
+
+    The request client is the only code invoked by worker threads. Callers
+    merge payloads, headers, errors, and request evidence afterward on the
+    owning thread so completion timing cannot reorder persisted evidence.
+    """
+    requests = list(requests or [])
+    if not requests:
+        return []
+    workers = min(RSS_DETAIL_FETCH_MAX_WORKERS, len(requests))
+    if workers <= 1:
+        return [_safe_response_payload(http_get, requests[0])]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="inkdrop-rss-detail") as pool:
+        return list(pool.map(lambda request: _safe_response_payload(http_get, request), requests))
+
+
 def _indexer_request_query(request):
     params = request.get("params") if isinstance(request, dict) else {}
     params = params if isinstance(params, dict) else {}
@@ -4129,6 +4272,7 @@ def _record_partial_fetch_error(fetch_result, payload, request, error, *, stage=
         "purpose": request.get("purpose"),
         "url_hash": providers.url_hash(str(request.get("url") or "")),
         "error": providers.clipped_text(error, 300),
+        "retryable": True if request.get("retryable") is True else None,
     }
     row = {key: value for key, value in row.items() if value not in (None, "", [], {})}
     fetch_result.setdefault("partial_errors", []).append(row)
@@ -5230,6 +5374,134 @@ def _indexer_result_identity(result):
     return json.dumps(result, sort_keys=True, ensure_ascii=True)
 
 
+def _mangadex_run_search_batch(
+    search_requests,
+    prefetched_first_response,
+    *,
+    row,
+    plan,
+    wanted_item,
+    http_get,
+    result,
+    limit,
+    deadline,
+    variant_counts,
+    seen_manga_ids,
+    query_variants,
+    is_expansion=False,
+):
+    """Run one batch of mangadex search+feed lookups against an already-open result.
+
+    Shared by the planned batch and, on a genuine clean zero, the expansion
+    batch built by mangadex_search_expansion_requests() -- same per-query
+    search/match logic either way, only the request list and "is this the
+    prefetched first response" wiring differ. Returns "matched" (a candidate
+    was found and appended to result["payloads"]), "error" (a request failed;
+    result["reason"]/result["error"] are set and the caller must return
+    result as-is), or "exhausted" (every request in this batch completed
+    cleanly with no match).
+    """
+    for search_index, search_request in enumerate(search_requests):
+        if search_index == 0 and prefetched_first_response is not None:
+            search_response = prefetched_first_response
+        else:
+            if _fetch_deadline_reached(deadline):
+                _record_partial_fetch_error(
+                    result,
+                    None,
+                    search_request,
+                    "fetch_deadline_reached",
+                    stage="mangadex_search",
+                )
+                break
+            search_response, error = _safe_response_payload(http_get, search_request)
+            result["requests_made"].append(search_request)
+            if error:
+                result["reason"] = "http_request_failed"
+                result["error"] = error
+                return "error"
+        search_payload = search_response["payload"]
+        rows = (
+            search_payload.get("data")
+            if isinstance(search_payload, dict) and isinstance(search_payload.get("data"), list)
+            else []
+        )
+        query = (search_request.get("params") or {}).get("title")
+        match_wanted_item = dict(wanted_item or {})
+        # Stash the creator name a broad alias search strips (e.g. "Naoki
+        # Urasawa" from "Naoki Urasawa's Monster") before series_title/
+        # query below get overwritten with the query variant itself --
+        # mangadex_manga_matches_wanted uses this to reject a same-title
+        # work whose real MangaDex author/artist disagrees, even though
+        # the alias-driven title check alone would accept it.
+        expected_creator = ""
+        for identity_key in ("series_title", "series", "manga_title", "title"):
+            expected_creator = _leading_creator_possessive_name((wanted_item or {}).get(identity_key))
+            if expected_creator:
+                break
+        if expected_creator:
+            match_wanted_item["_mangadex_expected_creator"] = expected_creator
+        if query:
+            match_wanted_item["series_title"] = query
+            match_wanted_item["query"] = query
+        manga_rows = _mangadex_manga_rows(
+            search_payload,
+            wanted_item=match_wanted_item,
+            limit=limit,
+            policy=_source_query_alias_policy(row),
+        )
+        variant_entry = {"query": query, "results": len(rows), "matching_manga": len(manga_rows)}
+        if is_expansion:
+            variant_entry["query_expansion"] = True
+        variant_counts.append(variant_entry)
+        result["response_headers"][f"search_{len(variant_counts) - 1}"] = search_response["headers"]
+        for manga_row in manga_rows:
+            manga_id = str(manga_row.get("id") or "").strip()
+            if not manga_id or manga_id in seen_manga_ids:
+                continue
+            seen_manga_ids.add(manga_id)
+            feed_payload, feed_headers, feed_error = _fetch_mangadex_feed_pages(
+                manga_id,
+                manga_row,
+                row,
+                plan,
+                wanted_item,
+                http_get,
+                result,
+                limit=limit,
+                deadline=deadline,
+            )
+            if feed_error:
+                return "error"
+            payload, at_home_error = _mangadex_payload_with_at_home(
+                row,
+                plan,
+                wanted_item,
+                {
+                    "manga": manga_row,
+                    "feed": (feed_payload or {}).get("feed") if isinstance(feed_payload, dict) else {},
+                    "search": search_payload,
+                    "query_variants": list(query_variants or []),
+                    "variant_result_counts": variant_counts,
+                },
+                http_get,
+                result,
+                limit=limit,
+                deadline=deadline,
+            )
+            if at_home_error:
+                result["reason"] = "http_request_failed"
+                result["error"] = at_home_error
+                return "error"
+            if is_expansion:
+                payload["query_expansion"] = True
+            result["payloads"].append(payload)
+            result["response_headers"][str(len(result["payloads"]) - 1)] = feed_headers
+            if _mangadex_feed_payload_has_match(payload, row, wanted_item, limit=limit):
+                return "matched"
+    return "exhausted"
+
+
 def fetch_payloads(row, plan, wanted_item=None, *, http_get=None, tool_runner=None, limit=20, deadline=None):
     fetch_plan = adapter_fetch_plan(row, plan, wanted_item, limit=limit)
     result = {
@@ -5623,110 +5895,73 @@ def fetch_payloads(row, plan, wanted_item=None, *, http_get=None, tool_runner=No
             for request in fetch_plan.get("requests") or []
             if (request or {}).get("request_id") != "mangadex_manga_feed"
         ]
-        for search_index, search_request in enumerate(search_requests):
-            if search_index == 0:
-                search_response = first_response
-            else:
-                if _fetch_deadline_reached(deadline):
-                    _record_partial_fetch_error(
-                        result,
-                        None,
-                        search_request,
-                        "fetch_deadline_reached",
-                        stage="mangadex_search",
-                    )
-                    break
-                search_response, error = _safe_response_payload(http_get, search_request)
-                result["requests_made"].append(search_request)
-                if error:
-                    result["reason"] = "http_request_failed"
-                    result["error"] = error
-                    return result
-            search_payload = search_response["payload"]
-            rows = (
-                search_payload.get("data")
-                if isinstance(search_payload, dict) and isinstance(search_payload.get("data"), list)
-                else []
-            )
-            query = (search_request.get("params") or {}).get("title")
-            match_wanted_item = dict(wanted_item or {})
-            # Stash the creator name a broad alias search strips (e.g. "Naoki
-            # Urasawa" from "Naoki Urasawa's Monster") before series_title/
-            # query below get overwritten with the query variant itself --
-            # mangadex_manga_matches_wanted uses this to reject a same-title
-            # work whose real MangaDex author/artist disagrees, even though
-            # the alias-driven title check alone would accept it.
-            expected_creator = ""
-            for identity_key in ("series_title", "series", "manga_title", "title"):
-                expected_creator = _leading_creator_possessive_name((wanted_item or {}).get(identity_key))
-                if expected_creator:
-                    break
-            if expected_creator:
-                match_wanted_item["_mangadex_expected_creator"] = expected_creator
-            if query:
-                match_wanted_item["series_title"] = query
-                match_wanted_item["query"] = query
-            manga_rows = _mangadex_manga_rows(
-                search_payload,
-                wanted_item=match_wanted_item,
+        status = _mangadex_run_search_batch(
+            search_requests,
+            first_response,
+            row=row,
+            plan=plan,
+            wanted_item=wanted_item,
+            http_get=http_get,
+            result=result,
+            limit=limit,
+            deadline=deadline,
+            variant_counts=variant_counts,
+            seen_manga_ids=seen_manga_ids,
+            query_variants=fetch_plan.get("query_variants"),
+        )
+        if status == "error":
+            return result
+        if status == "matched":
+            result["query_variants"] = list(fetch_plan.get("query_variants") or [])
+            result["variant_result_counts"] = variant_counts
+            result["ok"] = True
+            return result
+        # Planned batch (and, for a rotated pool, whatever rotation put in front
+        # of it) executed cleanly with zero matches. Same clean-zero gate the
+        # indexer families use in this function: reach into the untried tail of
+        # the same query pool before finalizing the zero, rather than waiting
+        # on _mangadex_query_offset to rotate there on a future scheduled pass.
+        expansion_requests = fetch_plan.get("expansion_requests") or []
+        query_expansion_count = 0
+        if expansion_requests:
+            expansion_status = _mangadex_run_search_batch(
+                expansion_requests,
+                None,
+                row=row,
+                plan=plan,
+                wanted_item=wanted_item,
+                http_get=http_get,
+                result=result,
                 limit=limit,
-                policy=_source_query_alias_policy(row),
+                deadline=deadline,
+                variant_counts=variant_counts,
+                seen_manga_ids=seen_manga_ids,
+                query_variants=fetch_plan.get("query_variants"),
+                is_expansion=True,
             )
-            variant_counts.append({"query": query, "results": len(rows), "matching_manga": len(manga_rows)})
-            result["response_headers"][f"search_{search_index}"] = search_response["headers"]
-            for manga_row in manga_rows:
-                manga_id = str(manga_row.get("id") or "").strip()
-                if not manga_id or manga_id in seen_manga_ids:
-                    continue
-                seen_manga_ids.add(manga_id)
-                feed_payload, feed_headers, feed_error = _fetch_mangadex_feed_pages(
-                    manga_id,
-                    manga_row,
-                    row,
-                    plan,
-                    wanted_item,
-                    http_get,
-                    result,
-                    limit=limit,
-                    deadline=deadline,
-                )
-                if feed_error:
-                    return result
-                payload, at_home_error = _mangadex_payload_with_at_home(
-                    row,
-                    plan,
-                    wanted_item,
-                    {
-                        "manga": manga_row,
-                        "feed": (feed_payload or {}).get("feed") if isinstance(feed_payload, dict) else {},
-                        "search": search_payload,
-                        "query_variants": list(fetch_plan.get("query_variants") or []),
-                        "variant_result_counts": variant_counts,
-                    },
-                    http_get,
-                    result,
-                    limit=limit,
-                    deadline=deadline,
-                )
-                if at_home_error:
-                    result["reason"] = "http_request_failed"
-                    result["error"] = at_home_error
-                    return result
-                result["payloads"].append(payload)
-                result["response_headers"][str(len(result["payloads"]) - 1)] = feed_headers
-                if _mangadex_feed_payload_has_match(payload, row, wanted_item, limit=limit):
-                    result["query_variants"] = list(fetch_plan.get("query_variants") or [])
-                    result["variant_result_counts"] = variant_counts
-                    result["ok"] = True
-                    return result
+            query_expansion_count = sum(1 for row_count in variant_counts if row_count.get("query_expansion"))
+            if expansion_status == "error":
+                return result
+            if expansion_status == "matched":
+                result["query_variants"] = list(fetch_plan.get("query_variants") or [])
+                result["variant_result_counts"] = variant_counts
+                result["query_expansion_count"] = query_expansion_count
+                result["ok"] = True
+                return result
         result["query_variants"] = list(fetch_plan.get("query_variants") or [])
         result["variant_result_counts"] = variant_counts
+        if expansion_requests:
+            result["query_expansion_count"] = query_expansion_count
         result["ok"] = True
         return result
     if fetch_plan.get("payload_mode") == "rss_feed_then_direct_file_pages":
         first_request = fetch_plan["requests"][0] if fetch_plan.get("requests") else None
         if not first_request:
             result["reason"] = "missing_rss_detail_direct_feed_request"
+            return result
+        if _fetch_deadline_reached(deadline):
+            result["reason"] = "fetch_deadline_reached"
+            result["error"] = "fetch_deadline_reached"
             return result
         response, error = _safe_response_payload(http_get, first_request)
         result["requests_made"].append(first_request)
@@ -5750,50 +5985,115 @@ def fetch_payloads(row, plan, wanted_item=None, *, http_get=None, tool_runner=No
         seen_detail_urls = set()
         discovery_hosts = _rss_discovery_allowed_hosts(row)
         links = providers.rss_item_links_from_payload(feed_payload, wanted_item, source_site=source_site, limit=limit)
-        for link in links:
-            if len(combined["detail_pages"]) >= max_detail_pages:
-                break
-            detail_url = str(link.get("url") or "").strip()
-            if not detail_url or detail_url in seen_detail_urls:
-                continue
-            parsed = urlparse(detail_url)
-            if str(parsed.scheme or "").lower() not in {"http", "https"}:
-                continue
-            if not _url_host_allowed(detail_url, discovery_hosts):
+
+        def eligible_detail_links():
+            for feed_index, link in enumerate(links):
+                detail_url = str(link.get("url") or "").strip()
+                if not detail_url or detail_url in seen_detail_urls:
+                    continue
+                parsed = urlparse(detail_url)
+                if str(parsed.scheme or "").lower() not in {"http", "https"}:
+                    continue
+                if not _url_host_allowed(detail_url, discovery_hosts):
+                    yield {
+                        "feed_index": feed_index,
+                        "request": {"request_id": "rss_detail_direct_page", "url": detail_url},
+                        "error": "disallowed_detail_host",
+                    }
+                    continue
+                if providers.normalize_extension(detail_url):
+                    continue
+                seen_detail_urls.add(detail_url)
+                yield {"feed_index": feed_index, "link": link, "detail_url": detail_url}
+
+        detail_links = iter(eligible_detail_links())
+        detail_attempt_index = 0
+        while len(combined["detail_pages"]) < max_detail_pages:
+            if _fetch_deadline_reached(deadline):
                 _record_partial_fetch_error(
                     result,
                     combined,
-                    {"request_id": "rss_detail_direct_page", "url": detail_url},
-                    "disallowed_detail_host",
+                    {
+                        "request_id": "direct_file_detail_page_deadline",
+                        "purpose": "fetch_direct_file_detail_page",
+                        "url": first_request.get("url"),
+                        "retryable": True,
+                    },
+                    "fetch_deadline_reached",
                     stage="rss_detail_direct_page",
                 )
-                continue
-            if providers.normalize_extension(detail_url):
-                continue
-            seen_detail_urls.add(detail_url)
-            detail_request = direct_file_detail_page_request(
-                detail_url,
-                len(combined["detail_pages"]),
-                allowed_hosts=discovery_hosts,
+                break
+            wave = []
+            wave_errors = []
+            remaining = max_detail_pages - len(combined["detail_pages"])
+            while len(wave) < remaining:
+                try:
+                    candidate = next(detail_links)
+                except StopIteration:
+                    break
+                if candidate.get("error"):
+                    wave_errors.append(candidate)
+                    continue
+                link = candidate["link"]
+                detail_url = candidate["detail_url"]
+                detail_request = direct_file_detail_page_request(
+                    detail_url,
+                    detail_attempt_index,
+                    allowed_hosts=discovery_hosts,
+                )
+                # Detail URLs are unique within the bounded feed walk. They
+                # must not contend on either the per-batch or durable feed
+                # cache when this wave executes concurrently.
+                detail_request["cacheable"] = False
+                detail_attempt_index += 1
+                wave.append((candidate["feed_index"], link, detail_request))
+            if not wave and not wave_errors:
+                break
+            wave_responses = _rss_detail_response_batch(
+                http_get,
+                [request for _index, _link, request in wave],
             )
-            detail_response, detail_error = _safe_response_payload(http_get, detail_request)
-            result["requests_made"].append(detail_request)
-            if detail_error:
-                _record_partial_fetch_error(
-                    result,
-                    combined,
-                    detail_request,
-                    detail_error,
-                    stage="rss_detail_direct_page",
+            ordered_outcomes = list(wave_errors)
+            ordered_outcomes.extend(
+                {
+                    "feed_index": feed_index,
+                    "link": link,
+                    "request": detail_request,
+                    "response": detail_response,
+                    "error": detail_error,
+                    "request_made": True,
+                }
+                for (feed_index, link, detail_request), (detail_response, detail_error) in zip(
+                    wave,
+                    wave_responses,
                 )
-                continue
-            detail_payload = _html_payload_for_request(detail_response["payload"], detail_request)
-            detail_payload.setdefault("title", link.get("title"))
-            combined["detail_pages"].append(detail_payload)
-            result["response_headers"][f"detail_{len(combined['detail_pages']) - 1}"] = detail_response["headers"]
-            if len(combined["detail_pages"]) >= max_detail_pages:
-                break
+            )
+            for outcome in sorted(ordered_outcomes, key=lambda value: value["feed_index"]):
+                detail_request = outcome["request"]
+                if outcome.get("request_made"):
+                    result["requests_made"].append(detail_request)
+                if outcome.get("error"):
+                    _record_partial_fetch_error(
+                        result,
+                        combined,
+                        detail_request,
+                        outcome["error"],
+                        stage="rss_detail_direct_page",
+                    )
+                    continue
+                detail_response = outcome["response"]
+                link = outcome["link"]
+                detail_payload = _html_payload_for_request(detail_response["payload"], detail_request)
+                detail_payload.setdefault("title", link.get("title"))
+                combined["detail_pages"].append(detail_payload)
+                result["response_headers"][f"detail_{len(combined['detail_pages']) - 1}"] = detail_response[
+                    "headers"
+                ]
         result["payloads"].append(combined)
+        if detail_attempt_index and not combined["detail_pages"]:
+            result["reason"] = "http_request_failed"
+            result["error"] = "all_rss_detail_requests_failed"
+            return result
         result["ok"] = True
         return result
     if fetch_plan.get("payload_mode") == "rss_feed_then_direct_file_probes":

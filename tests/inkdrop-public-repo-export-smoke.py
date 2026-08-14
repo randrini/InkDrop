@@ -42,6 +42,7 @@ REQUIRED_EXPORT_FILES = {
     "tests/inkdrop-automatic-search-recall-smoke.py",
     "tests/inkdrop-acquisition-funnel-evidence-smoke.py",
     "tests/inkdrop-history-taxonomy-smoke.py",
+    "tests/inkdrop-manga-companion-removal-authority-smoke.py",
     "tests/inkdrop-settings-backup-restore-smoke.py",
     "tests/inkdrop-settings-backup-browser-smoke.py",
     "tests/inkdrop-manual-review-load-browser-smoke.py",
@@ -109,6 +110,14 @@ PRIVATE_TEXT_MARKERS = {
     # ignore files and this suite's own fixtures.
     "co" + "dex",
 }
+
+HARDCODED_PROVIDER_SERIES_ID_RE = re.compile(
+    r"(?:mangadex|comicvine):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+# Word-bounded so the organization slug in ghcr.io/<owner>bahr/... and the
+# repository URLs in core/inkdrop_version.py -- project identity, not personal
+# attribution -- never match.
+MAINTAINER_ATTRIBUTION_RE = re.compile(r"\b" + "Jar" + r"ed\b", re.IGNORECASE)
 
 TEXT_SUFFIXES = {
     "",
@@ -509,10 +518,70 @@ def assert_open_placeholder_detection_works():
     )
 
 
+def install_specific_repair_findings(text):
+    """Install-specific repair residue in exported runtime source.
+
+    Two shapes, both of which have actually shipped:
+
+    * a repair keyed on one hardcoded provider series id -- correct for the
+      installation it was written for, silent data damage on any other
+      installation holding that same series;
+    * a maintainer named as the decision-maker in a code comment, which is
+      one person's private call published as product rationale.
+
+    The organization slug in a repository or image URL is project identity,
+    not a personal attribution, and must not trip this.
+    """
+    findings = []
+    findings.extend(sorted(set(HARDCODED_PROVIDER_SERIES_ID_RE.findall(text))))
+    if MAINTAINER_ATTRIBUTION_RE.search(text):
+        findings.append("maintainer attribution")
+    return findings
+
+
+def assert_install_specific_repair_detection_works():
+    """Unit-test the detector against synthetic text, so a clean export tree
+    is never mistaken for a working check."""
+    owner = "Jar" + "ed"
+    require(
+        install_specific_repair_findings(
+            'SERIES_ID = "mangadex:a1c7c817-4e59-43b7-9365-09675a149a6f"'
+        ) == ["mangadex:a1c7c817-4e59-43b7-9365-09675a149a6f"],
+        "detector must flag a hardcoded provider series id",
+    )
+    require(
+        install_specific_repair_findings(f"# 4 hours is {owner}'s call (2026-08-08)") == ["maintainer attribution"],
+        "detector must flag a maintainer named as decision-maker",
+    )
+    require(
+        install_specific_repair_findings("image: ghcr.io/jaredbahr/inkdrop:latest") == [],
+        "detector must not flag the organization slug in an image reference",
+    )
+    require(
+        install_specific_repair_findings('provider_series_id="31022"') == [],
+        "detector must not flag an ordinary provider id argument",
+    )
+
+
+def assert_no_install_specific_repairs(root):
+    """Exported runtime source carries no install-specific repair. Scoped to
+    the shipped runtime modules and tools rather than the whole tree, so a
+    test fixture that legitimately names a provider id stays legible."""
+    root = Path(root)
+    for relative in sorted(exported_paths(root)):
+        path = Path(relative)
+        if path.suffix != ".py" or path.parts[0] not in {"core", "tools"}:
+            continue
+        text = (root / relative).read_text(encoding="utf-8")
+        findings = install_specific_repair_findings(text)
+        require(not findings, f"install-specific repair residue exported in {relative}: {findings}")
+
+
 def main():
     assert_current_release_path_validation()
     assert_forbidden_path_policy()
     assert_open_placeholder_detection_works()
+    assert_install_specific_repair_detection_works()
     require(
         not (inkdrop_public_repo_export.ROOT / "PUBLIC_REPO_MANIFEST.json").exists(),
         "PUBLIC_REPO_MANIFEST.json is generated in staged exports and must not be checked into the workspace",
@@ -538,6 +607,7 @@ def main():
             parts = set(Path(path).parts)
             require(not (parts & FORBIDDEN_PARTS), f"forbidden path part exported: {path}")
         assert_no_private_text_markers(tmp)
+        assert_no_install_specific_repairs(tmp)
         manifest = json.loads((Path(tmp) / "PUBLIC_REPO_MANIFEST.json").read_text(encoding="utf-8"))
         require(manifest.get("schema") == "inkdrop.public_repo_export.v1", "export manifest schema should be stable")
         require(manifest.get("file_count") == len(paths) - 1, "manifest should count copied files, excluding itself")

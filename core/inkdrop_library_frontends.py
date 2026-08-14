@@ -217,6 +217,91 @@ def library_ids_for_host_folder(host_folder, settings, *, comic_root, manga_root
         return [], "unknown"
 
 
+def komga_list_libraries(settings):
+    """Ask Komga's own /libraries for the libraries it actually has, id/name/root.
+
+    Kavita never needs operator-entered library ids because InkDrop reads Kavita's
+    own database directly. Komga has no local database to read, but it does expose
+    its library roots over the API -- this is the live source of truth that lets
+    Komga match that behavior instead of requiring hand-typed library UUIDs.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    if not settings.get("base_url") or not settings.get("username") or not settings.get("password"):
+        return {"ok": False, "reason": "komga_credentials_missing", "libraries": []}
+    backoff = _komga_failure_backoff_status(settings)
+    if backoff:
+        return {"ok": False, "libraries": [], **backoff}
+    try:
+        response = http_requests().get(
+            settings["base_url"].rstrip("/") + "/libraries",
+            auth=(settings["username"], settings["password"]),
+            timeout=settings.get("timeout_seconds") or 8,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        if _komga_endpoint_unavailable(exc):
+            _remember_komga_failure(settings)
+        return {
+            "ok": False,
+            "reason": "komga_libraries_request_failed",
+            "error": safe_error_text(exc, (settings.get("username"), settings.get("password"))),
+            "libraries": [],
+        }
+    _clear_komga_failure(settings)
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = []
+    libraries = []
+    for entry in payload if isinstance(payload, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        library_id = str(entry.get("id") or "").strip()
+        if not library_id:
+            continue
+        libraries.append(
+            {
+                "id": library_id,
+                "name": str(entry.get("name") or "").strip(),
+                "root": normalized_adapter_path(entry.get("root")),
+            }
+        )
+    return {"ok": True, "libraries": libraries}
+
+
+def komga_candidate_library_ids_for_host_folder(host_folder, settings, *, comic_root, manga_root):
+    """Live-discovery fallback for library_ids_for_host_folder.
+
+    Translates host_folder to the path Komga would see, then asks Komga's own
+    /libraries which library roots contain it -- the Komga analogue of Kavita's
+    live FolderPath-table lookup. Used only when comic_library_ids/manga_library_ids
+    are left unconfigured; explicit operator settings always take precedence.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    try:
+        komga_folder = host_path_to_frontend_path(
+            host_folder,
+            comic_root=comic_root,
+            manga_root=manga_root,
+            frontend_comic_root=settings.get("komga_comic_root", "/data/comics"),
+            frontend_manga_root=settings.get("komga_manga_root", "/data/manga"),
+        )
+    except ValueError:
+        return []
+    listing = komga_list_libraries(settings)
+    if not listing.get("ok"):
+        return []
+    folder_key = normalized_adapter_path(komga_folder).lower()
+    matches = []
+    for library in listing.get("libraries") or []:
+        root = str(library.get("root") or "").lower()
+        if not root:
+            continue
+        if folder_key == root or folder_key.startswith(root + "/"):
+            matches.append(library["id"])
+    return matches
+
+
 def trigger_komga_scan_folder(host_folder, *, settings, comic_root, manga_root):
     settings = settings if isinstance(settings, dict) else {}
     result = {
@@ -246,6 +331,12 @@ def trigger_komga_scan_folder(host_folder, *, settings, comic_root, manga_root):
         frontend_comic_root=settings.get("komga_comic_root", "/data/comics"),
         frontend_manga_root=settings.get("komga_manga_root", "/data/manga"),
     )
+    if not library_ids:
+        library_ids = komga_candidate_library_ids_for_host_folder(
+            host_folder, settings, comic_root=comic_root, manga_root=manga_root
+        )
+        if library_ids:
+            result["library_ids_source"] = "live_discovery"
     if not library_ids:
         result.update({"skipped": True, "reason": f"komga_{media_type}_library_ids_missing"})
         return result
@@ -332,12 +423,57 @@ def komga_book_matches_path(book, host_path, komga_path):
         normalized = normalized_adapter_path(value)
         lowered = normalized.lower()
         if lowered in wanted_paths:
-            return True, "exact_path"
+            return True, "exact_path", value
         if Path(normalized).name.lower() == filename.lower():
-            return True, "filename"
+            return True, "filename", value
         if Path(normalized).stem.lower() == stem.lower() and Path(normalized).suffix.lower() == Path(filename).suffix.lower():
-            return True, "filename_stem_suffix"
-    return False, ""
+            return True, "filename_stem_suffix", value
+    return False, "", ""
+
+
+def komga_book_number_values(book):
+    """Every number-ish field Komga's book payload might carry for the issue/chapter/volume number."""
+    values = []
+    if not isinstance(book, dict):
+        return values
+    metadata = book.get("metadata") if isinstance(book.get("metadata"), dict) else {}
+    for value in (metadata.get("number"), metadata.get("numberSort"), book.get("number")):
+        if value not in (None, ""):
+            values.append(value)
+    return values
+
+
+def _komga_numeric_tokens(value):
+    return {token.lstrip("0") or "0" for token in re.findall(r"\d+(?:\.\d+)?", str(value or ""))}
+
+
+def komga_book_matches_unit(book, expected_number):
+    """True when expected_number can't be checked (nothing to compare) or a book number field matches it."""
+    expected_number = str(expected_number or "").strip()
+    if not expected_number:
+        return True
+    expected_tokens = _komga_numeric_tokens(expected_number)
+    if not expected_tokens:
+        return True
+    for value in komga_book_number_values(book):
+        if expected_tokens & _komga_numeric_tokens(value):
+            return True
+    return False
+
+
+def komga_book_matches_series_folder(matched_value, expected_folder):
+    """True when there's nothing to compare, or the matched value's own folder agrees with expected_folder.
+
+    Only path-shaped matched values (containing a '/') carry a folder to compare; a
+    title-metadata match has no folder of its own and can't disagree, so it passes.
+    """
+    expected_folder = str(expected_folder or "").strip()
+    if not expected_folder:
+        return True
+    normalized = normalized_adapter_path(matched_value)
+    if "/" not in normalized:
+        return True
+    return Path(normalized).parent.name.casefold() == expected_folder.casefold()
 
 
 def komga_search_books(settings, query, library_ids, limit=25):
@@ -406,8 +542,9 @@ def komga_list_books_page(settings, library_ids, page=0, limit=100):
     }
 
 
-def komga_file_visible_for_host_path(host_path, *, settings, comic_root, manga_root):
+def komga_file_visible_for_host_path(host_path, *, settings, comic_root, manga_root, expectation=None):
     settings = settings if isinstance(settings, dict) else {}
+    expectation = expectation if isinstance(expectation, dict) else {}
     result = {
         "provider": "komga",
         "visible": False,
@@ -428,6 +565,26 @@ def komga_file_visible_for_host_path(host_path, *, settings, comic_root, manga_r
     if media_type == "unknown":
         result.update({"status": "skipped", "reason": "komga_file_outside_managed_roots"})
         return result
+    expected_library_type = str(expectation.get("library_type") or "").strip().lower()
+    if expected_library_type:
+        actual_library_type = "manga" if media_type == "manga" else "comics" if media_type == "comics" else media_type
+        if expected_library_type != actual_library_type:
+            result.update({"status": "wrong_library", "reason": "komga_library_identity_mismatch"})
+            return result
+    expected_unit_type = str(expectation.get("unit_type") or "").strip().lower()
+    expected_unit_number = str(expectation.get("unit_number") or "").strip()
+    expected_folder = str(expectation.get("series_folder") or "").strip()
+    # Komga has no InkDrop-side series/library binding the way Kavita does (no local
+    # DB to join against), so unlike Kavita's expectation gate this never hard-fails
+    # on missing identity fields -- it only rejects a path/filename match when the
+    # matched book's own number or folder actively disagrees with what was expected.
+    unit_check_applicable = bool(expected_unit_type in {"volume", "chapter", "issue"} and expected_unit_number)
+    if not library_ids:
+        library_ids = komga_candidate_library_ids_for_host_folder(
+            host_path.parent, settings, comic_root=comic_root, manga_root=manga_root
+        )
+        if library_ids:
+            result["library_ids_source"] = "live_discovery"
     if not library_ids:
         result.update({"status": "skipped", "reason": f"komga_{media_type}_library_ids_missing"})
         return result
@@ -451,6 +608,15 @@ def komga_file_visible_for_host_path(host_path, *, settings, comic_root, manga_r
     if host_path.stem and host_path.stem not in queries:
         queries.append(host_path.stem)
     errors = []
+    best_mismatch = None
+
+    def identity_mismatch(book, matched_value):
+        if unit_check_applicable and not komga_book_matches_unit(book, expected_unit_number):
+            return "wrong_unit", "komga_unit_identity_mismatch"
+        if expected_folder and not komga_book_matches_series_folder(matched_value, expected_folder):
+            return "wrong_series_folder", "komga_series_folder_identity_mismatch"
+        return None
+
     for query in queries:
         result["queries"].append(query)
         try:
@@ -488,8 +654,21 @@ def komga_file_visible_for_host_path(host_path, *, settings, comic_root, manga_r
         books = search.get("books") or []
         result["candidate_count"] += len(books)
         for book in books:
-            matched, reason = komga_book_matches_path(book, host_path, komga_path)
+            matched, reason, matched_value = komga_book_matches_path(book, host_path, komga_path)
             if not matched:
+                continue
+            mismatch = identity_mismatch(book, matched_value)
+            if mismatch:
+                if best_mismatch is None:
+                    status, mismatch_reason = mismatch
+                    best_mismatch = {
+                        "status": status,
+                        "reason": mismatch_reason,
+                        "match_reason": reason,
+                        "book_id": book.get("id") if isinstance(book, dict) else None,
+                        "book_name": book.get("name") if isinstance(book, dict) else None,
+                        "matched_path_values": komga_book_path_values(book)[:5],
+                    }
                 continue
             result.update(
                 {
@@ -526,8 +705,23 @@ def komga_file_visible_for_host_path(host_path, *, settings, comic_root, manga_r
         result["path_scan_pages_checked"] += 1
         result["candidate_count"] += len(books)
         for book in books:
-            matched, reason = komga_book_matches_path(book, host_path, komga_path)
+            matched, reason, matched_value = komga_book_matches_path(book, host_path, komga_path)
             if not matched:
+                continue
+            mismatch = identity_mismatch(book, matched_value)
+            if mismatch:
+                if best_mismatch is None:
+                    status, mismatch_reason = mismatch
+                    best_mismatch = {
+                        "status": status,
+                        "reason": mismatch_reason,
+                        "match_reason": reason,
+                        "book_id": book.get("id") if isinstance(book, dict) else None,
+                        "book_name": book.get("name") if isinstance(book, dict) else None,
+                        "matched_path_values": komga_book_path_values(book)[:5],
+                        "path_scan_match": True,
+                        "path_scan_page": page,
+                    }
                 continue
             result.update(
                 {
@@ -555,6 +749,8 @@ def komga_file_visible_for_host_path(host_path, *, settings, comic_root, manga_r
             result.update(backoff)
         else:
             result["reason"] = "komga_visibility_search_failed"
+    elif best_mismatch is not None:
+        result.update(best_mismatch)
     else:
         result["status"] = "not_visible"
         result["reason"] = "komga_no_matching_book"

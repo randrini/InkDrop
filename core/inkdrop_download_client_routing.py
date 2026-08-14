@@ -198,6 +198,16 @@ def materialize_instance_settings(db_path, instance_id, media_type="comics", *, 
     categories = _json(row.get("categories_json"), {})
     paths = _json(row.get("download_paths_json"), {})
     refs = _json(row.get("secret_refs_json"), {})
+    auth_method = _text(row.get("auth_method"))
+    if auth_method:
+        # Once a row has an explicit auth_method, the credential it was NOT
+        # switched to must never be resolved for real dispatch either -- a
+        # rotation that only takes effect for the "Test" button and not for
+        # actual downloads is the same bug with extra steps
+        # (PASS32-CONFIG-P2-01).
+        group = inkdrop_download_client_config.exclusive_secret_group_for_type(client_type)
+        if auth_method in group:
+            refs = {field: ref for field, ref in refs.items() if field not in group or field == auth_method}
     secrets = {field: inkdrop_secret_store.read_secret(reference, root=secret_root) for field, reference in refs.items()}
     category = _text(categories.get(media_type) or row.get("category"))
     download_path = _text(paths.get(media_type) or row.get("download_path"))

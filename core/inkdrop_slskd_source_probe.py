@@ -93,7 +93,7 @@ MARK_WAITING_API_URL = os.environ.get("INKDROP_MARK_WAITING_API_URL") or (
 )
 DEFAULT_SLSKD_DOWNLOAD_ROOT = Path(os.environ.get("INKDROP_SLSKD_DOWNLOAD_ROOT") or STAGING_DIR / "slskd")
 SLSKD_DOWNLOAD_ROOT = DEFAULT_SLSKD_DOWNLOAD_ROOT
-SLSKD_INCOMPLETE_ROOT = SLSKD_DOWNLOAD_ROOT / "incomplete"
+SLSKD_INCOMPLETE_ROOT = Path(os.environ.get("INKDROP_SLSKD_INCOMPLETE_ROOT") or SLSKD_DOWNLOAD_ROOT / "incomplete")
 MANUAL_COMICS_INBOX = Path(os.environ.get("INKDROP_MANUAL_COMICS_INBOX") or MANUAL_INBOX_DIR / "comics")
 
 
@@ -886,6 +886,27 @@ EXPLICIT_ENGLISH_TRANSLATION_MARKERS = {
     "translated",
     "translation",
 }
+# Official English-language manga imprints only -- unlike MANGA_PUBLISHER_PHRASES
+# above (which also matches original Japanese publishers like Shueisha/Shogakukan
+# for media-type classification), this set exists solely to give a real English
+# publisher release preference weight over a same-language fan scanlation. Bare
+# "Kodansha" is excluded on purpose -- it's also the original Japanese publisher
+# for many licensed series, so an unqualified credit is not evidence of an
+# official English release. Mirrors ENGLISH_MANGA_PUBLISHER_TERMS in
+# inkdrop_missing_acquire.py; keep both lists in sync.
+ENGLISH_MANGA_PUBLISHER_TERMS = (
+    re.compile(r"\bviz(?:\s*media)?\b", re.I),
+    re.compile(r"\bkodansha\s*(?:usa|comics(?:\s*usa)?)\b", re.I),
+    re.compile(r"\byen\s+press\b", re.I),
+    re.compile(r"\bseven\s+seas(?:\s+entertainment)?\b", re.I),
+    re.compile(r"\bsquare\s+enix\s+manga\b", re.I),
+    re.compile(r"\bdark\s+horse\s+manga\b", re.I),
+    re.compile(r"\bvertical\s+comics\b", re.I),
+    re.compile(r"\bdenpa\b", re.I),
+    re.compile(r"\btokyopop\b", re.I),
+    re.compile(r"\budon\s+entertainment\b", re.I),
+    re.compile(r"\bone\s+peace\s+books\b", re.I),
+)
 STOP_WORDS = {
     "and",
     "are",
@@ -974,7 +995,12 @@ def utc_stamp(ts=None):
 
 
 def normalize(value):
-    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+    # Fold "&" / "&amp;" to "and" before stripping non-alphanumerics -- see
+    # core/inkdrop_completed_import.py's clean_words() for the root cause.
+    # A bare title-symbol strip drops "&" entirely, so "Love & Rockets" and
+    # "Love and Rockets" tokenize to different word sequences here too.
+    text = str(value or "").lower().replace("&amp;", " and ").replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def normalize_key(value):
@@ -4285,6 +4311,12 @@ def merge_slskd_search_responses(existing, observed):
 DEFAULT_SLSKD_SEARCH_MIN_INTERVAL_SECONDS = 5.0
 DEFAULT_SLSKD_SEARCH_MAX_PER_HOUR = 60
 DEFAULT_SLSKD_REPEAT_QUERY_COOLDOWN_SECONDS = 24 * 3600
+# Matches SLSKD_ZERO_RESULT_REPROBE_SECONDS in inkdrop_series_autopilot.py --
+# the cadence already judged safe for "the peer set is unlikely to have
+# changed yet." That per-row reprobe gate never sees a repeat when ~100 rows
+# of one series build the same broad query (see reusable_slskd_search()), so
+# this is the same judgment call applied per query text instead of per row.
+DEFAULT_SLSKD_ZERO_RESULT_QUERY_COOLDOWN_SECONDS = 60 * 60
 # One peer answering is a search that got cut short, not an answer about what
 # the network holds.
 MIN_REUSABLE_SEARCH_RESPONSES = 2
@@ -4379,7 +4411,20 @@ def slskd_repeat_query_cooldown_seconds():
     return max(0.0, min(value, 7 * 24 * 3600))
 
 
-def reusable_slskd_search(query, max_age_seconds):
+def slskd_zero_result_query_cooldown_seconds():
+    try:
+        value = float(
+            os.environ.get("INKDROP_SLSKD_ZERO_RESULT_QUERY_COOLDOWN_SECONDS")
+            or DEFAULT_SLSKD_ZERO_RESULT_QUERY_COOLDOWN_SECONDS
+        )
+    except (TypeError, ValueError):
+        value = DEFAULT_SLSKD_ZERO_RESULT_QUERY_COOLDOWN_SECONDS
+    # Capped at the rich-result window so a zero/thin answer can never stand
+    # for longer than a strong one -- it is always the shorter of the two.
+    return max(0.0, min(value, slskd_repeat_query_cooldown_seconds()))
+
+
+def reusable_slskd_search(query, max_age_seconds, zero_result_max_age_seconds=0):
     """The most recent finished search for this exact text, if it still stands.
 
     Soulseek has no index to re-crawl: a search asks whoever is online right
@@ -4390,9 +4435,13 @@ def reusable_slskd_search(query, max_age_seconds):
     broad series query, so the per-row cooldown never sees a repeat.
 
     Reuse what SLSKD already stored instead of starting another real search on
-    the operator's account. Only reuse a search that actually found something --
-    if the last identical query came back empty, let a new one run, so this can
-    never pin a row to an old miss.
+    the operator's account. A search that actually found something is reused
+    for up to `max_age_seconds`. A search that came back empty or thin is a
+    different kind of answer -- it is genuinely more likely to change soon (a
+    peer could come online any minute) -- so it is only reused for the much
+    shorter `zero_result_max_age_seconds`, and only when the caller opts in.
+    Callers that pass 0 for that window (the default) get the original
+    behavior: an empty or thin prior result never blocks a fresh search.
 
     "Finished" is not the same as "representative", and the difference is not
     cosmetic. A Soulseek search ends either because it ran out of room for
@@ -4400,14 +4449,16 @@ def reusable_slskd_search(query, max_age_seconds):
     deployment range from 0 to 185 peers. The live search for "Injustice Gods
     Among Us comic" timed out having heard back from exactly one peer, while
     the run of single issues it was looking for is widely shared. Reusing that
-    for a day would pin the series to one peer's shelf.
+    for a day would pin the series to one peer's shelf -- but reusing it for
+    an hour, the same cadence already judged safe for zero-result reprobes, is
+    a fair trade against re-asking the exact same question every 30 minutes.
 
     So reuse only the strongest snapshot this query has produced inside the
-    window, and never a single-peer answer. A thinner, newer search does not
-    displace a richer one, and a query that has only ever answered thinly is
-    left to run again.
+    rich-result window, and never let a thinner, newer search displace a
+    richer one. Only once no rich answer stands does a recent zero/thin
+    answer get reused, and only inside its own shorter window.
     """
-    if max_age_seconds <= 0:
+    if max_age_seconds <= 0 and zero_result_max_age_seconds <= 0:
         return None
     wanted = normalize(query)
     if not wanted:
@@ -4418,29 +4469,47 @@ def reusable_slskd_search(query, max_age_seconds):
         return None
     if not isinstance(rows, list):
         return None
-    cutoff = now() - max_age_seconds
-    matching = []
-    for row in rows:
-        if not isinstance(row, dict) or not row.get("isComplete"):
-            continue
-        if normalize(row.get("searchText")) != wanted:
-            continue
-        if int(row.get("fileCount") or 0) <= 0:
-            continue
-        started_at = _parse_slskd_started_at(row.get("startedAt"))
-        if started_at is None or started_at < cutoff:
-            continue
-        matching.append((started_at, int(row.get("responseCount") or 0), row))
-    if not matching:
-        return None
-    best_responses = max(responses for _, responses, _ in matching)
-    if best_responses < MIN_REUSABLE_SEARCH_RESPONSES:
-        return None
-    # Newest among the richest, so reuse tracks the best answer we have seen
-    # rather than the most recent one.
-    richest = [row for row in matching if row[1] >= best_responses]
-    richest.sort(key=lambda row: row[0], reverse=True)
-    return richest[0][2]
+
+    def completed_matches(window_seconds):
+        if window_seconds <= 0:
+            return []
+        cutoff = now() - window_seconds
+        matches = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("isComplete"):
+                continue
+            if normalize(row.get("searchText")) != wanted:
+                continue
+            started_at = _parse_slskd_started_at(row.get("startedAt"))
+            if started_at is None or started_at < cutoff:
+                continue
+            matches.append((started_at, row))
+        return matches
+
+    rich_matching = [
+        (started_at, int(row.get("responseCount") or 0), row)
+        for started_at, row in completed_matches(max_age_seconds)
+        if int(row.get("fileCount") or 0) > 0
+    ]
+    if rich_matching:
+        best_responses = max(responses for _, responses, _ in rich_matching)
+        if best_responses >= MIN_REUSABLE_SEARCH_RESPONSES:
+            # Newest among the richest, so reuse tracks the best answer we
+            # have seen rather than the most recent one.
+            richest = [(started_at, row) for started_at, responses, row in rich_matching if responses >= best_responses]
+            richest.sort(key=lambda pair: pair[0], reverse=True)
+            return richest[0][1]
+
+    zero_matching = [
+        (started_at, row)
+        for started_at, row in completed_matches(zero_result_max_age_seconds)
+        if int(row.get("fileCount") or 0) <= 0 or int(row.get("responseCount") or 0) < MIN_REUSABLE_SEARCH_RESPONSES
+    ]
+    if zero_matching:
+        zero_matching.sort(key=lambda pair: pair[0], reverse=True)
+        return zero_matching[0][1]
+
+    return None
 
 
 def enforce_slskd_search_pacing(deadline=None):
@@ -4475,15 +4544,23 @@ def enforce_slskd_search_pacing(deadline=None):
         time.sleep(wait_for)
 
 
-def slskd_search(query, wait_seconds=8, deadline=None, reuse_recent_seconds=0):
+def slskd_search(query, wait_seconds=8, deadline=None, reuse_recent_seconds=0, zero_result_reuse_recent_seconds=0):
     remaining = seconds_remaining(deadline)
     if remaining is not None and remaining < 1:
         raise TimeoutError("SLSKD probe budget exhausted before query")
     require_slskd_ready_for_search()
     # Automatic passes opt into reuse; a person who just pressed Search has not,
     # and always gets a live query.
-    recent = reusable_slskd_search(query, reuse_recent_seconds) if reuse_recent_seconds else None
+    recent = (
+        reusable_slskd_search(query, reuse_recent_seconds, zero_result_reuse_recent_seconds)
+        if (reuse_recent_seconds or zero_result_reuse_recent_seconds)
+        else None
+    )
     if recent:
+        is_zero_result_reuse = (
+            int(recent.get("fileCount") or 0) <= 0
+            or int(recent.get("responseCount") or 0) < MIN_REUSABLE_SEARCH_RESPONSES
+        )
         try:
             reused = slskd_get(
                 f"/searches/{recent.get('id')}/responses",
@@ -4491,12 +4568,17 @@ def slskd_search(query, wait_seconds=8, deadline=None, reuse_recent_seconds=0):
             )
         except Exception:
             reused = None
-        if isinstance(reused, list) and reused:
+        # A rich reuse must actually get responses back, or the stored search
+        # may no longer be retrievable and this should fall through to a live
+        # query. A zero/thin reuse is legitimately an empty list -- that IS
+        # the answer being reused.
+        if isinstance(reused, list) and (reused or is_zero_result_reuse):
             log(
                 "slskd_search_reused_recent",
                 query=query,
                 started_at=recent.get("startedAt"),
                 age_seconds=round(now() - (_parse_slskd_started_at(recent.get("startedAt")) or now()), 1),
+                zero_result_reuse=is_zero_result_reuse,
                 file_count=recent.get("fileCount"),
                 response_count=len(reused),
             )
@@ -5352,16 +5434,25 @@ def collected_singleton_edition_conflict(filename, item):
     candidate with no year at all, or one that does carry a matching marker,
     is left alone.
 
-    Before any of that: if ComicVine's own catalog has no standalone plain
-    edition of this work at all (comicvine_edition_target_has_standalone_
-    alternative), the tracked edition was never a real choice among options --
-    per an explicit operator decision (originally scoped to Absolute Batman:
-    The Court of Owls, generalized here to any series in the same shape), any
-    complete, correctly-identified release is accepted instead of requiring
-    the exact tracked printing. Defaults to the strict check whenever this
-    can't be confirmed (no comicvine_id, no API key, ComicVine unreachable) --
+    Before any of that: two ways this strict check can be relaxed for a given
+    series. First, an explicit per-series "Edition Indifferent" override
+    (item["edition_indifferent"], set via
+    inkdrop_state.set_series_edition_indifferent_override() -- the operator
+    has said outright "any complete, correctly-identified release satisfies
+    this series," so the check is skipped unconditionally, no ComicVine
+    lookup needed. Second, an automatic relaxation: if ComicVine's own
+    catalog has no standalone plain edition of this work at all
+    (comicvine_edition_target_has_standalone_alternative), the tracked
+    edition was never a real choice among options -- per an explicit operator
+    decision (originally scoped to Absolute Batman: The Court of Owls,
+    generalized here to any series in the same shape), any complete,
+    correctly-identified release is accepted instead of requiring the exact
+    tracked printing. Defaults to the strict check whenever this can't be
+    confirmed (no comicvine_id, no API key, ComicVine unreachable) --
     unproven is not the same as proven absent.
     """
+    if bool((item or {}).get("edition_indifferent")):
+        return ""
     comicvine_id = str((item or {}).get("comicvine_id") or "").strip()
     singleton_title = str((item or {}).get("singleton_series_title") or (item or {}).get("series") or "").strip()
     if (
@@ -6141,6 +6232,24 @@ def english_release_provenance_bonus(filename):
     return min(14, bonus), ["English/source provenance +" + str(min(14, bonus))]
 
 
+def english_manga_publisher_bonus(filename, item):
+    """Tiebreak among already-acceptable manga candidates when the user wants
+    English: a release credited to an official English-language publisher
+    outranks an otherwise equal raw scanlation. Never blocks a candidate --
+    only nudges ranking, and only for manga with English still preferred.
+    Indexer-side twin: english_publisher_preference_score() in
+    inkdrop_missing_acquire.py."""
+    if str((item or {}).get("media_type") or "").strip().lower() != "manga":
+        return 0, []
+    preferred_language = str(QUALITY_LANGUAGE_RULES.get("preferred_language") or "english").strip().lower()
+    if preferred_language not in {"english", "eng", "en"}:
+        return 0, []
+    text = str(filename or "")
+    if not any(pattern.search(text) for pattern in ENGLISH_MANGA_PUBLISHER_TERMS):
+        return 0, []
+    return 10, ["official English publisher +10"]
+
+
 def concrete_leaf_title_prefix_words(filename):
     marker_words = {
         "v",
@@ -6721,6 +6830,10 @@ def score_candidate_details(candidate, item):
         provenance_reason = english_source_confidence_reason(filename, candidate, item)
         if provenance_reason:
             notes.append(provenance_reason)
+    publisher_bonus, publisher_notes = english_manga_publisher_bonus(filename, item)
+    if publisher_bonus:
+        score += publisher_bonus
+        notes.extend(publisher_notes)
     if candidate.get("has_free_upload_slot"):
         score += 12
         notes.append("free upload slot +12")
@@ -10497,9 +10610,19 @@ def stable_file(path, min_age_seconds=60):
 
 
 def staged_roots():
+    # MANUAL_COMICS_INBOX above is an env-var snapshot taken at import time; it
+    # never sees a Manual Inboxes card edit made after this process started.
+    # Refresh through the shared accessor before every scan.
+    manual_inbox = MANUAL_COMICS_INBOX
+    try:
+        from core import inkdrop_library_paths
+
+        manual_inbox = inkdrop_library_paths.current_paths()["manual_comics_inbox"]
+    except Exception:
+        pass
     return [
         ("slskd_downloads", SLSKD_DOWNLOAD_ROOT),
-        ("manual_inbox", MANUAL_COMICS_INBOX),
+        ("manual_inbox", manual_inbox),
     ]
 
 
@@ -12490,6 +12613,7 @@ def probe_item(
                 wait_seconds=max(50, int(wait_seconds or 0)),
                 deadline=deadline,
                 reuse_recent_seconds=slskd_repeat_query_cooldown_seconds(),
+                zero_result_reuse_recent_seconds=slskd_zero_result_query_cooldown_seconds(),
             )
             response_count += len(responses)
             observation_used = (

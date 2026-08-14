@@ -36,6 +36,7 @@ ENV_KAVITA_DB = "INKDROP_KAVITA_DB"
 LEGACY_ENV_STATE_DIR = "KAVITA_ACQUIRE_STATE_DIR"
 LEGACY_ENV_KAVITA_DB = "INKDROP_KAVITA_DB_PATH"
 ENV_WORKER_STATUS_FILE = "INKDROP_WORKER_STATUS_FILE"
+ENV_QBITTORRENT_DOWNLOAD_ROOT = "INKDROP_QBITTORRENT_DOWNLOAD_ROOT"
 
 
 def env_value(environ, key, fallback="", *, legacy_keys=()):
@@ -239,6 +240,37 @@ def staging_dir(environ=None):
 def manual_inbox_dir(environ=None):
     env = environ if environ is not None else os.environ
     return _path_from_env(env, ENV_MANUAL_INBOX_DIR, "/manual-inbox")
+
+
+def download_client_owned_roots(environ=None):
+    """Filesystem roots a configured download client (currently qBittorrent)
+    manages directly.
+
+    A file under one of these paths can still be an active seed on a private
+    tracker even after InkDrop has imported (copied) it elsewhere -- moving or
+    deleting it makes the client lose its handle on the file, which can break
+    seeding. Every caller that quarantines, migrates, or otherwise relocates a
+    file that might live here must copy it out and leave the original in
+    place, never move or delete it. This is the single source of truth for
+    that root so every call site agrees on what counts as download-client-
+    owned instead of each re-deriving (or mis-deriving) it independently.
+    """
+    env = environ if environ is not None else os.environ
+    return (_path_from_env(env, ENV_QBITTORRENT_DOWNLOAD_ROOT, staging_dir(env) / "downloads"),)
+
+
+def path_is_download_client_owned(path, environ=None):
+    try:
+        resolved = Path(path).resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    for root in download_client_owned_roots(environ):
+        try:
+            resolved.relative_to(Path(root).resolve(strict=False))
+            return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return False
 
 
 def quarantine_dir(environ=None):

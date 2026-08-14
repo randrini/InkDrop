@@ -50,6 +50,7 @@ def _spec(display_name, category, certification_tier, capabilities, *, env_url=(
 
 INTEGRATIONS = {
     "comicvine": _spec("ComicVine", "metadata", "implemented", ("metadata_search", "series_catalog", "test"), env_url=("INKDROP_COMICVINE_URL",), env_secrets=("INKDROP_COMICVINE_API_KEY",), configure_target="metadata_source", requires_secret=True),
+    "metron": _spec("Metron", "metadata", "implemented", ("metadata_search", "series_catalog", "test"), configure_target="metadata_source", requires_secret=True),
     "mangadex": _spec("MangaDex", "metadata_source", "implemented", ("metadata_search", "chapter_catalog", "direct_download", "test"), env_url=("INKDROP_MANGADEX_API_BASE_URL",), defaults_configured=True, configure_target="metadata_source"),
     "prowlarr": _spec("Prowlarr", "indexer", "implemented", ("search", "candidate_discovery", "test"), env_url=("INKDROP_PROWLARR_URL",), env_secrets=("INKDROP_PROWLARR_API_KEY",), configure_target="indexers", requires_url=True, requires_secret=True),
     "qbittorrent": _spec("qBittorrent", "download_client", "implemented", ("test", "grab", "poll", "progress", "import"), env_url=("INKDROP_QBITTORRENT_URL", "INKDROP_QBIT_URL"), env_secrets=("INKDROP_QBITTORRENT_PASSWORD",), configure_target="download_clients"),

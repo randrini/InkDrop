@@ -25,14 +25,17 @@ def _resolved(path):
 
 
 def containing_root(path, roots):
-    """Return the resolved library root that holds ``path``, or None.
+    """Return the deepest resolved library root that holds ``path``, or None.
 
     A path equal to a root returns None on purpose — sweeping needs at least
-    one directory level between the file and the root.
+    one directory level between the file and the root. Choosing the deepest
+    match keeps a nested library root from being pruned as an ordinary folder,
+    regardless of the order in which callers provide their configured roots.
     """
     resolved = _resolved(path)
     if resolved is None:
         return None
+    matches = []
     for root in roots or ():
         text = str(root or "").strip()
         if not text:
@@ -41,8 +44,8 @@ def containing_root(path, roots):
         if root_resolved is None or resolved == root_resolved:
             continue
         if root_resolved in resolved.parents:
-            return root_resolved
-    return None
+            matches.append(root_resolved)
+    return max(matches, key=lambda candidate: len(candidate.parts), default=None)
 
 
 def remove_empty_parents(removed_path, stop_root, dry_run=False):

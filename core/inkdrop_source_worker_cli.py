@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -25,6 +26,7 @@ from core import inkdrop_source_worker_batch as batch
 from core import inkdrop_source_worker_http as source_http
 from core import inkdrop_sources
 from core import inkdrop_runtime_config
+from core import inkdrop_cloudflare_bypass_proxy as cloudflare_bypass_proxy
 
 
 CONTRACT_VERSION = 1
@@ -325,27 +327,39 @@ def validate_args(args):
 # fixed in inkdrop_rss_discovery.py's fetch_feed() -- same fix, scoped to
 # this separate execution path: persist a short-lived, on-disk copy of the
 # feed response so the next series' subprocess reuses it instead of
-# refetching. Scoped narrowly to the RSS feed host only (RSS_FEED_HOSTS
-# below) -- every other provider's request through this client is
-# untouched, byte-for-byte the same as before.
+# refetching. Scoped narrowly to known RSS feed request roles and the /feed
+# path on RSS_FEED_HOSTS below. Detail-page calls never touch the durable
+# cache and can therefore run concurrently without racing its fixed temp file.
 RSS_FEED_HOSTS = ("getcomics.org", "www.getcomics.org")
+RSS_FEED_REQUEST_IDS = frozenset(
+    {
+        "rss_feed",
+        "rss_direct_feed",
+        "rss_detail_direct_feed",
+        "rss_detail_probe_feed",
+        "rss_reader_page_pack_feed",
+    }
+)
 RSS_FEED_CACHE_FILE = inkdrop_runtime_config.state_dir() / "rss-source-worker-feed-cache.json"
 RSS_FEED_CACHE_TTL_SECONDS = 300
 
 
 def _rss_feed_cache_key(request):
     request = request if isinstance(request, dict) else {}
+    if request.get("cacheable") is False:
+        return None
     method = str(request.get("method") or "GET").strip().upper()
-    if method not in {"GET", "HEAD"}:
+    if method != "GET" or str(request.get("request_id") or "").strip() not in RSS_FEED_REQUEST_IDS:
         return None
     url = str(request.get("url") or "").strip()
     if not url:
         return None
     try:
-        host = urlparse(url).hostname or ""
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
     except Exception:
         return None
-    if host.lower() not in RSS_FEED_HOSTS:
+    if host.lower() not in RSS_FEED_HOSTS or parsed.path.rstrip("/") != "/feed":
         return None
     return json.dumps(
         {"method": method, "url": url, "params": request.get("params") or {}},
@@ -399,15 +413,46 @@ def _save_rss_feed_cache(cache):
         pass
 
 
+def _current_rss_feed_cache(cache, now=None):
+    """Drop expired entries and legacy detail-page keys from the old cache."""
+
+    now = time.time() if now is None else float(now)
+    current = {}
+    for key, entry in (cache or {}).items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        try:
+            key_payload = json.loads(key)
+            if not isinstance(key_payload, dict):
+                continue
+            parsed = urlparse(str(key_payload.get("url") or ""))
+            cached_at = float(entry.get("cached_at") or 0)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if (
+            str(key_payload.get("method") or "").upper() != "GET"
+            or str(parsed.hostname or "").lower() not in RSS_FEED_HOSTS
+            or parsed.path.rstrip("/") != "/feed"
+            or now - cached_at >= RSS_FEED_CACHE_TTL_SECONDS
+            or "response" not in entry
+        ):
+            continue
+        current[key] = entry
+    return current
+
+
 def _rss_feed_caching_client(client):
     def _wrapped(request):
         key = _rss_feed_cache_key(request)
         if key is None:
             return client(request)
-        cache = _load_rss_feed_cache()
-        entry = cache.get(key)
+        loaded_cache = _load_rss_feed_cache()
         now = time.time()
-        if isinstance(entry, dict) and (now - float(entry.get("cached_at") or 0)) < RSS_FEED_CACHE_TTL_SECONDS:
+        cache = _current_rss_feed_cache(loaded_cache, now)
+        entry = cache.get(key)
+        if isinstance(entry, dict):
+            if cache != loaded_cache:
+                _save_rss_feed_cache(cache)
             return copy.deepcopy(entry["response"])
         response = client(request)
         cache[key] = {"cached_at": now, "response": response}
@@ -428,6 +473,8 @@ def _build_source_http(args, *, secret_values, override=None):
         allow_request_hosts=True,
         timeout_seconds=args.timeout_seconds,
         max_bytes=args.max_bytes,
+        cloudflare_proxy_url=cloudflare_bypass_proxy.cloudflare_bypass_proxy_url(args.db_path),
+        cloudflare_proxy_hosts=cloudflare_bypass_proxy.CLOUDFLARE_BYPASS_HOSTS,
     )
     return _rss_feed_caching_client(client)
 
@@ -508,6 +555,8 @@ def _build_direct_http(args, *, secret_values, override=None):
         # max_bytes above only bounds non-streaming responses on this client.
         stream_max_bytes=args.direct_max_bytes,
         allow_stream_body=True,
+        cloudflare_proxy_url=cloudflare_bypass_proxy.cloudflare_bypass_proxy_url(args.db_path),
+        cloudflare_proxy_hosts=cloudflare_bypass_proxy.CLOUDFLARE_BYPASS_HOSTS,
     )
 
 
@@ -515,44 +564,51 @@ def _observed_source_http_get(http_get, provider_observer=None, call_tracker=Non
     if not callable(http_get) or not provider_observer:
         return http_get
 
+    observer_lock = threading.Lock()
+    call_sequence = 0
+
     def observed(request):
+        nonlocal call_sequence
         started_monotonic = time.monotonic()
-        call_id = f"source-http:{time.monotonic_ns()}"
-        allowed = provider_observer(
-            {
-                "phase": "permission",
-                "call_id": call_id,
-                "started_monotonic": started_monotonic,
-                "healthy": None,
-            }
-        )
-        if allowed is False:
-            raise ProviderStartDeadlineMissed("provider_start_deadline_missed")
-        provider_observer(
-            {
-                "phase": "start",
-                "call_id": call_id,
-                "started_monotonic": started_monotonic,
-                "healthy": None,
-                "failed": False,
-                "error": "",
-            }
-        )
-        if isinstance(call_tracker, list):
-            call_tracker.append({"call_id": call_id, "started_monotonic": started_monotonic})
+        with observer_lock:
+            call_sequence += 1
+            call_id = f"source-http:{time.monotonic_ns()}:{call_sequence}"
+            allowed = provider_observer(
+                {
+                    "phase": "permission",
+                    "call_id": call_id,
+                    "started_monotonic": started_monotonic,
+                    "healthy": None,
+                }
+            )
+            if allowed is False:
+                raise ProviderStartDeadlineMissed("provider_start_deadline_missed")
+            provider_observer(
+                {
+                    "phase": "start",
+                    "call_id": call_id,
+                    "started_monotonic": started_monotonic,
+                    "healthy": None,
+                    "failed": False,
+                    "error": "",
+                }
+            )
+            if isinstance(call_tracker, list):
+                call_tracker.append({"call_id": call_id, "started_monotonic": started_monotonic})
         try:
             response = http_get(request)
         except Exception as exc:
-            provider_observer(
-                {
-                    "phase": "finish",
-                    "call_id": call_id,
-                    "started_monotonic": started_monotonic,
-                    "healthy": False,
-                    "failed": True,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            )
+            with observer_lock:
+                provider_observer(
+                    {
+                        "phase": "finish",
+                        "call_id": call_id,
+                        "started_monotonic": started_monotonic,
+                        "healthy": False,
+                        "failed": True,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
             raise
         return response
 

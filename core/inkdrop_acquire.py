@@ -633,14 +633,29 @@ def string_list(value, fallback):
     return out or list(fallback)
 
 
+def normalize_prowlarr_api_url(value):
+    """Normalize a configured Prowlarr base_url to guarantee the /api/v1 suffix.
+
+    Prowlarr's real API lives under /api/v1; a bare host:port base_url
+    (no suffix) instead 302-redirects unauthenticated requests to its
+    Angular login page, which serves HTML where JSON was expected.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not text.startswith(("http://", "https://")):
+        text = "http://" + text
+    text = text.rstrip("/")
+    return text if text.lower().endswith("/api/v1") else text + "/api/v1"
+
+
 def prowlarr_search_url(base_url):
-    base = str(base_url or DEFAULT_PROWLARR_BASE_URL).strip().rstrip("/")
+    base = str(base_url or DEFAULT_PROWLARR_BASE_URL).strip()
+    if base.rstrip("/").lower().endswith("/search"):
+        base = base.rstrip("/")[: -len("/search")]
+    base = normalize_prowlarr_api_url(base)
     if not base:
         raise RuntimeError("Prowlarr URL is not configured; set INKDROP_PROWLARR_URL or the Prowlarr provider base_url setting.")
-    if not base.startswith(("http://", "https://")):
-        base = "http://" + base
-    if base.endswith("/search"):
-        return base
     return base + "/search"
 
 
@@ -651,6 +666,19 @@ def prowlarr_result_sort_key(item):
         -(item.get("seeders") or 0),
         item.get("size") or 0,
     )
+
+
+def prowlarr_apikey_query_param_fallback_enabled(settings):
+    """True only when the operator has explicitly opted in to also sending
+    the Prowlarr API key as a ?apikey= query param, for the rare proxy in
+    front of Prowlarr that strips the X-Api-Key header. Defaults off: a
+    query-param key lands in reverse-proxy/ingress access logs and
+    Prowlarr's own request logs regardless of what InkDrop redacts locally,
+    so the header alone is the safe default."""
+    value = (settings or {}).get("apikey_query_param_fallback")
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def load_prowlarr_settings(media_type):
@@ -671,6 +699,7 @@ def load_prowlarr_settings(media_type):
         "categories": string_list(settings.get(categories_key), fallback_categories),
         "timeout_seconds": max(5.0, min(timeout, 120.0)),
         "source": config.get("source") or "fallback",
+        "apikey_query_param_fallback": prowlarr_apikey_query_param_fallback_enabled(settings),
     }
 
 
@@ -940,6 +969,8 @@ def prowlarr_search(query, media_type, indexer_ids=None, limit=10, timeout_secon
         except (TypeError, ValueError):
             timeout = settings["timeout_seconds"]
     params = {"query": query, "categories": settings["categories"]}
+    if settings["apikey_query_param_fallback"]:
+        params["apikey"] = api_key
     if indexer_ids:
         params["indexerIds"] = ",".join(str(x) for x in indexer_ids)
     response = http.get(
@@ -949,7 +980,13 @@ def prowlarr_search(query, media_type, indexer_ids=None, limit=10, timeout_secon
         timeout=timeout,
     )
     response.raise_for_status()
-    results = response.json()
+    try:
+        results = response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Prowlarr returned a non-JSON response from {settings['search_url']}; "
+            "check the provider base_url setting includes /api/v1."
+        ) from exc
     results = sorted(
         results,
         key=prowlarr_result_sort_key,
@@ -1183,6 +1220,12 @@ def qbit_add(
     add_data = {
         "category": category,
         "savepath": save_path,
+        # Without this, a user's global "Automatic Torrent Management" default
+        # (or a save-path rule on the category itself) can silently override
+        # the savepath above -- qBittorrent still returns "Ok.", but the file
+        # lands wherever category/global rules point instead of where InkDrop
+        # is about to look for it.
+        "autoTMM": "false",
         "tags": tags,
         "paused": "false",
     }

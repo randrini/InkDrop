@@ -28,7 +28,13 @@
     importing: "Importing",
     waiting_for_library_scan: "Waiting for library scan",
     complete: "Complete",
-    needs_attention: "Needs attention",
+    // Not "Needs attention" -- the Wanted masthead above this panel has its
+    // own much smaller "manual review" tile (the live decision queue), and
+    // this bucket is a different, larger thing: every missing issue whose
+    // last recorded attempt ended in a provider failure, timeout, malformed
+    // response, or rejected/quarantined artifact, plus anything currently
+    // blocked in the queue. Most of these have no open Manual Review row.
+    needs_attention: "Failed or blocked",
   });
   // Each stage maps to the row status label(s) InkDrop already shows on the
   // Wanted table itself (coreStateLabel in the main app script) -- clicking a
@@ -245,7 +251,7 @@
     const result = element("div", "missing-recovery-result");
     result.append(
       element("strong", "", `${payload.status_available ? Number(payload.completed_imports || 0) : "Unknown"} completed imports`),
-      element("span", "", `${payload.status_available ? Number(payload.progress?.needs_attention || 0) : "Unknown"} need attention`),
+      element("span", "", `${payload.status_available ? Number(payload.progress?.needs_attention || 0) : "Unknown"} failed or blocked`),
     );
     const live = element("span", "missing-recovery-live");
     live.setAttribute("role", "status");

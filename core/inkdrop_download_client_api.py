@@ -58,11 +58,16 @@ class SafeSession:
         if 300 <= status < 400:
             # Tests do not follow redirects, so say where it wanted to go --
             # otherwise a proxy that adds a trailing slash or upgrades to HTTPS
-            # reads as a generic connectivity failure.
-            target = str((getattr(response, "headers", None) or {}).get("Location") or "").strip()
+            # reads as a generic connectivity failure. The Location header is
+            # not trusted input though: scrub it the same way as any other
+            # client-sourced diagnostic text before it ends up in a message
+            # that gets cached and displayed.
+            target = inkdrop_qbittorrent_auth.scrub_diagnostic_text(
+                (getattr(response, "headers", None) or {}).get("Location"), max_len=200
+            )
             raise RuntimeError(
                 f"the URL redirected (HTTP {status}"
-                + (f" to {target[:200]}" if target else "")
+                + (f" to {target}" if target else "")
                 + "). Configure the client with the address it redirects to."
             )
         return response
@@ -119,7 +124,12 @@ def storage_payload(payload):
     if settings is None:
         settings = {}
     secret_fields = set(schema.get("secret_fields") or [])
-    first_class = {"id", "name", "client_type", "enabled", "priority", "base_url", "username", "category", "download_path", "categories", "download_paths", "path_mappings", "provider_mappings", "secrets", "clear_secret_fields", "revision", "expected_revision"}
+    # "settings" belongs here too: a round-tripped payload that already carries
+    # its own settings object (e.g. a client re-submitting what it just read
+    # back) must not be treated as an unrecognized extra field, or the loop
+    # below folds it into itself -- settings["settings"] = {...settings...} --
+    # nesting one layer deeper on every save.
+    first_class = {"id", "name", "client_type", "enabled", "priority", "base_url", "username", "category", "download_path", "categories", "download_paths", "path_mappings", "provider_mappings", "secrets", "settings", "clear_secret_fields", "revision", "expected_revision"}
     for key in list(raw):
         if key in first_class:
             continue
@@ -222,10 +232,15 @@ def _sanitize(value, depth=0):
     if isinstance(value, list):
         return [_sanitize(item, depth + 1) for item in value[:128]]
     if isinstance(value, str):
-        return value[:1024]
+        # A secret-shaped key is already redacted above, but the VALUE can
+        # still carry credential-shaped content it never should -- a client
+        # endpoint's own text (redirect targets, response snippets) flows
+        # into these strings, and this is the last point before they're
+        # cached and served back through the API and UI.
+        return inkdrop_qbittorrent_auth.scrub_diagnostic_text(value, max_len=1024)
     if value is None or isinstance(value, (bool, int, float)):
         return value
-    return str(value)[:256]
+    return inkdrop_qbittorrent_auth.scrub_diagnostic_text(str(value), max_len=256)
 
 
 def _qbit_test(settings, http):

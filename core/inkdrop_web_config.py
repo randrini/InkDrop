@@ -546,14 +546,33 @@ try:
     ).hexdigest()[:12]
 except OSError:
     INKDROP_UI_REACT_VERSION = "missing"
+# Standalone lightweight mobile status view (/m) -- deliberately not part of
+# the desktop shell's HTML/CSS/JS bundle above. Its own small hand-written
+# CSS/JS files, versioned the same way, so a phone loads a few KB instead of
+# the full desktop app shell.
+INKDROP_MOBILE_CSS_FILE = Path(__file__).resolve().parents[1] / "web" / "static" / "css" / "mobile.css"
+INKDROP_MOBILE_JS_FILE = Path(__file__).resolve().parents[1] / "web" / "static" / "js" / "inkdrop-mobile.js"
+try:
+    INKDROP_MOBILE_CSS_VERSION = hashlib.sha256(INKDROP_MOBILE_CSS_FILE.read_bytes()).hexdigest()[:12]
+except OSError:
+    INKDROP_MOBILE_CSS_VERSION = "missing"
+try:
+    INKDROP_MOBILE_JS_VERSION = hashlib.sha256(INKDROP_MOBILE_JS_FILE.read_bytes()).hexdigest()[:12]
+except OSError:
+    INKDROP_MOBILE_JS_VERSION = "missing"
 COVER_CACHE_DIR = CACHE_DIR / "cover-cache"
-COVER_PROXY_ALLOWED_HOSTS = {
-    "comicvine.gamespot.com",
-    "www.comicvine.gamespot.com",
-    "uploads.mangadex.org",
+# One table, so an approved host can never be checked without also checking the
+# directory its covers have to live under.
+COVER_PROXY_HOST_PATH_PREFIXES = {
+    "comicvine.gamespot.com": "/a/uploads/",
+    "www.comicvine.gamespot.com": "/a/uploads/",
+    "uploads.mangadex.org": "/covers/",
 }
+COVER_PROXY_ALLOWED_HOSTS = frozenset(COVER_PROXY_HOST_PATH_PREFIXES)
 COVER_PROXY_MAX_BYTES = 8 * 1024 * 1024
 COVER_PROXY_TIMEOUT_SECONDS = 20
+COVER_PROXY_MAX_REDIRECTS = 3
+COVER_PROXY_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 COVER_PROXY_CACHE_SECONDS = 60 * 60
 COVER_PROXY_STALE_REVALIDATE_SECONDS = 24 * 60 * 60
 COVER_PROXY_CONTENT_TYPES = {
@@ -565,12 +584,14 @@ COVER_PROXY_CONTENT_TYPES = {
 }
 COMIC_ROOT = Path(env_value("INKDROP_COMIC_ROOT", "/library/comics"))
 MANGA_ROOT = Path(env_value("INKDROP_MANGA_ROOT", "/library/manga"))
+COMIC_INCOMING_ROOT = Path(env_value("INKDROP_COMIC_INCOMING_ROOT", str(COMIC_ROOT / "_Incoming")))
+EBOOK_INCOMING_ROOT = Path(env_value("INKDROP_EBOOK_INCOMING_ROOT", "/library/ebooks/_Incoming"))
 KAVITA_COMIC_ROOT = env_value("INKDROP_KAVITA_COMIC_ROOT", "/data/comics")
 KAVITA_MANGA_ROOT = env_value("INKDROP_KAVITA_MANGA_ROOT", "/data/manga")
 MANUAL_COMICS_INBOX = Path(env_value("INKDROP_MANUAL_COMICS_INBOX", str(MANUAL_INBOX_DIR / "comics")))
 MANUAL_EBOOKS_INBOX = Path(env_value("INKDROP_MANUAL_EBOOKS_INBOX", str(MANUAL_INBOX_DIR / "ebooks")))
 SLSKD_DOWNLOAD_ROOT = Path(env_value("INKDROP_SLSKD_DOWNLOAD_ROOT", str(STAGING_DIR / "slskd")))
-SLSKD_INCOMPLETE_ROOT = SLSKD_DOWNLOAD_ROOT / "incomplete"
+SLSKD_INCOMPLETE_ROOT = Path(env_value("INKDROP_SLSKD_INCOMPLETE_ROOT", str(SLSKD_DOWNLOAD_ROOT / "incomplete")))
 UNMATCHED_LOCAL_ROOTS = (
     Path(env_value("INKDROP_UNMATCHED_DOWNLOAD_ROOT", str(STAGING_DIR / "downloads" / "comics"))),
     Path(env_value("INKDROP_DIRECT_DOWNLOAD_ROOT", str(STAGING_DIR / "direct" / "comics"))),
@@ -587,9 +608,12 @@ COMICVINE_API = "https://comicvine.gamespot.com/api"
 MANGADEX_API = "https://api.mangadex.org"
 MANGADEX_SITE_URL = "https://mangadex.org/title"
 MANGADEX_COVER_URL = "https://uploads.mangadex.org/covers"
+METRON_API = "https://metron.cloud/api"
+METRON_SITE_URL = "https://metron.cloud/series"
 SAB_COMIC_CATEGORIES = {"comics", "manga", "mylar", "kapowarr"}
 COMICVINE_USER_AGENT = env_value("INKDROP_COMICVINE_USER_AGENT", "InkDrop/0.1 (+metadata lookup)")
 MANGADEX_USER_AGENT = "InkDrop/0.1 (+metadata lookup)"
+METRON_USER_AGENT = "InkDrop/0.1 (+metadata lookup)"
 # MangaDex's own API default is safe + suggestive + erotica; it excludes only
 # pornographic. InkDrop defaulted to safe + suggestive, which is stricter than
 # upstream and silently so: the rating filter is applied in the request, so an
@@ -690,6 +714,7 @@ __all__ = [
     "COMICVINE_WATCHES_CACHE",
     "COMICVINE_WATCHES_CACHE_LOCK",
     "COMICVINE_WATCHES_CACHE_TTL_SECONDS",
+    "COMIC_INCOMING_ROOT",
     "COMIC_ROOT",
     "COMIC_SERIES_FILE",
     "COMPLETION_STALE_AUDIT_CACHE",
@@ -699,11 +724,15 @@ __all__ = [
     "COVER_PROXY_ALLOWED_HOSTS",
     "COVER_PROXY_CACHE_SECONDS",
     "COVER_PROXY_CONTENT_TYPES",
+    "COVER_PROXY_HOST_PATH_PREFIXES",
     "COVER_PROXY_MAX_BYTES",
+    "COVER_PROXY_MAX_REDIRECTS",
+    "COVER_PROXY_REDIRECT_STATUSES",
     "COVER_PROXY_STALE_REVALIDATE_SECONDS",
     "COVER_PROXY_TIMEOUT_SECONDS",
     "DEBUG_ACTIVE_REQUESTS_ENABLED",
     "DOWNLOAD_CLIENT_STATUS_CACHE",
+    "EBOOK_INCOMING_ROOT",
     "FRESH_SWEEP_LOG",
     "GUARDED_DISCOVERY_SOURCES",
     "HOST",
@@ -723,6 +752,10 @@ __all__ = [
     "INKDROP_STATE_SYNC_LOCK",
     "INKDROP_STATE_SYNC_LOG",
     "INKDROP_STATE_SYNC_STALE_SECONDS",
+    "INKDROP_MOBILE_CSS_FILE",
+    "INKDROP_MOBILE_CSS_VERSION",
+    "INKDROP_MOBILE_JS_FILE",
+    "INKDROP_MOBILE_JS_VERSION",
     "INKDROP_UI_CSS_FILE",
     "INKDROP_UI_CSS_VERSION",
     "INKDROP_UI_JS_ASSETS",
@@ -782,6 +815,9 @@ __all__ = [
     "MANUAL_SOURCE_REVIEW_REASONS",
     "MAX_AUTO_GRABS_PER_SCAN",
     "MAX_AUTO_GRABS_PER_WATCH",
+    "METRON_API",
+    "METRON_SITE_URL",
+    "METRON_USER_AGENT",
     "MISSING_ACQUIRE_CACHE_FILE",
     "MISSING_ACQUIRE_LOG",
     "MISSING_ACQUIRE_MODULE_SCRIPT",

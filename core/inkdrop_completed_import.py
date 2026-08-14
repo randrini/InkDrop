@@ -7,6 +7,7 @@ if str(_ROOT) not in _sys.path:
 
 import argparse
 import atexit
+import errno
 import hashlib
 import hmac
 import json
@@ -46,6 +47,7 @@ from core import inkdrop_folder_cleanup
 from core import inkdrop_library_frontends
 from core import inkdrop_artifact_acceptance
 from core import inkdrop_library_identity
+from core import inkdrop_sources
 
 
 STATE_DIR = inkdrop_runtime_config.state_dir()
@@ -119,7 +121,7 @@ COMIC_ROOT = Path(os.environ.get("INKDROP_COMIC_ROOT") or "/library/comics")
 MANGA_ROOT = Path(os.environ.get("INKDROP_MANGA_ROOT") or "/library/manga")
 KAPOWARR_COMIC_ROOT = "/comics"
 QBIT_CONTAINER_DOWNLOAD_ROOT = os.environ.get("INKDROP_QBITTORRENT_CONTAINER_DOWNLOAD_ROOT") or "/downloads"
-QBIT_HOST_DOWNLOAD_ROOT = Path(os.environ.get("INKDROP_QBITTORRENT_DOWNLOAD_ROOT") or STAGING_DIR / "downloads")
+QBIT_HOST_DOWNLOAD_ROOT = inkdrop_runtime_config.download_client_owned_roots()[0]
 QBIT_BROAD_TAGS = {"inkdrop", "kavita-acquire"}
 PACK_DUPLICATE_QUARANTINE_ROOT = Path(os.environ.get("INKDROP_PACK_DUPLICATE_QUARANTINE_ROOT") or QUARANTINE_DIR / "pack-duplicates")
 ONE_WORD_TITLE_SECOND_WORD_BLOCKLIST = {"of"}
@@ -394,6 +396,55 @@ def related_subseries_source_blocker(
             return "related subseries title tail after publisher imprint: " + (suffix or "unexpected suffix")
         if terminal_image_imprint and not exact_numbered_series_title(pattern, segment):
             return "publisher imprint is not attached to an exact numbered series title"
+        numeric_organizer = None
+        if segment_index == 0:
+            numeric_organizer = re.match(
+                rf"^\s*0*\d{{1,5}}(?:\.\d+)?[\s_.:\-]+(?P<title>{pattern}(?:\b|_).*)$",
+                str(segment or ""),
+                re.I,
+            )
+        if numeric_organizer and len(title_words) == 1:
+            # A bare one-word title followed by another phrase is commonly a
+            # localized issue/book subtitle ("01 Amulet - De hoeder ...").
+            # Without trusted issue-title metadata there is no safe lexical
+            # distinction from a related book, so retain the prior verdict.
+            numeric_organizer = None
+        numeric_organizer_safe = False
+        if numeric_organizer:
+            # Reading-order and collection exports often put an ordinal before
+            # the real title.  Once the complete target title immediately
+            # follows that bounded prefix, inspect its tail exactly as if the
+            # organizer were absent; otherwise a wrong franchise book such as
+            # "03. The League ... - The Black Dossier" bypasses this guard.
+            numeric_organizer_safe = inkdrop_artifact_acceptance.trusted_numeric_prefix_import_is_safe(
+                segment,
+                [series_title],
+                issue_number,
+            )
+            normalized_segment = numeric_organizer.group("title")
+            normalized_title_match = re.match(
+                rf"^\s*{pattern}(?P<tail>.*)$",
+                normalized_segment,
+                re.I,
+            )
+            explicit_unit = re.match(
+                r"^[\s:._\-]*(?:(?:#|no\.?|num(?:ber)?\.?|issue|iss|v|vol(?:ume)?|book|ch(?:ap(?:ter)?)?|part|pt)"
+                r"[\s._\-]*)?0*(?P<number>\d+(?:\.\d+)?)\b",
+                (normalized_title_match.group("tail") if normalized_title_match else ""),
+                re.I,
+            )
+            if (
+                numeric_organizer_safe
+                and explicit_unit
+                and not str(issue_title or "").strip()
+                and normalize_manga_number(explicit_unit.group("number")) == normalize_manga_number(issue_number)
+            ):
+                # The organizer is followed by the exact target title and an
+                # explicit matching unit. Any following words can be an issue
+                # subtitle even when provider metadata lacks that subtitle.
+                numeric_organizer = None
+            else:
+                segment = normalized_segment
         contained = re.match(rf"^\s*(?P<head>.*?){pattern}(?P<tail>.*)$", str(segment or ""), re.I)
         if contained and contained.group("head"):
             head_words = re.findall(r"[a-z0-9]+", (contained.group("head") or "").lower())
@@ -408,11 +459,40 @@ def related_subseries_source_blocker(
         match = re.match(rf"^\s*{pattern}(?P<tail>.*)$", str(segment or ""), re.I)
         if not match:
             continue
-        if inkdrop_artifact_acceptance.trusted_issue_subtitle_matches_release(
-            series_title,
-            segment,
-            issue_title,
-            issue_number,
+        trusted_subtitle_segments = [segment]
+        if numeric_organizer:
+            # The canonical subtitle helper intentionally requires an exact
+            # subtitle.  Scene/scan annotations after that subtitle are not a
+            # related book, so retry the same proof with only already-trusted
+            # terminal metadata/credit groups removed. Stop at the first
+            # unexplained group so a subtitle-like suffix cannot be erased.
+            unannotated_segment = str(segment or "")
+            while True:
+                annotation = re.search(
+                    r"\s*(?:\(\s*([^\[\]()]+?)\s*\)|\[\s*([^\[\]()]+?)\s*\])\s*$",
+                    unannotated_segment,
+                )
+                if not annotation:
+                    break
+                annotation_text = (
+                    annotation.group(1) if annotation.group(1) is not None else annotation.group(2)
+                ).strip()
+                if not (
+                    inkdrop_artifact_acceptance.annotation_group_shape(annotation_text)
+                    or inkdrop_artifact_acceptance.release_credit_group(annotation_text)
+                ):
+                    break
+                unannotated_segment = unannotated_segment[:annotation.start()].rstrip()
+            if unannotated_segment != segment:
+                trusted_subtitle_segments.append(unannotated_segment)
+        if any(
+            inkdrop_artifact_acceptance.trusted_issue_subtitle_matches_release(
+                series_title,
+                subtitle_segment,
+                issue_title,
+                issue_number,
+            )
+            for subtitle_segment in trusted_subtitle_segments
         ):
             continue
         words = re.findall(r"[a-z0-9]+", (match.group("tail") or "").lower())
@@ -422,12 +502,43 @@ def related_subseries_source_blocker(
                 tail_text, issue_number
             ):
                 continue
-            if inkdrop_artifact_acceptance.benign_exact_title_publication_tail(
-                tail_text,
-                issue_number,
-                stop_words=stop_words,
-                edition_words=edition_words,
-                publisher=publisher,
+            publication_tails = [tail_text]
+            if numeric_organizer:
+                # The shared publication-tail classifier recognizes compact
+                # unit markers ("Issue02"). Reading-order exports also use the
+                # equivalent spaced spelling ("Issue 02"); compact only that
+                # leading marker and leave every following word/group for the
+                # classifier to consume and validate.
+                compact_unit_tail = re.sub(
+                    r"^(\s*(?:v|vol(?:ume)?|book|issue|no|number|ch(?:ap(?:ter)?)?|part|pt))\s+(?=0*\d)",
+                    r"\1",
+                    tail_text,
+                    count=1,
+                    flags=re.I,
+                )
+                if compact_unit_tail != tail_text:
+                    publication_tails.append(compact_unit_tail)
+                if numeric_organizer_safe:
+                    for publication_tail in list(publication_tails):
+                        bare_collection_tail = re.sub(
+                            r"^(\s*(?:(?:v|vol(?:ume)?|book|issue|no|number|ch(?:ap(?:ter)?)?|part|pt)\s*)?"
+                            r"0*\d+(?:\.\d+)?)\s+(?:of|/)\s+0*\d{1,4}(?=\s|$)",
+                            r"\1",
+                            publication_tail,
+                            count=1,
+                            flags=re.I,
+                        )
+                        if bare_collection_tail != publication_tail:
+                            publication_tails.append(bare_collection_tail)
+            if any(
+                inkdrop_artifact_acceptance.benign_exact_title_publication_tail(
+                    publication_tail,
+                    issue_number,
+                    stop_words=stop_words,
+                    edition_words=edition_words,
+                    publisher=publisher,
+                )
+                for publication_tail in publication_tails
             ):
                 continue
             # This blanket "any unrecognized bracket group is untrusted" rule
@@ -959,6 +1070,37 @@ def copy_collection_archive(source, dest, collection):
     return {"normalized_archive": False}
 
 
+def place_import_file(source, dest, *, hardlink=False):
+    """Place source at dest, preserving the source bytes exactly.
+
+    Only call this for placements where dest ends up byte-identical to
+    source -- callers that repack, convert, or inject ComicInfo.xml must
+    keep using shutil.copy2/zipfile so the destination gets fresh bytes.
+    When hardlink is requested, os.link() makes dest a second directory
+    entry for source's inode: the seeding torrent's file is untouched and
+    no extra disk is used. Any later in-place rewrite of dest (e.g. a
+    tmp-file-then-replace ComicInfo.xml injection) still leaves source
+    alone, since a hardlink shares content, not the directory entry itself.
+    Falls back to a plain copy -- silently, no exception raised -- when
+    hardlinking isn't possible: EXDEV (source and dest are on different
+    filesystems/bind mounts, the common case when staging and the library
+    are separate Docker volumes) or any other OSError a filesystem raises
+    for hardlinks it doesn't support.
+    """
+    source = Path(source)
+    dest = Path(dest)
+    if hardlink:
+        try:
+            os.link(source, dest)
+            return {"placement_method": "hardlink"}
+        except OSError as exc:
+            fallback_reason = "cross_device" if getattr(exc, "errno", None) == errno.EXDEV else "hardlink_failed"
+            shutil.copy2(source, dest)
+            return {"placement_method": "copy", "hardlink_requested": True, "hardlink_fallback_reason": fallback_reason}
+    shutil.copy2(source, dest)
+    return {"placement_method": "copy"}
+
+
 def normalized_collection_comicinfo(collection):
     start, end = collection["range"]
     summary = f"Collects {collection.get('series')} #{start}-{end}"
@@ -1488,12 +1630,6 @@ def completion_numbers_from_table(
         conn.close()
 
 
-def manga_completed_numbers(series_title=None, kapowarr_volume_id=None, native_series_id=None):
-    return completion_numbers_from_table(
-        "manga_completion", series_title, kapowarr_volume_id, "kavita_manga", native_series_id
-    )
-
-
 def manga_unit_completed_numbers(series_title=None, kapowarr_volume_id=None, unit_model=None, native_series_id=None):
     if not DB_PATH.exists():
         return set()
@@ -1521,15 +1657,6 @@ def manga_unit_completed_numbers(series_title=None, kapowarr_volume_id=None, uni
         return {row[0] for row in rows if completion_target_matches_number(row[1], row[0])}
     finally:
         conn.close()
-
-
-def manga_unit_is_completed(series_title, number, unit_model, kapowarr_volume_id=None, native_series_id=None):
-    normalized = normalize_manga_number(number)
-    if not normalized or unit_model not in MANGA_UNIT_MODELS:
-        return False
-    return normalized in manga_unit_completed_numbers(
-        series_title, kapowarr_volume_id=kapowarr_volume_id, unit_model=unit_model, native_series_id=native_series_id
-    )
 
 
 def completion_target_exists(path_value):
@@ -2649,7 +2776,12 @@ def quarantine_pack_duplicate(item, quarantine_root=None, dry_run=True):
         item["action"] = "would_quarantine"
         return item
     quarantine_dir.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(duplicate), str(quarantine_dest))
+    if inkdrop_runtime_config.path_is_download_client_owned(duplicate):
+        shutil.copy2(str(duplicate), str(quarantine_dest))
+        item["quarantine_method"] = "copied_seeding_preserved"
+    else:
+        shutil.move(str(duplicate), str(quarantine_dest))
+        item["quarantine_method"] = "moved"
     item["action"] = "quarantined"
     item["duplicate_exists_after"] = duplicate.exists()
     if app_setting_value("media_management.delete_empty_folders", False):
@@ -2674,7 +2806,11 @@ def quarantine_pack_duplicate(item, quarantine_root=None, dry_run=True):
                     "title": item.get("series") or "Pack import duplicate",
                     "display_phase": "cleanup",
                     "outcome": "productive",
-                    "reason": "verified same-hash duplicate moved out of library",
+                    "reason": (
+                        "verified same-hash duplicate copied to quarantine; original left in place (download-client-owned path)"
+                        if item.get("quarantine_method") == "copied_seeding_preserved"
+                        else "verified same-hash duplicate moved out of library"
+                    ),
                     "duplicate_path": item.get("duplicate_path"),
                     "quarantine_dest": item.get("quarantine_dest"),
                     "verified_dest": item.get("verified_dest"),
@@ -3268,6 +3404,45 @@ def validate_comic_archive(path, min_pages=3, min_payload_bytes=1024 * 1024):
             "extracted_ratio": meta.get("extracted_ratio"),
         }
     return {"ok": True, "reason": "non_archive_comic_format"}
+
+
+# Corruption reasons validate_comic_archive() can return, as opposed to its
+# content-quality heuristics (too_few_image_pages, too_little_image_payload)
+# -- a legitimately short one-shot or cover-only issue already living in the
+# library trips those every time and is not corrupt. A library-wide integrity
+# re-scan only cares whether the archive itself is actually broken.
+ARCHIVE_CORRUPTION_REASONS = {
+    "zero_or_empty_header",
+    "bad_zip_archive",
+    "bad_zip_member",
+    "cbr_extract_failed",
+}
+
+
+def archive_corruption_check(path):
+    """Report-only corruption check for a file already sitting in the library.
+
+    Reuses validate_comic_archive() -- the same archive-opening logic that
+    gates new imports in inkdrop_completed_import.py / classify_inkdrop_client_file()
+    in inkdrop_reconcile_imports.py -- against an existing library file instead
+    of a pending download. Returns None when the file is fine or isn't a
+    format validate_comic_archive() actually checks (only .cbz/.cbr are;
+    .cb7/.pdf fall through to "non_archive_comic_format" there too).
+    """
+    path = Path(path)
+    if comic_archive_suffix(path) not in (".cbz", ".cbr"):
+        return None
+    try:
+        result = validate_comic_archive(path)
+    except OSError as exc:
+        return {"reason": "unreadable", "detail": str(exc)}
+    if result.get("ok"):
+        return None
+    reason = result.get("reason")
+    if reason not in ARCHIVE_CORRUPTION_REASONS:
+        return None
+    detail = result.get("error") or result.get("bad_member") or ""
+    return {"reason": reason, "detail": str(detail)}
 
 
 def normalize_archive_member_name(member, root):
@@ -4114,6 +4289,21 @@ def komga_library_ids_for_host_folder(host_folder, settings=None):
     )
 
 
+def komga_list_libraries(settings=None):
+    settings = settings if isinstance(settings, dict) else load_komga_settings()
+    return inkdrop_library_frontends.komga_list_libraries(settings)
+
+
+def komga_candidate_library_ids_for_host_folder(host_folder, settings=None):
+    settings = settings if isinstance(settings, dict) else load_komga_settings()
+    return inkdrop_library_frontends.komga_candidate_library_ids_for_host_folder(
+        host_folder,
+        settings,
+        comic_root=COMIC_ROOT,
+        manga_root=MANGA_ROOT,
+    )
+
+
 def trigger_komga_scan_folder(host_folder):
     return inkdrop_library_frontends.trigger_komga_scan_folder(
         host_folder,
@@ -4149,13 +4339,14 @@ def komga_list_books_page(settings, library_ids, page=0, limit=100):
     return inkdrop_library_frontends.komga_list_books_page(settings, library_ids, page=page, limit=limit)
 
 
-def komga_file_visible_for_host_path(host_path, settings=None):
+def komga_file_visible_for_host_path(host_path, settings=None, expectation=None):
     settings = settings if isinstance(settings, dict) else load_komga_settings()
     return inkdrop_library_frontends.komga_file_visible_for_host_path(
         host_path,
         settings=settings,
         comic_root=COMIC_ROOT,
         manga_root=MANGA_ROOT,
+        expectation=expectation,
     )
 
 
@@ -4995,7 +5186,9 @@ def verify_imported_items(
                             path, kavita_conn, expectation=reader_expectation or {"required": True}
                         ),
                         komga_enabled=komga_visibility_enabled,
-                        check_komga_visibility=lambda path: komga_file_visible_for_host_path(path, komga_settings),
+                        check_komga_visibility=lambda path: komga_file_visible_for_host_path(
+                            path, komga_settings, expectation=reader_expectation or None
+                        ),
                     )
                     result.update(visibility)
                 result["verification_status"] = verification_status_for(result)
@@ -5630,7 +5823,15 @@ def suffixless_existing_dest(dest):
 
 
 def clean_words(value):
-    return re.findall(r"[a-z0-9]+", str(value or "").lower())
+    # "&" (and its HTML-entity form "&amp;") must fold to the word "and"
+    # BEFORE tokenization, not as a separate alias branch, so a title stored
+    # as "Love and Rockets" and a release named "Love & Rockets" always
+    # tokenize identically everywhere this normalizer is used. Left as a bare
+    # [a-z0-9]+ extraction, "&" is dropped with no substitution -- the two
+    # forms tokenize to different word sequences and contiguous-subsequence
+    # matching (contains_sequence) never lines them up.
+    text = str(value or "").lower().replace("&amp;", " and ").replace("&", " and ")
+    return re.findall(r"[a-z0-9]+", text)
 
 
 def normalize(value):
@@ -6831,8 +7032,8 @@ def media_management_import_row(target=None, event=None, source_path=None, kind=
         "issue_number": issue_number,
         "normalized_number": event.get("normalized_number") or issue_number,
         "issue_title": event.get("issue_title") or target.get("issue_title"),
-        "volume": (event.get("source_volume_number") or source_volume or target.get("volume_number")) if source_unit == "volume" else "",
-        "volume_number": (event.get("source_volume_number") or source_volume or target.get("volume_number")) if source_unit == "volume" else "",
+        "volume": (event.get("source_volume_number") or source_volume or target.get("volume_number") or issue_number) if source_unit == "volume" else "",
+        "volume_number": (event.get("source_volume_number") or source_volume or target.get("volume_number") or issue_number) if source_unit == "volume" else "",
         "chapter": (trusted_issue or event.get("chapter_number") or source_chapter or event.get("canonical_issue_number") or issue_number) if source_unit == "chapter" else "",
         "chapter_number": (trusted_issue or event.get("chapter_number") or source_chapter or event.get("canonical_issue_number") or issue_number) if source_unit == "chapter" else "",
         "collected_number": event.get("collected_number") or event.get("collection_number") if source_unit in {"collected", "collected_edition"} else "",
@@ -7632,24 +7833,53 @@ class QbitIncompleteResult(set):
         self.verification_failed = verification_failed
 
 
+def qbit_disabled_but_still_configured():
+    """True when the qBittorrent provider has real credentials but is toggled off.
+
+    The `enabled` flag is an InkDrop-side preference for whether to treat
+    qBittorrent as an acquisition source; it says nothing about whether the
+    qBittorrent daemon itself is still running torrents into its shared
+    download root on disk. A host+credentials pair left in place after the
+    operator flips the toggle off is evidence the instance likely still
+    exists, so that combination should not be read the same as "qBittorrent
+    was never set up".
+    """
+    try:
+        config = provider_config("qbittorrent") or {}
+    except Exception:
+        return False
+    if not config or config.get("enabled", True):
+        return False
+    settings = config.get("settings") if isinstance(config.get("settings"), dict) else {}
+    host = str(config.get("base_url") or settings.get("host") or "").strip()
+    api_key = str(settings.get("api_key") or "").strip()
+    has_login = bool(str(settings.get("username") or "").strip() and str(settings.get("password") or "").strip())
+    return bool(host) and (bool(api_key) or has_login)
+
+
 def load_qbit_incomplete_paths(kind):
     """Return a QbitIncompleteResult (a set of incomplete-download paths).
 
-    result.verification_failed is only True when qBittorrent is actually
-    configured and enabled but the live probe itself failed (auth, network,
-    bad response) -- as opposed to qBittorrent simply not being set up, which
-    is a normal, fully-resolved state (nothing to gate on). Callers that care
-    about fail-closed behavior must check verification_failed for any
-    candidate under qBittorrent's own download root: an unreachable client
-    must not be read as "nothing is incomplete".
+    result.verification_failed is True both when qBittorrent is configured
+    and enabled but the live probe itself failed (auth, network, bad
+    response), and when it is configured with real credentials but toggled
+    off (see qbit_disabled_but_still_configured) -- as opposed to qBittorrent
+    simply never being set up, which is a normal, fully-resolved state
+    (nothing to gate on). Callers that care about fail-closed behavior must
+    check verification_failed for any candidate under qBittorrent's own
+    download root: an unreachable *or deliberately unqueried* client must not
+    be read as "nothing is incomplete".
     """
     if kind not in {"comics", "ebooks"}:
         return QbitIncompleteResult()
     try:
         qbit = inkdrop_acquire.load_qbit_settings()
     except Exception as exc:
-        # Not configured / disabled / no credentials at all: qBittorrent is
-        # legitimately not in play, so there is nothing to verify.
+        if qbit_disabled_but_still_configured():
+            log({"event": "qbit_incomplete_probe_disabled_but_configured", "kind": kind, "error": str(exc)})
+            return QbitIncompleteResult(verification_failed=True)
+        # Genuinely never configured: no host/credentials ever set, so
+        # qBittorrent is legitimately not in play and there is nothing to verify.
         log({"event": "qbit_incomplete_probe_not_configured", "kind": kind, "error": str(exc)})
         return QbitIncompleteResult()
     try:
@@ -7682,6 +7912,25 @@ def load_qbit_incomplete_paths(kind):
             if category not in category_keys and not tagged and not save_path_match:
                 continue
             if float(torrent.get("progress") or 0) >= 1:
+                # InkDrop added this torrent (tagged) but it finished somewhere
+                # outside the save path InkDrop requested -- qBittorrent's
+                # global Automatic Torrent Management default, or a save-path
+                # rule on the category itself, silently overrode the savepath
+                # the add request specified. The scanner only ever walks the
+                # requested save path, so the finished file would otherwise
+                # vanish from InkDrop's perspective with no import and no
+                # error. Surface it instead of just skipping past it.
+                if tagged and not save_path_match:
+                    append_manual_review(
+                        "qbit_torrent_completed_outside_expected_save_path",
+                        {
+                            "source": torrent.get("name") or torrent.get("hash"),
+                            "kind": kind,
+                            "detail": f"qBittorrent save_path={torrent.get('save_path')!r}, expected one of {sorted(p for p in save_paths if p)!r}",
+                            "note": "This torrent finished downloading somewhere other than the save path InkDrop requested, likely because qBittorrent's Automatic Torrent Management (or a save-path rule on the InkDrop category) overrode it. Locate the file in qBittorrent, move it into the expected folder, or disable Automatic Torrent Management for this category.",
+                        },
+                        db_path=INKDROP_STATE_DB,
+                    )
                 continue
             files = session.get(
                 qbit["host"] + "/api/v2/torrents/files",
@@ -7750,14 +7999,34 @@ def strip_duplicate_same_unit_ranges(text):
 
 
 def target_aliases(target):
+    target = target or {}
     aliases = []
-    for alias in (target or {}).get("aliases") or []:
+    for alias in target.get("aliases") or []:
         cleaned = normalize(alias)
         if cleaned:
             aliases.append(cleaned)
-    title = normalize((target or {}).get("title") or (target or {}).get("series"))
+    raw_title = str(target.get("title") or target.get("series") or "")
+    title = normalize(raw_title)
     if title:
         aliases.append(title)
+    # Metadata titles are commonly filed as "Work by Creator" (contributor
+    # byline, e.g. "Swamp Thing by Alan Moore") or "Qualified Edition:
+    # Subtitle" (collected-edition subtitle, e.g. "Absolute Batman: The
+    # Court of Owls"), while real downloaded files are named after the bare
+    # work title or subtitle alone. These are the same canonical helpers the
+    # SLSKD/source-worker discovery path already calls (see
+    # inkdrop_sources.contributor_title_aliases()/collected_title_aliases(),
+    # used by inkdrop_slskd_source_probe.source_title_variants()); without
+    # them here, a release found under the byline-stripped or subtitle-only
+    # title can still fail to match at import time unless that exact alias
+    # happened to be persisted to the DB separately.
+    for alias in (
+        *inkdrop_sources.contributor_title_aliases(raw_title),
+        *inkdrop_sources.collected_title_aliases(raw_title),
+    ):
+        cleaned = normalize(alias)
+        if cleaned:
+            aliases.append(cleaned)
     out = []
     seen = set()
     for alias in aliases:
@@ -8681,7 +8950,7 @@ def import_files(kind, dry_run=False, min_age_seconds=600, ignore_cutoff=False, 
                 event = {
                     "event": "skip_unverifiable_qbit_completion",
                     "skip_reason": "qbit_completion_unverifiable",
-                    "detail": "qBittorrent is configured but could not be queried, so this file's completion state can't be confirmed; retry once qBittorrent is reachable.",
+                    "detail": "qBittorrent is configured but its completion state could not be confirmed (unreachable, or its provider toggle is off while credentials are still set); retry once qBittorrent is reachable and enabled.",
                     "source": str(path),
                     "kind": kind,
                     "action_needed": "automatic_wait",
@@ -9464,6 +9733,21 @@ def import_files(kind, dry_run=False, min_age_seconds=600, ignore_cutoff=False, 
                     "action_needed": "operator_review",
                 })
                 log(event)
+                if not dry_run:
+                    append_manual_review(
+                        "import_blocked_canonical_identity",
+                        {
+                            "source": str(path),
+                            "matched_series": target.get("title") if target else None,
+                            "matched_kapowarr_id": target.get("id") if target else None,
+                            "native_series_id": target.get("native_series_id") if target else None,
+                            "source_unit": event.get("source_unit"),
+                            "canonical_unit_identity": (media_preview or {}).get("canonical_unit_identity"),
+                            "detail": (media_preview or {}).get("next_action") or destination_decision.get("reason"),
+                            "note": "InkDrop could not establish a durable work, library, or unit identity for this file and needs a human decision before it can be renamed/placed.",
+                        },
+                        db_path=INKDROP_STATE_DB,
+                    )
                 skipped.append(event)
                 continue
             if (destination_decision or {}).get("skip_existing_destination"):
@@ -9510,7 +9794,10 @@ def import_files(kind, dry_run=False, min_age_seconds=600, ignore_cutoff=False, 
                     metadata_target = {**target, "media_type": "manga" if canonical_manga_import else "comic"}
                     event["normalized_archive"].update(convert_pdf_to_cbz(path, dest, metadata_target, canonical))
                 else:
-                    shutil.copy2(path, dest)
+                    placement = place_import_file(
+                        path, dest, hardlink=bool((media_management_settings or {}).get("hardlink_imports"))
+                    )
+                    event.update(placement)
                     if kind == "comics" and canonical_manga_import:
                         chapter_number = manga_archive_normalization_chapter_number(path, event, canonical)
                         if chapter_number:

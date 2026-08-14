@@ -6,6 +6,7 @@
 export type HistoryRow = {
   id: string;
   series?: string;
+  series_id?: string;
   issue_number?: string;
   event_type?: string;
   history_kind?: string;

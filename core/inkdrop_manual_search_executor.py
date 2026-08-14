@@ -168,6 +168,7 @@ def _wanted_context(context: dict[str, Any], queries: list[dict[str, Any]]) -> d
         "singleton_issue_proof_source", "collected_singleton_wanted_count",
         "collected_singleton_markers", "collected_singleton_title_aliases",
         "collected_singleton_proof", "collected_singleton_proof_source",
+        "edition_indifferent",
     ):
         wanted[key] = context.get(key)
     return wanted
@@ -426,6 +427,7 @@ def _slskd_item(context: dict[str, Any]) -> dict[str, Any]:
         "singleton_issue_proof_source", "collected_singleton_wanted_count",
         "collected_singleton_markers", "collected_singleton_title_aliases",
         "collected_singleton_proof", "collected_singleton_proof_source",
+        "edition_indifferent",
     ):
         item[key] = context.get(key)
     return item

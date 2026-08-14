@@ -304,6 +304,8 @@ DEFAULT_DISCOVERY_MAX_AUTO = 6
 DEFAULT_DISCOVERY_MAX_PER_SERIES = 3
 DEFAULT_RSS_COMMAND_TIMEOUT_SECONDS = 120
 DEFAULT_RSS_SOURCE_WORKER_HTTP_TIMEOUT_SECONDS = 12
+DEFAULT_RSS_SOURCE_WORKER_RUNTIME_SECONDS = 30
+RSS_SOURCE_WORKER_RUNTIME_OVERHEAD_SECONDS = 6
 DEFAULT_RSS_PROVIDER_TIMEOUT_WINDOW_SECONDS = 1800
 DEFAULT_RSS_PROVIDER_TIMEOUT_THRESHOLD = 3
 DEFAULT_RSS_PROVIDER_TIMEOUT_COOLDOWN_SECONDS = 1800
@@ -4055,7 +4057,7 @@ def current_missing_from_inkdrop_state():
                 where q.active = 1
                   and q.state not in ('verified', 'superseded_duplicate')
                   and coalesce(s.monitored, 1) = 1
-                  and coalesce(w.status, 'wanted') not in ('satisfied', 'ignored', 'suppressed', 'superseded_duplicate')
+                  and coalesce(w.status, 'wanted') not in ('satisfied', 'ignored', 'suppressed', 'superseded_duplicate', 'awaiting_release')
             ),
             attempt_counts as (
                 select
@@ -7276,9 +7278,15 @@ def kavita_path_for_host_path(path):
     if not path:
         return None
     candidate = Path(str(path))
+    # COMIC_ROOT/MANGA_ROOT/KAVITA_*_ROOT above are env-var snapshots taken at
+    # import time; they never see a Library Paths card edit made after this
+    # process started. Refresh through the shared accessor before every lookup.
+    from core import inkdrop_library_paths
+
+    paths = inkdrop_library_paths.current_paths()
     for host_root, kavita_root in (
-        (COMIC_ROOT, KAVITA_COMIC_ROOT),
-        (MANGA_ROOT, KAVITA_MANGA_ROOT),
+        (paths["comic_root"], paths["kavita_comic_root"]),
+        (paths["manga_root"], paths["kavita_manga_root"]),
     ):
         try:
             rel = candidate.relative_to(host_root)
@@ -7462,9 +7470,13 @@ def host_path_for_kavita_path(path):
     if not path:
         return None
     text = str(path)
+    # Same live-refresh reasoning as kavita_path_for_host_path() above.
+    from core import inkdrop_library_paths
+
+    paths = inkdrop_library_paths.current_paths()
     for kavita_root, host_root in (
-        (KAVITA_COMIC_ROOT, COMIC_ROOT),
-        (KAVITA_MANGA_ROOT, MANGA_ROOT),
+        (paths["kavita_comic_root"], paths["comic_root"]),
+        (paths["kavita_manga_root"], paths["manga_root"]),
     ):
         prefix = f"{kavita_root}/"
         if text == kavita_root:
@@ -11037,6 +11049,52 @@ def source_worker_rss_queue_ids(rows):
     return source_worker_prowlarr_queue_ids(rows)
 
 
+def source_worker_rss_job_limit(args):
+    return max(
+        1,
+        min(
+            _positive_int_value(
+                getattr(args, "source_worker_job_limit", 0),
+                SOURCE_WORKER_RSS_DEFAULT_JOB_LIMIT,
+            ),
+            500,
+        ),
+    )
+
+
+def source_worker_rss_http_timeout_seconds(args):
+    return bounded_int_value(
+        getattr(args, "rss_source_worker_http_timeout_seconds", None),
+        DEFAULT_RSS_SOURCE_WORKER_HTTP_TIMEOUT_SECONDS,
+        5,
+        30,
+    )
+
+
+def source_worker_rss_detail_pool_size():
+    try:
+        from core import inkdrop_source_worker_adapters
+
+        return max(1, int(inkdrop_source_worker_adapters.RSS_DETAIL_FETCH_MAX_WORKERS or 1))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        # A missing concurrency implementation must reserve for sequential
+        # detail work instead of understating the fallback runtime.
+        return 1
+
+
+def source_worker_rss_runtime_seconds(args):
+    """Bound native RSS by its feed plus finite detail-page waves."""
+
+    job_limit = source_worker_rss_job_limit(args)
+    pool_size = source_worker_rss_detail_pool_size()
+    detail_waves = (job_limit + pool_size - 1) // pool_size
+    network_seconds = (1 + detail_waves) * source_worker_rss_http_timeout_seconds(args)
+    return max(
+        DEFAULT_RSS_SOURCE_WORKER_RUNTIME_SECONDS,
+        network_seconds + RSS_SOURCE_WORKER_RUNTIME_OVERHEAD_SECONDS,
+    )
+
+
 def source_worker_rss_limit(args, row_count):
     limits = [row_count]
     for attr in ("rss_discovery_max_per_series", "rss_discovery_max_auto"):
@@ -11054,22 +11112,10 @@ def source_worker_rss_allowed_hosts(args):
     return hosts
 
 
-def source_worker_rss_direct_allowed_hosts(args):
-    hosts = normalized_host_list(getattr(args, "rss_source_worker_direct_allowed_hosts", None) or [])
-    if not hosts:
-        hosts = normalized_host_list(SOURCE_WORKER_RSS_DIRECT_ALLOWED_HOST_FALLBACKS)
-    return hosts
-
-
 def source_worker_rss_argv(queue_ids, args):
     queue_ids = [str(value).strip() for value in queue_ids or [] if str(value or "").strip()]
     limit = source_worker_rss_limit(args, len(queue_ids) or 1)
-    timeout_seconds = bounded_int_value(
-        getattr(args, "rss_source_worker_http_timeout_seconds", None),
-        DEFAULT_RSS_SOURCE_WORKER_HTTP_TIMEOUT_SECONDS,
-        5,
-        30,
-    )
+    timeout_seconds = source_worker_rss_http_timeout_seconds(args)
     argv = [str(INKDROP_STATE_DB)]
     for queue_id in queue_ids:
         argv.extend(["--queue-id", queue_id])
@@ -11084,9 +11130,11 @@ def source_worker_rss_argv(queue_ids, args):
             "--eligible-limit",
             str(limit),
             "--job-limit",
-            str(_positive_int_value(getattr(args, "source_worker_job_limit", 0), SOURCE_WORKER_RSS_DEFAULT_JOB_LIMIT)),
+            str(source_worker_rss_job_limit(args)),
             "--run-limit",
             "1",
+            "--max-run-seconds",
+            str(source_worker_rss_runtime_seconds(args)),
             "--execute",
             "--allow-network",
             "--timeout-seconds",
@@ -11153,19 +11201,7 @@ def source_worker_rss_argv(queue_ids, args):
     for host in source_worker_rss_allowed_hosts(args):
         argv.extend(["--allowed-host", host])
     if not getattr(args, "dry_run", False):
-        argv.append("--write")
-        direct_hosts = source_worker_rss_direct_allowed_hosts(args)
-        if direct_hosts:
-            argv.extend(
-                [
-                    "--stage-direct",
-                    "--allow-direct-network",
-                    "--staging-root",
-                    str(SOURCE_WORKER_STAGING_ROOT),
-                ]
-            )
-            for host in direct_hosts:
-                argv.extend(["--direct-allowed-host", host])
+        argv.extend(["--write", "--staging-root", str(SOURCE_WORKER_STAGING_ROOT)])
     return argv
 
 
@@ -11440,6 +11476,118 @@ def _direct_download_action(action):
     return client in {"inkdrop_direct", "inkdrop_page_pack"}
 
 
+def _deferred_direct_handoff_identity(action):
+    action = action if isinstance(action, dict) else {}
+    for key in ("candidate_identity", "direct_artifact_key", "download_url_hash", "external_id"):
+        value = str(action.get(key) or "").strip()
+        if value:
+            return key, value
+    return "", ""
+
+
+def source_worker_recorded_deferred_direct_handoffs(result):
+    """Return exact direct actions whose durable source-worker handoff already exists.
+
+    Recorder rows are joined back to a unique provider job.  Only a unique sent
+    direct action with a successful source-attempt *and* download-task id is safe
+    to suppress from the legacy in-memory queue projection.  Missing or ambiguous
+    evidence deliberately falls back to the old projection path.
+    """
+
+    records = []
+    source_worker = result.get("source_worker") if isinstance(result, dict) else {}
+    for run in source_worker_result_runs(source_worker):
+        run_result = run.get("result") if isinstance(run.get("result"), dict) else {}
+        if run_result.get("dry_run"):
+            continue
+        recording = run_result.get("recording") if isinstance(run_result.get("recording"), dict) else {}
+        job_results = [row for row in run_result.get("job_results") or [] if isinstance(row, dict)]
+        recorded_results = [row for row in recording.get("results") or [] if isinstance(row, dict)]
+        queue_id = str(run.get("queue_id") or run_result.get("queue_id") or "").strip()
+        if not queue_id:
+            continue
+        jobs_by_provider = {}
+        for job_result in job_results:
+            provider_id = str(job_result.get("provider_id") or "").strip().lower()
+            jobs_by_provider.setdefault(provider_id, []).append(job_result)
+        selection = recording.get("queue_auto_send_selection") if isinstance(recording.get("queue_auto_send_selection"), dict) else {}
+        selected = selection.get("selected") if isinstance(selection.get("selected"), dict) else {}
+        for recorded_result in recorded_results:
+            recorded_provider = str(recorded_result.get("provider_id") or "").strip().lower()
+            matching_jobs = jobs_by_provider.get(recorded_provider) or []
+            if not recorded_provider or len(matching_jobs) != 1 or recorded_result.get("dry_run"):
+                continue
+            job_result = matching_jobs[0]
+            provider_id = recorded_provider
+            sent_actions = [
+                source_worker_attempt_action_row(run, job_result, attempt)
+                for attempt in job_result.get("attempts") or []
+                if isinstance(attempt, dict) and str(attempt.get("status") or "").strip().lower() == "sent"
+            ]
+            direct_actions = [action for action in sent_actions if _direct_download_action(action)]
+            if len(sent_actions) == 1 and direct_actions:
+                action = direct_actions[0]
+            elif selection.get("applied") and direct_actions:
+                selected_identity = str(selected.get("candidate_identity") or "").strip()
+                selected_provider = str(selected.get("provider_id") or "").strip().lower()
+                matches = [
+                    action
+                    for action in direct_actions
+                    if selected_provider == provider_id
+                    and selected_identity
+                    and _deferred_direct_handoff_identity(action)[1] == selected_identity
+                ]
+                action = matches[0] if len(matches) == 1 else None
+            else:
+                action = None
+            if not action:
+                continue
+            durable_records = [
+                row
+                for row in recorded_result.get("records") or []
+                if isinstance(row, dict)
+                and row.get("ok")
+                and str(row.get("attempt_id") or "").strip()
+                and str(row.get("download_task_id") or "").strip()
+                and str(row.get("queue_id") or queue_id).strip() == queue_id
+            ]
+            if len(durable_records) != 1:
+                continue
+            identity_kind, identity = _deferred_direct_handoff_identity(action)
+            if not identity:
+                continue
+            proof = durable_records[0]
+            records.append(
+                {
+                    "queue_id": queue_id,
+                    "provider_id": provider_id,
+                    "download_client": str(action.get("download_client") or "").strip().lower(),
+                    "identity_kind": identity_kind,
+                    "identity": identity,
+                    "source_attempt_id": str(proof.get("attempt_id") or "").strip(),
+                    "download_task_id": str(proof.get("download_task_id") or "").strip(),
+                    "status": "recorded_staging_deferred",
+                }
+            )
+    return records
+
+
+def _action_matches_deferred_direct_handoff(action, handoff):
+    if not _direct_download_action(action) or not isinstance(handoff, dict):
+        return False
+    identity_kind = str(handoff.get("identity_kind") or "").strip()
+    identity = str(handoff.get("identity") or "").strip()
+    if not identity_kind or not identity or str((action or {}).get(identity_kind) or "").strip() != identity:
+        return False
+    return (
+        str((action or {}).get("queue_id") or "").strip() == str(handoff.get("queue_id") or "").strip()
+        and str((action or {}).get("provider_id") or (action or {}).get("source") or "").strip().lower()
+        == str(handoff.get("provider_id") or "").strip().lower()
+        and str((action or {}).get("download_client") or "").strip().lower()
+        == str(handoff.get("download_client") or "").strip().lower()
+    )
+
+
 def record_rss_discovery_status_from_source_worker_result(result):
     """Keep the RSS health widget honest: it used to only see the retired
     standalone discover_rss.py run, which stopped executing once RSS moved
@@ -11509,14 +11657,21 @@ def apply_source_worker_rss_result_to_queue(queue, result):
             touched["staged"] += 1
     filtered = dict(result or {})
     stage_requested = bool(filtered.get("source_worker_direct_stage_requested"))
-    if staged_queue_ids or stage_requested:
+    deferred_handoffs = [
+        row for row in filtered.get("source_worker_deferred_direct_handoffs") or [] if isinstance(row, dict)
+    ]
+    if staged_queue_ids or stage_requested or deferred_handoffs:
         stage_queue_ids = set(staged_queue_ids)
         if stage_requested:
             stage_queue_ids.update(str(value or "").strip() for value in filtered.get("source_worker_argv_queue_ids") or [])
         filtered["actions"] = [
             action
             for action in (result.get("actions") or [])
-            if str(action.get("queue_id") or "").strip() not in stage_queue_ids or not _direct_download_action(action)
+            if (
+                str(action.get("queue_id") or "").strip() not in stage_queue_ids
+                or not _direct_download_action(action)
+            )
+            and not any(_action_matches_deferred_direct_handoff(action, handoff) for handoff in deferred_handoffs)
         ]
     applied = apply_result_to_queue(queue, filtered, "rss")
     touched["actions"] += int(applied.get("actions") or 0)
@@ -11574,17 +11729,25 @@ def run_source_worker_prowlarr(series, rows, args, provider_observer=None):
     return result
 
 
-def run_source_worker_rss(series, rows, args, deadline=None, provider_observer=None):
+def source_worker_rss_execution(rows, args):
     if inkdrop_source_worker_cli is None:
-        return run_rss(series, args, deadline=deadline, provider_observer=provider_observer)
+        return {"mode": "legacy", "reason": "source_worker_cli_unavailable", "queue_ids": []}
     try:
         if not INKDROP_STATE_DB.exists():
-            return run_rss(series, args, deadline=deadline, provider_observer=provider_observer)
+            return {"mode": "legacy", "reason": "state_db_unavailable", "queue_ids": []}
     except Exception:
-        return run_rss(series, args, deadline=deadline, provider_observer=provider_observer)
+        return {"mode": "legacy", "reason": "state_db_check_failed", "queue_ids": []}
     eligible = source_eligible_rows(rows, args, source="rss")
     queue_ids = source_worker_rss_queue_ids(eligible)
     if not queue_ids:
+        return {"mode": "legacy", "reason": "no_source_worker_queue_ids", "queue_ids": []}
+    return {"mode": "source_worker", "reason": "native_rss_queue_available", "queue_ids": queue_ids}
+
+
+def run_source_worker_rss(series, rows, args, deadline=None, provider_observer=None, execution=None):
+    execution = execution if isinstance(execution, dict) else source_worker_rss_execution(rows, args)
+    queue_ids = list(execution.get("queue_ids") or [])
+    if execution.get("mode") != "source_worker" or not queue_ids:
         return run_rss(series, args, deadline=deadline, provider_observer=provider_observer)
     argv = source_worker_rss_argv(queue_ids, args)
     try:
@@ -11614,6 +11777,10 @@ def run_source_worker_rss(series, rows, args, deadline=None, provider_observer=N
     result["source_worker_argv_provider_ids"] = ["rss"]
     result["source_worker_argv_queue_ids"] = queue_ids
     result["source_worker_direct_stage_requested"] = "--stage-direct" in argv
+    if not result["source_worker_direct_stage_requested"]:
+        deferred_handoffs = source_worker_recorded_deferred_direct_handoffs(result)
+        result["source_worker_deferred_direct_handoffs"] = deferred_handoffs
+        result["source_worker_direct_handoff_recorded_deferred"] = bool(deferred_handoffs)
     return result
 
 
@@ -12271,7 +12438,7 @@ def slskd_broad_probe_kwargs(args, eligible_count=0, row_count=0):
     }
 
 
-def source_runtime_min_seconds(source, args, *, slskd_kwargs=None):
+def source_runtime_min_seconds(source, args, *, slskd_kwargs=None, rss_execution=None):
     source = source_order_attempt_key(source)
     slskd_kwargs = slskd_kwargs if isinstance(slskd_kwargs, dict) else {}
     if source == "failed_retry":
@@ -12279,7 +12446,11 @@ def source_runtime_min_seconds(source, args, *, slskd_kwargs=None):
     elif source == "prowlarr":
         timeout = getattr(args, "prowlarr_command_timeout_seconds", DEFAULT_PROWLARR_COMMAND_TIMEOUT_SECONDS)
     elif source == "rss":
-        timeout = direct_discovery_configured_command_timeout_seconds("rss", args)
+        timeout = (
+            source_worker_rss_runtime_seconds(args)
+            if isinstance(rss_execution, dict) and rss_execution.get("mode") == "source_worker"
+            else direct_discovery_configured_command_timeout_seconds("rss", args)
+        )
     elif source == "comicscodes":
         timeout = direct_discovery_configured_command_timeout_seconds("comicscodes", args)
     elif source == "mangadex":
@@ -14177,10 +14348,12 @@ def process_series(queue, series, rows, args, progress=None, deadline=None, prov
         if runtime_deadline_expired(deadline):
             budget_source = first_runtime_budget_eligible_source() or source
             eligible_rows = source_eligible_rows(rows, args, source=budget_source)
+            budget_rss_execution = source_worker_rss_execution(rows, args) if budget_source == "rss" else None
             min_runtime_seconds = source_runtime_min_seconds(
                 budget_source,
                 args,
                 slskd_kwargs=slskd_batch_kwargs() if budget_source == "slskd" else None,
+                rss_execution=budget_rss_execution,
             )
             reason = runtime_budget_skip_reason(budget_source, deadline, min_runtime_seconds)
             mark_budget_retry(budget_source, detail_reason=reason, eligible_rows=eligible_rows)
@@ -14212,11 +14385,22 @@ def process_series(queue, series, rows, args, progress=None, deadline=None, prov
         if not source_runner:
             continue
         start_note, finish_note, runner, applier = source_runner
+        rss_execution = source_worker_rss_execution(rows, args) if source == "rss" else None
+        if rss_execution is not None:
+            runner = lambda execution=rss_execution: run_source_worker_rss(
+                series,
+                rows,
+                args,
+                deadline=deadline,
+                provider_observer=provider_observer,
+                execution=execution,
+            )
         timeout_note = "Prowlarr timed out; continuing source ladder" if source == "prowlarr" else None
         min_runtime_seconds = source_runtime_min_seconds(
             source,
             args,
             slskd_kwargs=slskd_batch_kwargs() if source == "slskd" else None,
+            rss_execution=rss_execution,
         )
         payload = run_source(
             source,

@@ -11,7 +11,9 @@ import gzip
 import hashlib
 import hmac
 import importlib.util
+import ipaddress
 from core import inkdrop_acquire_adapter
+from core import inkdrop_cloudflare_bypass_proxy
 from core import inkdrop_qbittorrent_auth
 from core import inkdrop_library_frontends
 from core import inkdrop_runtime_config
@@ -27,6 +29,7 @@ from core import inkdrop_download_client_api
 from core import inkdrop_auth
 from core import inkdrop_auth_contracts
 from core import inkdrop_backup_restore
+from core import inkdrop_db_maintenance
 from core import inkdrop_portability_export
 from core import inkdrop_log_export
 from core import inkdrop_support_bundle
@@ -54,18 +57,21 @@ import re
 import requests
 import shutil
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
 import uuid
+import zipfile
 from collections import deque
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse, urlsplit, urlunsplit
 
 if not hasattr(requests, "exceptions"):
     class _FallbackRequestsExceptions:
@@ -97,6 +103,91 @@ HTML = r"""<!doctype html>
 <html lang="en" class="inkdrop-auth-pending">
 <head>
   <meta charset="utf-8">
+  <script>
+    // Server-computed at request time (see send_html()) so the redirect
+    // decision below never needs a network round trip. While true, nobody
+    // has claimed this install yet and /m has no bootstrap form of its
+    // own -- see INKDROP_AUTH_SETUP_SAFE_PATHS -- so every viewport stays
+    // on this shell until inkdrop-auth-ui.js renders the setup flow.
+    window.__INKDROP_SETUP_REQUIRED__ = __INKDROP_SETUP_REQUIRED_JSON__;
+  </script>
+  <script>
+    // Auto-switch to the lightweight mobile view (/m) on a narrow viewport,
+    // before any of this page's CSS/JS below is requested. Runs again on
+    // every crossing of the breakpoint (matchMedia's change event) so
+    // resizing or rotating an already-open window switches live too, not
+    // just on initial load -- not a one-time user-agent sniff. A visitor
+    // who explicitly asked to stay on desktop (the mobile page's "Desktop
+    // site" link, or ?view=desktop) is remembered for this browser tab via
+    // sessionStorage so it doesn't bounce them back.
+    //
+    // The auto-detect branch (no explicit preference) is guarded by a
+    // shared sessionStorage cooldown: dragging a window edge through 768px
+    // fires matchMedia's change event on every transient crossing, and each
+    // one used to trigger an immediate location.replace -- a full document
+    // reload takes long enough that the width can drift back across the
+    // breakpoint again before the new page's own gate script runs, so /
+    // and /m kept bouncing each other back and forth (visible as constant
+    // flashing). A redirect this script fires now stamps the time; neither
+    // side's auto-detect branch will fire again for a short window after,
+    // so the loop can't sustain itself. Explicit preferences (query param
+    // or the "Desktop site" link) bypass the cooldown entirely -- they're a
+    // single deliberate decision, not a repeatable auto-trigger, so nothing
+    // about them can loop.
+    (function () {
+      var BREAKPOINT = "(max-width: 768px)";
+      var SWITCH_COOLDOWN_MS = 1500;
+      var CHANGE_SETTLE_MS = 250;
+      function preference() {
+        try { return sessionStorage.getItem("inkdropViewPreference"); } catch (e) { return null; }
+      }
+      function recentlyAutoSwitched() {
+        try {
+          var at = Number(sessionStorage.getItem("inkdropViewSwitchedAt") || 0);
+          return !!at && (Date.now() - at) < SWITCH_COOLDOWN_MS;
+        } catch (e) { return false; }
+      }
+      function markAutoSwitched() {
+        try { sessionStorage.setItem("inkdropViewSwitchedAt", String(Date.now())); } catch (e) {}
+      }
+      try {
+        var requested = new URLSearchParams(location.search).get("view");
+        if (requested === "mobile" || requested === "desktop") {
+          sessionStorage.setItem("inkdropViewPreference", requested);
+        }
+      } catch (e) {}
+      function isNarrow() {
+        return !!(window.matchMedia && window.matchMedia(BREAKPOINT).matches);
+      }
+      function maybeSwitch() {
+        if (window.__INKDROP_SETUP_REQUIRED__) return;
+        var pref = preference();
+        if (pref === "desktop") return;
+        if (pref === "mobile") { location.replace("/m" + location.search); return; }
+        if (isNarrow() && !recentlyAutoSwitched()) {
+          markAutoSwitched();
+          location.replace("/m" + location.search);
+        }
+      }
+      maybeSwitch();
+      if (window.matchMedia) {
+        var mql = window.matchMedia(BREAKPOINT);
+        var settleTimer = null;
+        var onChange = function () {
+          if (settleTimer) clearTimeout(settleTimer);
+          settleTimer = setTimeout(maybeSwitch, CHANGE_SETTLE_MS);
+        };
+        if (mql.addEventListener) mql.addEventListener("change", onChange);
+        else if (mql.addListener) mql.addListener(onChange);
+      }
+      // Belt-and-suspenders re-check once the page is actually shown --
+      // covers a bfcache restore (back/forward navigation resurrects the
+      // page without re-running from a network load) and any environment
+      // where the viewport isn't fully settled at the moment this
+      // head-of-document script runs.
+      window.addEventListener("pageshow", maybeSwitch);
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#181c21">
   <link rel="icon" type="image/png" href="/inkdrop-logo-mark.png?v=20260728-opaque-logo">
@@ -149,6 +240,7 @@ HTML = r"""<!doctype html>
         <span class="arr-nav-group-label">Library</span>
         <!-- Pulled for this release: no forward-looking release-date data yet. See INKDROP_CALENDAR_ENABLED. -->
         <button type="button" data-arr-section="calendar" data-arr-icon-key="calendar" data-arr-static-nav="true" onclick="openInkdropNavSection('calendar')" hidden aria-hidden="true"><span class="arr-nav-label">Calendar</span></button>
+        <button type="button" data-arr-section="pull_list" data-arr-icon-key="calendar" data-arr-static-nav="true" onclick="openInkdropNavSection('pull_list')"><span class="arr-nav-label">Pull List</span></button>
         <button type="button" data-arr-section="series" data-arr-icon-key="series" data-arr-badge-mode="label" onclick="openInkdropNavSection('series')"><span class="arr-nav-label">Series</span><span class="arr-nav-count" id="navSeriesCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
         <span class="arr-nav-group-label">Operations</span>
         <button type="button" data-arr-section="wanted" data-arr-icon-key="wanted" data-arr-badge-mode="label" onclick="openInkdropNavSection('wanted')"><span class="arr-nav-label">Wanted</span><span class="arr-nav-count" id="navWantedCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
@@ -159,6 +251,7 @@ HTML = r"""<!doctype html>
           <button type="button" data-arr-section="source_memory" data-arr-subsection="activity" onclick="openInkdropNavSection('source_memory')">Blocklist</button>
         </div>
         <button type="button" data-arr-section="manual_review" data-arr-icon-key="manual-review" data-arr-badge-mode="label" onclick="openInkdropNavSection('manual_review')"><span class="arr-nav-label">Manual Review</span><span class="arr-nav-count" id="navReviewCount" hidden aria-hidden="true" data-arr-badge-hidden="true">...</span></button>
+        <button type="button" data-arr-section="reliability" data-arr-icon-key="diagnostics" data-arr-static-nav="true" onclick="openInkdropNavSection('reliability')"><span class="arr-nav-label">Reliability</span></button>
         <span class="arr-nav-group-label">Administration</span>
         <button type="button" data-arr-section="settings" data-arr-icon-key="settings" data-arr-static-nav="true" onclick="openInkdropSettingsArea('setup')"><span class="arr-nav-label">Settings</span></button>
         <div class="arr-settings-subnav" aria-label="Settings areas">
@@ -452,6 +545,24 @@ HTML = r"""<!doctype html>
       </div>
     </section>
 
+    <section class="card pull-list-page" id="inkdropPullList" data-arr-page="pull_list" hidden>
+      <div class="pull-list-page-head">
+        <div>
+          <h2>Pull List</h2>
+          <p class="mini" id="inkdropPullListRangeLabel">This week's releases for what you follow, and whether you've got them yet.</p>
+        </div>
+        <div class="workflow-actions pull-list-week-nav">
+          <button id="inkdropPullListPrevBtn" type="button" data-arr-control-label="Previous week" aria-label="Previous week">&lt; Prev</button>
+          <button id="inkdropPullListThisWeekBtn" type="button" data-arr-control-label="This week" aria-label="Jump to this week">This week</button>
+          <button id="inkdropPullListNextBtn" type="button" data-arr-control-label="Next week" aria-label="Next week">Next &gt;</button>
+          <button id="inkdropPullListRefreshBtn" type="button" data-arr-control-label="Refresh" aria-label="Refresh pull list">Refresh</button>
+        </div>
+      </div>
+      <div class="pull-list-page-body" id="inkdropPullListBody">
+        <div class="mini">Loading pull list...</div>
+      </div>
+    </section>
+
     <details class="card watch-panel manual-review-support-tools" id="manualReviewSupportTools" data-arr-page="manual_review">
       <summary>
         <div class="section-title">
@@ -583,6 +694,7 @@ HTML = r"""<!doctype html>
             <option value="all" selected>All sources</option>
             <option value="comicvine">ComicVine</option>
             <option value="mangadex">MangaDex pilot</option>
+            <option value="metron">Metron</option>
           </select>
         </label>
         <label>Limit
@@ -1005,6 +1117,7 @@ HTML = r"""<!doctype html>
     let inkdropDownloadFilter = "active";
     let inkdropManualReviewFilter = "actionable";
     let focusedSeriesRow = null;
+    let seriesLibraryLastScrollTop = 0;
     let seriesRemovePendingRow = null;
     let seriesRemoveRestoreFocus = null;
     let seriesLibraryPendingRow = null;
@@ -1080,7 +1193,7 @@ HTML = r"""<!doctype html>
     // against something that exists; the routes and planning logic behind them are
     // untouched.
     const INKDROP_CLEANUP_DIAGNOSTICS_ENABLED = false;
-    const primaryInkdropSections = new Set(["series", "wanted", "queue", "activity", "history", "manual_review", "settings", "system", ...(INKDROP_CALENDAR_ENABLED ? ["calendar"] : [])]);
+    const primaryInkdropSections = new Set(["series", "wanted", "queue", "activity", "history", "manual_review", "reliability", "settings", "system", "pull_list", ...(INKDROP_CALENDAR_ENABLED ? ["calendar"] : [])]);
     const utilityInkdropSectionPages = {
       issues: "series",
       download_tasks: "queue",
@@ -1105,6 +1218,7 @@ HTML = r"""<!doctype html>
       "imports",
       "manual_review",
       "activity",
+      "reliability",
     ]);
     const workflowTargetPages = {
       manualReview: "manual_review",
@@ -1164,7 +1278,6 @@ HTML = r"""<!doctype html>
       const queueFallback = Number(state.queue_work_items ?? state.queue_active_work_items ?? state.active_queue_items ?? 0);
       const queueCount = inkdropStateSectionCount(state, "queue", queueFallback);
       const manualCount = inkdropStateSectionCount(state, "manual_review", Number(lastStatusData?.manual_review_actionable_count || 0));
-      const historyCount = inkdropStateSectionCount(state, "history", Number(state.history_count || state.history_events || 0));
       const systemHealth = data?.system_health || lastStatusData?.system_health || {};
       const systemProblemCount = Number(systemHealth.problem_count || 0);
       const activityItems = currentServerActivities(lastStatusData || data || state);
@@ -1189,6 +1302,19 @@ HTML = r"""<!doctype html>
             mastheadAction("Wanted", {section: "series", filter: "wanted", tone: "warn"}),
           ],
         },
+        pull_list: {
+          tone: "",
+          eyebrow: "Library",
+          title: "Pull List",
+          description: "One week at a time: what published for the series you follow, and whether you've got it yet.",
+          // No stats here on purpose -- the counts that matter (released this
+          // week, still searching, owned) are scoped to whichever week is on
+          // screen, not the global state payload this masthead model reads
+          // from. The page's own summary row (renderInkdropPullListPage)
+          // owns those numbers so they never disagree with what's below.
+          stats: [],
+          actions: [],
+        },
         wanted: {
           tone: wantedCount ? "warn" : "good",
           eyebrow: "Automatic Backlog",
@@ -1198,7 +1324,13 @@ HTML = r"""<!doctype html>
             stat("missing", wantedCount, "", true, "search"),
             stat("searching", Number(wanted.in_progress || 0), "", true, "radar"),
             stat("downloading", Number(state.download_task_active_items || 0), "warn", true, "download"),
-            stat("needs attention", manualCount, manualCount ? "bad" : "good", true, "alert"),
+            // "manual review", not "needs attention" -- the Recovery details
+            // box lower on this same page shows its own much larger "failed
+            // or blocked" backlog count (every issue whose last attempt
+            // failed, most with no open Manual Review row at all), and the
+            // two used to share the word "attention" with nothing to tell a
+            // reader they're different metrics on different scopes.
+            stat("manual review", manualCount, manualCount ? "bad" : "good", true, "alert"),
           ],
           // No masthead actions here on purpose -- Open Backlog/Waiting/Needs
           // Review used to duplicate the filter tabs InkDrop already renders
@@ -1304,7 +1436,6 @@ HTML = r"""<!doctype html>
           stats: [
             stat("health", systemProblemCount ? systemProblemCount : "OK", systemProblemCount ? "warn" : "good", true),
             stat("workers", Number(state.worker_activity_active || 0), "warn"),
-            stat("events", historyCount, "", true),
           ],
           actions: [
             mastheadAction("Status", {target: "inkdropSystem"}),
@@ -1429,6 +1560,20 @@ HTML = r"""<!doctype html>
             mastheadAction("Verified", {section: "imports", filter: "verified", tone: "good"}),
             mastheadAction("Failed", {section: "imports", filter: "failed", tone: "bad"}),
           ],
+        },
+        reliability: {
+          tone: "",
+          eyebrow: "Operations",
+          title: "Reliability",
+          description: "Every Wanted/in-progress item's real path through the pipeline, and why it's stuck.",
+          // No stats here on purpose, same reasoning as History/Blocklist above:
+          // the rollup buckets (budget-starved, known-bad blocked, import
+          // recheck loop, no source found yet) are live-computed from
+          // source_attempts/queue_items specifically for this page and
+          // rendered by the island itself -- a header chip reading the global
+          // state payload has no way to agree with them.
+          stats: [],
+          actions: [],
         },
       };
       return models[key] || models[pageKey] || models.series;
@@ -6251,6 +6396,8 @@ HTML = r"""<!doctype html>
         "/api/mangadex/search": "Searching MangaDex",
         "/api/mangadex/feed": "Loading MangaDex chapters",
         "/api/mangadex/add": "Adding MangaDex series",
+        "/api/metron/search": "Searching Metron",
+        "/api/metron/add": "Adding Metron series",
         "/api/comicvine/add": "Monitoring series",
         "/api/comicvine/update": "Updating series watch",
         "/api/comicvine/replace-metadata": "Replacing series metadata",
@@ -6272,6 +6419,10 @@ HTML = r"""<!doctype html>
         "/api/inkdrop-state/series_shadow_ref_merge/apply": "Previewing duplicate series refs",
         "/api/inkdrop-state/series-shadow-retire/apply": "Retiring duplicate series shadow",
         "/api/inkdrop-state/series_shadow_retire/apply": "Retiring duplicate series shadow",
+        "/api/inkdrop-state/series-merge/candidate": "Comparing duplicate series",
+        "/api/inkdrop-state/series_merge/candidate": "Comparing duplicate series",
+        "/api/inkdrop-state/series-merge/apply": "Merging duplicate series",
+        "/api/inkdrop-state/series_merge/apply": "Merging duplicate series",
         "/api/inkdrop-state/sync": "Syncing InkDrop state",
         "/api/inkdrop-settings/sync": "Syncing settings",
         "/api/inkdrop-settings/provider/claim": "Claiming provider",
@@ -6370,8 +6521,8 @@ HTML = r"""<!doctype html>
       const focus = activityFocusFromPayload(path, payload);
       const route = target => routeWithFocus(target, focus);
       if (path === "/api/import") return route(payload?.manualInbox ? "manualIntake" : "advancedOps");
-      if (path === "/api/comicvine/search" || path === "/api/mangadex/search") return route("seriesSearchSection");
-      if (path === "/api/comicvine/add") return route({section: "queue", filter: "active", label: "Queue · Active"});
+      if (path === "/api/comicvine/search" || path === "/api/mangadex/search" || path === "/api/metron/search") return route("seriesSearchSection");
+      if (path === "/api/comicvine/add" || path === "/api/mangadex/add" || path === "/api/metron/add") return route({section: "queue", filter: "active", label: "Queue · Active"});
       if (path.startsWith("/api/comicvine/")) return route({section: "series", filter: "active", label: "Series · Active"});
       // These four all commonly land a row in "queued" state, which both the
       // "active" (downloading/importing) and "work" (+searching) filters
@@ -6390,6 +6541,7 @@ HTML = r"""<!doctype html>
       if (path.startsWith("/api/inkdrop-state/series_shadow_ref_merge/")) return route({section: "sources", filter: "series_shadow_ref_merge_apply_preview", label: "Sources · Duplicate Plan"});
       if (path.startsWith("/api/inkdrop-state/series-shadow-retire/")) return route({section: "sources", filter: "series_shadow_retire_plan", label: "Sources · Shadow Retire Plan"});
       if (path.startsWith("/api/inkdrop-state/series_shadow_retire/")) return route({section: "sources", filter: "series_shadow_retire_plan", label: "Sources · Shadow Retire Plan"});
+      if (path.startsWith("/api/inkdrop-state/series-merge/") || path.startsWith("/api/inkdrop-state/series_merge/")) return route({section: "series", filter: "duplicate_titles", label: "Series · Duplicate Titles"});
       if (path === "/api/inkdrop-state/sync") return route({section: "queue", filter: "active", label: "Queue · Active"});
       if (path === "/api/inkdrop-state/library-frontends/sync") return route({section: "history", filter: "reader_sync", label: "History · Reader Sync"});
       if (path.startsWith("/api/inkdrop-state/")) return "inkdropCore";
@@ -7665,12 +7817,19 @@ HTML = r"""<!doctype html>
         managedScanBtn.title = managedScanRunning
           ? "A scan is already going; results appear here when it finishes."
           : "Walk the library, compare it against the import ledger, and flag duplicates. Can take a while on a large library.";
-        if (!managedScanRunning) managedScanBtn.onclick = () => startManagedLibraryScan(managedScanBtn);
+        const managedArchiveIntegrityLabel = document.createElement("label");
+        managedArchiveIntegrityLabel.style.marginLeft = "10px";
+        const managedArchiveIntegrityCheckbox = document.createElement("input");
+        managedArchiveIntegrityCheckbox.type = "checkbox";
+        managedArchiveIntegrityCheckbox.disabled = managedScanRunning;
+        managedArchiveIntegrityLabel.title = "Re-opens every .cbz/.cbr already in the library to check for corruption (bad zip, bad member, failed .cbr extraction). Much slower than the rest of this scan -- bounded to the first few thousand archives per run.";
+        managedArchiveIntegrityLabel.append(managedArchiveIntegrityCheckbox, document.createTextNode(" Also check archive integrity (slower)"));
+        if (!managedScanRunning) managedScanBtn.onclick = () => startManagedLibraryScan(managedScanBtn, managedArchiveIntegrityCheckbox);
         const managedScanMeta = document.createElement("span");
         managedScanMeta.textContent = managedScanRunning
           ? (managedLibraryScan.started_at ? ` Started ${formatAgeFromSeconds(managedLibraryScan.started_at)}. Results appear here when it finishes.` : " Results appear here when the scan finishes.")
           : (managedLibraryScan.completed_at ? ` Last scanned ${formatAgeFromSeconds(managedLibraryScan.completed_at)}.` : " Not scanned yet.");
-        managedScanControls.append(managedScanBtn, managedScanMeta);
+        managedScanControls.append(managedScanBtn, managedArchiveIntegrityLabel, managedScanMeta);
         managedBody.appendChild(managedScanControls);
         if (managedScanRunning) pollManagedLibraryScan();
         if (!managedHasResult) {
@@ -7706,6 +7865,15 @@ HTML = r"""<!doctype html>
           if (duplicatePlan.hash_proof_requested) {
             appendSystemTableRow(table, ["Hash proof", `${compactNumber(duplicatePlan.hash_match_groups || 0)} matched`, `${compactNumber(duplicatePlan.hash_files_hashed || 0)} files hashed · ${compactNumber(duplicatePlan.hash_files_skipped || 0)} skipped · ${compactNumber(duplicatePlan.hash_mismatch_groups || 0)} mismatched`], {columns: 3});
           }
+          const archiveIntegrity = managedLibraryAudit.archive_integrity || {};
+          if (archiveIntegrity.requested) {
+            const integrityDetail = archiveIntegrity.ok === false
+              ? (archiveIntegrity.error || archiveIntegrity.reason || "scan failed")
+              : `${compactNumber(archiveIntegrity.checked_files || 0)} archives opened${archiveIntegrity.truncated ? ` · truncated at ${compactNumber(archiveIntegrity.max_files || 0)}` : ""}`;
+            appendSystemTableRow(table, ["Archive integrity", compactNumber(archiveIntegrity.corrupt_count || 0), integrityDetail], {columns: 3});
+          } else {
+            appendSystemTableRow(table, ["Archive integrity", "not checked", "Check \"Also check archive integrity\" above and scan again."], {columns: 3});
+          }
           managedBody.appendChild(table);
           const planCandidates = Array.isArray(duplicatePlan.candidates) ? duplicatePlan.candidates : [];
           if (planCandidates.length) {
@@ -7738,6 +7906,20 @@ HTML = r"""<!doctype html>
               ], {columns: 3});
             }
             managedBody.appendChild(sampleTable);
+          }
+          const corruptSamples = Array.isArray(archiveIntegrity.samples) ? archiveIntegrity.samples : [];
+          if (corruptSamples.length) {
+            const corruptTable = document.createElement("div");
+            corruptTable.className = "system-table";
+            appendSystemTableRow(corruptTable, ["Reason", "Media", "Path"], {head: true, columns: 3});
+            for (const item of corruptSamples.slice(0, 10)) {
+              appendSystemTableRow(corruptTable, [
+                String(item.reason || "corrupt").replace(/_/g, " "),
+                item.media_type || "",
+                compactPlainText(item.path || "", 120),
+              ], {columns: 3});
+            }
+            managedBody.appendChild(corruptTable);
           }
         }
         if (INKDROP_CLEANUP_DIAGNOSTICS_ENABLED) {
@@ -8476,6 +8658,230 @@ HTML = r"""<!doctype html>
       }
     }
 
+    // Pull List: a week at a time, distinct from the disabled Calendar page
+    // above. Calendar was a continuous backward/forward scroll and got
+    // pulled because most of it read empty (see INKDROP_CALENDAR_ENABLED).
+    // Pull List instead boxes exactly seven days -- Monday through Sunday --
+    // so an empty Wednesday reads as "nothing announced for Wednesday yet"
+    // inside a week that's otherwise populated, not as a blank scroll. It
+    // reuses the same /api/inkdrop-state/calendar endpoint and status
+    // vocabulary as Calendar (CALENDAR_STATUS_TONE): the acquisition-status
+    // logic (owned/searching/wanted/etc, parked-series exclusion, unreadable
+    // dates) is already correct there and shouldn't be re-derived here.
+    let inkdropPullListWeekOffset = 0;
+    let inkdropPullListLoadSeq = 0;
+    const PULL_LIST_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+    function inkdropPullListTodayUTC() {
+      const now = new Date();
+      return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    }
+
+    function inkdropPullListIsoDate(date) {
+      return date.toISOString().slice(0, 10);
+    }
+
+    function inkdropPullListWeekBounds(offset=0) {
+      const today = inkdropPullListTodayUTC();
+      const mondayOffset = (today.getUTCDay() + 6) % 7; // Sun=0..Sat=6 -> Mon=0..Sun=6
+      const start = new Date(today);
+      start.setUTCDate(today.getUTCDate() - mondayOffset + offset * 7);
+      const end = new Date(start);
+      end.setUTCDate(start.getUTCDate() + 6);
+      return {start: inkdropPullListIsoDate(start), end: inkdropPullListIsoDate(end)};
+    }
+
+    function pullListPeriodPhrase(offset) {
+      if (offset === 0) return "this week";
+      if (offset === -1) return "last week";
+      if (offset === 1) return "next week";
+      return offset < 0 ? `${Math.abs(offset)} weeks ago` : `${offset} weeks ahead`;
+    }
+
+    function inkdropPullListRangeText(start, end, offset) {
+      const fmt = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, {month: "short", day: "numeric", timeZone: "UTC"});
+      const year = new Date(`${end}T00:00:00Z`).getUTCFullYear();
+      const range = `${fmt(start)} - ${fmt(end)}, ${year}`;
+      const phrase = pullListPeriodPhrase(offset);
+      return `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}, ${range}`;
+    }
+
+    async function loadInkdropPullListPage(force=false) {
+      setInkdropPrimarySection("pull_list");
+      const loadSeq = ++inkdropPullListLoadSeq;
+      const box = $("inkdropPullList");
+      const body = $("inkdropPullListBody");
+      if (box) box.hidden = false;
+      scrollInkdropShellTop(true);
+      if (body && (force || !body.dataset.hydrated)) {
+        body.innerHTML = "";
+        const loading = document.createElement("div");
+        loading.className = "mini";
+        loading.textContent = "Loading pull list...";
+        body.appendChild(loading);
+      }
+      const prevBtn = $("inkdropPullListPrevBtn");
+      const nextBtn = $("inkdropPullListNextBtn");
+      const thisWeekBtn = $("inkdropPullListThisWeekBtn");
+      const refreshBtn = $("inkdropPullListRefreshBtn");
+      if (prevBtn && !prevBtn.dataset.wired) {
+        prevBtn.dataset.wired = "true";
+        prevBtn.onclick = () => { inkdropPullListWeekOffset -= 1; loadInkdropPullListPage(true); };
+      }
+      if (nextBtn && !nextBtn.dataset.wired) {
+        nextBtn.dataset.wired = "true";
+        nextBtn.onclick = () => { inkdropPullListWeekOffset += 1; loadInkdropPullListPage(true); };
+      }
+      if (thisWeekBtn && !thisWeekBtn.dataset.wired) {
+        thisWeekBtn.dataset.wired = "true";
+        thisWeekBtn.onclick = () => { inkdropPullListWeekOffset = 0; loadInkdropPullListPage(true); };
+      }
+      if (refreshBtn) refreshBtn.onclick = () => loadInkdropPullListPage(true);
+
+      const {start, end} = inkdropPullListWeekBounds(inkdropPullListWeekOffset);
+      let pullDoc = null;
+      let loadError = "";
+      try {
+        const res = await fetch(`/api/inkdrop-state/calendar?start=${start}&end=${end}`, {cache: "no-store"});
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+        pullDoc = data.calendar || {};
+      } catch (err) {
+        loadError = err?.message || String(err);
+      }
+      if (loadSeq !== inkdropPullListLoadSeq) return pullDoc;
+      renderInkdropPullListPage(pullDoc, loadError, start, end);
+      return pullDoc;
+    }
+
+    function pullListStatusPip(status) {
+      const pip = document.createElement("span");
+      pip.className = `pull-list-status-pip pull-list-status-${CALENDAR_STATUS_TONE[status] || "muted"}`;
+      pip.setAttribute("aria-hidden", "true");
+      return pip;
+    }
+
+    function renderInkdropPullListPage(pullDoc, loadError="", start="", end="") {
+      const body = $("inkdropPullListBody");
+      if (!body) return;
+      body.innerHTML = "";
+      body.dataset.hydrated = "true";
+
+      const rangeLabel = $("inkdropPullListRangeLabel");
+      if (rangeLabel && start && end) {
+        rangeLabel.textContent = inkdropPullListRangeText(start, end, inkdropPullListWeekOffset);
+      }
+
+      if (loadError) {
+        const errorEl = document.createElement("div");
+        errorEl.className = "mini pull-list-error";
+        errorEl.textContent = `Could not load the pull list: ${loadError}`;
+        body.appendChild(errorEl);
+        return;
+      }
+
+      const doc = pullDoc && typeof pullDoc === "object" ? pullDoc : {};
+      const summary = doc.summary || {};
+      const forward = summary.forward_window || {};
+      const todayIso = String(doc.window?.today || "");
+      const daysByDate = {};
+      for (const day of Array.isArray(doc.days) ? doc.days : []) {
+        if (day?.date) daysByDate[day.date] = day;
+      }
+
+      const summaryRow = document.createElement("div");
+      summaryRow.className = "pull-list-summary-row mini";
+      const releasedCount = Number(summary.entries_total || 0);
+      const seriesCount = Number(summary.series_covered || 0);
+      const periodPhrase = pullListPeriodPhrase(inkdropPullListWeekOffset);
+      summaryRow.textContent = releasedCount
+        ? `${releasedCount} release${releasedCount === 1 ? "" : "s"} across ${seriesCount} series ${periodPhrase}.`
+        : `Nothing dated for ${periodPhrase} yet.`;
+      body.appendChild(summaryRow);
+
+      const noForwardDates = !Number(forward.issues_dated_after_today || 0);
+      if (noForwardDates && inkdropPullListWeekOffset >= 0 && forward.note) {
+        const note = document.createElement("div");
+        note.className = "pull-list-forward-note mini";
+        note.textContent = !releasedCount && inkdropPullListWeekOffset === 0
+          ? `${forward.note} Recently released issues you follow are more likely sitting in last week's box -- try Prev.`
+          : forward.note;
+        body.appendChild(note);
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "pull-list-week-grid";
+      const startDate = start ? new Date(`${start}T00:00:00Z`) : null;
+      for (let i = 0; i < 7 && startDate; i++) {
+        const cellDate = new Date(startDate);
+        cellDate.setUTCDate(startDate.getUTCDate() + i);
+        const iso = cellDate.toISOString().slice(0, 10);
+        const day = daysByDate[iso];
+
+        const col = document.createElement("div");
+        col.className = "pull-list-day-col";
+        if (day?.is_today) col.classList.add("pull-list-day-today");
+
+        const head = document.createElement("div");
+        head.className = "pull-list-day-head";
+        const weekdayLabel = document.createElement("strong");
+        weekdayLabel.textContent = PULL_LIST_WEEKDAY_NAMES[i];
+        head.appendChild(weekdayLabel);
+        const dateLabel = document.createElement("span");
+        dateLabel.className = "mini";
+        dateLabel.textContent = cellDate.toLocaleDateString(undefined, {month: "short", day: "numeric", timeZone: "UTC"});
+        head.appendChild(dateLabel);
+        if (day?.is_today) {
+          const todayBadge = document.createElement("span");
+          todayBadge.className = "pull-list-today-badge";
+          todayBadge.textContent = "Today";
+          head.appendChild(todayBadge);
+        }
+        col.appendChild(head);
+
+        const entries = Array.isArray(day?.entries) ? day.entries : [];
+        if (!entries.length) {
+          const empty = document.createElement("div");
+          empty.className = "mini pull-list-day-empty";
+          empty.textContent = todayIso && iso > todayIso ? "Not announced yet" : "Nothing released";
+          col.appendChild(empty);
+        } else {
+          const entryList = document.createElement("div");
+          entryList.className = "pull-list-entry-list";
+          for (const entry of entries) {
+            const row = document.createElement("div");
+            row.className = "pull-list-entry-row";
+            row.appendChild(pullListStatusPip(entry.status));
+            const textWrap = document.createElement("div");
+            textWrap.className = "pull-list-entry-text";
+            const titleSpan = document.createElement("span");
+            titleSpan.className = "pull-list-entry-title";
+            titleSpan.textContent = entry.series_title || "Unknown series";
+            const unitSpan = document.createElement("span");
+            unitSpan.className = "mini pull-list-entry-unit";
+            unitSpan.textContent = entry.unit_label || "";
+            textWrap.append(titleSpan, unitSpan);
+            row.appendChild(textWrap);
+            const statusSpan = document.createElement("span");
+            statusSpan.className = "mini pull-list-entry-status";
+            statusSpan.textContent = entry.status_label || "";
+            row.appendChild(statusSpan);
+            entryList.appendChild(row);
+          }
+          col.appendChild(entryList);
+        }
+        grid.appendChild(col);
+      }
+      body.appendChild(grid);
+
+      if (summary.entries_truncated) {
+        const truncated = document.createElement("div");
+        truncated.className = "mini pull-list-truncated-note";
+        truncated.textContent = `Showing the first ${summary.entry_limit} entries.`;
+        body.appendChild(truncated);
+      }
+    }
+
     function managedLibraryDuplicateCandidateReady(item={}) {
       return Boolean(
         item
@@ -8510,13 +8916,14 @@ HTML = r"""<!doctype html>
       }, 5000);
     }
 
-    async function startManagedLibraryScan(button) {
+    async function startManagedLibraryScan(button, archiveIntegrityCheckbox) {
       if (button) {
         button.disabled = true;
         button.textContent = "Starting...";
       }
       try {
-        await window.InkDropApi.request("/api/inkdrop-diagnostics/managed-library-audit/run", {method: "POST", body: {}});
+        const body = archiveIntegrityCheckbox?.checked ? {includeArchiveIntegrity: true} : {};
+        await window.InkDropApi.request("/api/inkdrop-diagnostics/managed-library-audit/run", {method: "POST", body});
         if (button) button.textContent = "Scanning...";
         toast("Library scan started.");
       } catch (err) {
@@ -8900,7 +9307,7 @@ HTML = r"""<!doctype html>
     }
 
     function inkdropRouteKeys() {
-      return new Set(["series", "wanted", "queue", "activity", "history", "manual_review", "settings", "system", "issues", "download_tasks", "sources", "source_attempts", "source_memory", "queue_diagnostics", "imports"]);
+      return new Set(["series", "wanted", "queue", "activity", "history", "manual_review", "reliability", "settings", "system", "issues", "download_tasks", "sources", "source_attempts", "source_memory", "queue_diagnostics", "imports"]);
     }
 
     function inkdropRouteKeyFromHash(hashValue=null) {
@@ -9085,7 +9492,18 @@ HTML = r"""<!doctype html>
         try {
           await loadInkdropCore(false);
           inkdropCoreLastRefreshAt = Date.now();
-        } catch (_err) {}
+        } catch (_err) {
+          // inkdropCoreData feeds the masthead's Working Now/Downloading/
+          // Importing/Waiting tiles. If this was the session's first attempt
+          // and it lost a race against a slow backend under load, those
+          // tiles have nothing to fall back on and render hard zeros --
+          // indistinguishable from a genuinely idle queue, while the section
+          // page's own row list (a separate fetch) can still be showing real
+          // data. Retry soon instead of leaving that stuck for up to the
+          // full 120s interval; a value that already loaded once just waits
+          // for its next scheduled refresh like normal.
+          if (!inkdropCoreData) scheduleInkdropCoreRefresh(5000);
+        }
       }, delay);
     }
 
@@ -9224,6 +9642,10 @@ HTML = r"""<!doctype html>
         await loadInkdropCalendarPage(false);
         return;
       }
+      if (key === "pull_list") {
+        await loadInkdropPullListPage(false);
+        return;
+      }
       if (key === "series") {
         await loadInkdropSection(key, null, {scroll: "top"});
         scheduleInkdropCoreRefresh();
@@ -9235,7 +9657,7 @@ HTML = r"""<!doctype html>
         scheduleInkdropCoreRefresh();
         return;
       }
-      if (["series", "issues", "wanted", "queue", "queue_diagnostics", "download_tasks", "sources", "source_memory", "history", "source_attempts", "imports", "manual_review"].includes(key)) {
+      if (["series", "issues", "wanted", "queue", "queue_diagnostics", "download_tasks", "sources", "source_memory", "history", "source_attempts", "imports", "manual_review", "reliability"].includes(key)) {
         const sections = Array.isArray(inkdropCoreData?.sections) ? inkdropCoreData.sections : [];
         const sectionRow = sections.find(item => String(item?.key || "") === key);
         applyInkdropSectionDefaultFilter(key, sectionRow);
@@ -9269,7 +9691,7 @@ HTML = r"""<!doctype html>
       if (target === "history") inkdropHistoryFilter = value || "activity";
       if (target === "imports") inkdropImportFilter = value || "all";
       if (target === "manual_review") inkdropManualReviewFilter = value || "actionable";
-      if (["series", "issues", "wanted", "queue", "queue_diagnostics", "download_tasks", "sources", "source_memory", "history", "source_attempts", "imports", "manual_review"].includes(target)) {
+      if (["series", "issues", "wanted", "queue", "queue_diagnostics", "download_tasks", "sources", "source_memory", "history", "source_attempts", "imports", "manual_review", "reliability"].includes(target)) {
         await loadInkdropSection(target, activityFocusHasLinks(focus) ? focus : null);
         scheduleInkdropCoreRefresh();
       } else {
@@ -11813,8 +12235,18 @@ HTML = r"""<!doctype html>
     }
 
     function inkdropManualReviewIsHumanDecision(row={}) {
-      if (inkdropManualReviewIsAutomaticWork(row)) return false;
+      // The server already decided eligibility (manual_review_canonical_snapshot
+      // -> apply_manual_review_contract) before this row ever reached the
+      // client, so an explicit true/false here is authoritative -- check it
+      // before the text-sniffing heuristic below, not after. A genuinely
+      // actionable row (e.g. a stuck import review, state "importing") can
+      // still contain words like "import"/"download"/"verify" in its status
+      // text, which used to make isAutomaticWork's regex misclassify it as
+      // background automatic work and silently drop it from the decision
+      // table while the server-side "actionable" count still counted it --
+      // the header badge/pagination and the rendered rows disagreeing.
       if (row?.manual_review_actionable === true || row?.requires_human_decision === true) return true;
+      if (inkdropManualReviewIsAutomaticWork(row)) return false;
       const text = inkdropManualReviewDecisionText(row);
       return /approve|approval|ignore|alias|choose|manual decision|needs decision|human decision|pack_requires_review|requires_review|repair|blocked|policy_block|language_blocked|destination_conflict|ambiguous/.test(text);
     }
@@ -15901,6 +16333,40 @@ HTML = r"""<!doctype html>
       }, 250);
     }
 
+    // "Accept Any Edition" is a no-op everywhere except the narrow slice of
+    // series whose tracked target is itself a collected/omnibus edition
+    // (collected_singleton_proof) -- showing it universally would be
+    // misleading. That flag isn't cheap enough to compute for every row in
+    // the Series list/table (it needs a per-series issues/wanted join), so
+    // it isn't on `row` yet when this page first renders. Fetch it just for
+    // this one series and append the action after the fact, matching the
+    // existing background-hydrate pattern used for cover metadata above.
+    async function maybeHydrateSeriesDetailEditionIndifferentAction(commandbar, row={}) {
+      if (!commandbar || row.removed_by_user) return;
+      const id = row?.id || row?.series_id || "";
+      if (!id) return;
+      try {
+        const data = await getJsonWithTimeout(
+          `/api/inkdrop-state/series/detail?id=${encodeURIComponent(id)}`,
+          12000,
+          "Series edition detail",
+        );
+        const detail = data?.series || {};
+        if (!detail.collected_singleton_proof) return;
+        if (!document.contains(commandbar)) return;
+        row.edition_indifferent_override = Boolean(detail.edition_indifferent_override);
+        appendSeriesDetailAction(
+          commandbar,
+          "Accept Any Edition",
+          "Accept the first complete, correctly-identified, English-language release instead of holding out for this series' specific tracked edition/printing.",
+          () => setSeriesEditionIndifferentOverride(row),
+          row.edition_indifferent_override ? "warn" : "",
+        );
+      } catch (err) {
+        // Best-effort hydrate; the rest of the commandbar already rendered.
+      }
+    }
+
 
     function seriesDetailIssueLooksOperationalTitle(value="") {
       const text = String(value || "").trim().toLowerCase();
@@ -15942,10 +16408,47 @@ HTML = r"""<!doctype html>
       return Boolean(viewPayload?.focused && focus.series_id);
     }
 
+    function seriesLibraryScroller() {
+      // The React-owned list (Series.tsx) is virtualized with its own
+      // self-contained scroll panel -- table and poster views each get a
+      // distinct scroller element, never the window -- see that file's
+      // "not useWindowScroll" comments.
+      return document.querySelector(".inkdrop-series-grid-scroller, .inkdrop-series-virtual-scroller");
+    }
+
+    async function restoreSeriesLibraryScroll(scrollTop) {
+      if (!scrollTop) return;
+      // Closing the detail page unmounts and remounts the series React root
+      // from scratch (renderInkdropSection unconditionally unmounts rowsBox
+      // before rebuilding it), so Virtuoso starts back at scrollTop 0 with
+      // no memory of where the user had scrolled. Poll briefly for the new
+      // scroller since its total scroll height isn't necessarily laid out
+      // the instant the section promise resolves.
+      let scroller = null;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        scroller = seriesLibraryScroller();
+        if (scroller && scroller.scrollHeight > scroller.clientHeight) break;
+        scroller = null;
+        await new Promise(resolve => setTimeout(resolve, 40));
+      }
+      if (!scroller) return;
+      // Reassert across a short settling window rather than trusting a
+      // single assignment to stick -- cheap insurance against Virtuoso
+      // still adjusting its own height estimates right after mount.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        scroller.scrollTop = scrollTop;
+        await new Promise(resolve => setTimeout(resolve, 60));
+        if (Math.abs(scroller.scrollTop - scrollTop) <= 4) return;
+      }
+    }
+
     function closeSeriesDetailPage() {
       focusedSeriesRow = null;
       clearInkdropRouteHash("series");
-      return refreshInkdropSeriesLibrary(null);
+      const restoreScrollTop = seriesLibraryLastScrollTop;
+      const result = refreshInkdropSeriesLibrary(null);
+      Promise.resolve(result).then(() => restoreSeriesLibraryScroll(restoreScrollTop));
+      return result;
     }
 
     function renderInkdropSeriesDetailPage(parent, row={}, viewPayload={}) {
@@ -16017,6 +16520,15 @@ HTML = r"""<!doctype html>
         );
       }
       if (!row.removed_by_user) appendSeriesDetailAction(commandbar, "Move Library", "Change this series' content type or library root folder", () => openSeriesLibraryModal(row));
+      if (!row.removed_by_user && Number(row.duplicate_series_group_count || 0) > 1) {
+        appendSeriesDetailAction(
+          commandbar,
+          "Compare & Merge",
+          "Compare this series against its duplicate-title match and merge them, keeping one and retiring the other",
+          () => openSeriesMergeFlow(row),
+          "warn",
+        );
+      }
       if (String(row.media_type || "").toLowerCase() === "manga" && !row.removed_by_user) {
         appendSeriesDetailAction(
           commandbar,
@@ -16028,6 +16540,7 @@ HTML = r"""<!doctype html>
       }
       if (!row.removed_by_user) appendSeriesDetailAction(commandbar, "Remove Series", "Remove this series from InkDrop automation", () => removeSeries(row), "danger");
       page.appendChild(commandbar);
+      maybeHydrateSeriesDetailEditionIndifferentAction(commandbar, row);
 
       // Hero (art/title/overview/next-step/reader-note/stat grid) and the
       // issues list are React-owned (SeriesDetail.tsx) -- the read-only slice
@@ -16048,6 +16561,8 @@ HTML = r"""<!doctype html>
 
     function openSeriesDetail(row) {
       if (!row) return;
+      const scroller = seriesLibraryScroller();
+      if (scroller) seriesLibraryLastScrollTop = scroller.scrollTop;
       const seriesId = seriesRouteId(row);
       if (!seriesId) {
         focusedSeriesRow = row;
@@ -16160,6 +16675,7 @@ HTML = r"""<!doctype html>
       const labels = {
         activity: "Activity",
         calendar: "Calendar",
+        pull_list: "Pull List",
         manual_review: "Manual Review",
         import_results: "Imports",
         queue_diagnostics: "Queue Diagnostics",
@@ -16168,6 +16684,7 @@ HTML = r"""<!doctype html>
         source_attempts: "Attempts",
         download_tasks: "Downloads",
         issues: "Issues",
+        reliability: "Reliability",
       };
       const key = String(view || "").trim().toLowerCase();
       return labels[key] || coreStateLabel(key || "Section");
@@ -16200,14 +16717,19 @@ HTML = r"""<!doctype html>
 
     function inkdropSectionEndpoint(key, focus=null, options={}) {
       const value = String(key || "").trim().toLowerCase();
-      if (["series", "issues", "wanted", "queue", "queue_diagnostics", "download_tasks", "sources", "source_memory", "history", "source_attempts", "imports", "manual_review"].includes(value)) {
+      if (["series", "issues", "wanted", "queue", "queue_diagnostics", "download_tasks", "sources", "source_memory", "history", "source_attempts", "imports", "manual_review", "reliability"].includes(value)) {
         const params = new URLSearchParams({limit: String(inkdropSectionFirstPaintLimit(value, focus, options)), summary: "compact"});
         const links = focus || {};
         const hasFocusLinks = Object.values(links).some(item => item !== undefined && item !== null && String(item).trim() !== "");
         if (value === "series") params.set("rows", "compact");
         else if (["wanted", "queue"].includes(value) && !hasFocusLinks) params.set("rows", "thin");
         else if (value === "manual_review" && !hasFocusLinks) params.set("rows", "table");
-        else if (["series", "wanted", "queue", "queue_diagnostics", "sources", "source_memory", "history", "manual_review"].includes(value)) params.set("rows", "compact");
+        // download_tasks rows are never actually compacted server-side
+        // (compact_state_view_rows has no branch for this view, so rows
+        // pass through unchanged) -- this only exists to satisfy the
+        // summary_mode/row_mode gate that routes the view onto the fast
+        // operational-table summary instead of the full-scope rollup.
+        else if (["series", "wanted", "queue", "queue_diagnostics", "sources", "source_memory", "history", "manual_review", "download_tasks"].includes(value)) params.set("rows", "compact");
         if (value === "sources") params.set("provider_filter", inkdropProviderFilter || "visible");
         if (value === "source_memory") params.set("source_filter", inkdropSourceMemoryFilter || "all");
         if (value === "source_attempts") params.set("source_filter", inkdropSourceAttemptFilter || "acquisition");
@@ -17926,6 +18448,13 @@ HTML = r"""<!doctype html>
                 onClick: () => runSeriesSearch(row),
               }]
               : []),
+            ...(row.id && !row.removed_by_user && Number(row.duplicate_series_group_count || 0) > 1
+              ? [{
+                label: "Compare & Merge",
+                title: "Compare this series against its duplicate-title match and merge them",
+                onClick: () => openSeriesMergeFlow(row),
+              }]
+              : []),
           ],
         };
       }
@@ -19174,15 +19703,23 @@ HTML = r"""<!doctype html>
       }
       if (view === "history") {
         const outcomeSummary = viewPayload?.outcome_summary || {};
-        const outcomeDetail = (base) => outcomeSummary.sampled
-          ? `${base} (from ${compactNumber(outcomeSummary.sample_size || 0)} recent events)`
-          : base;
         const failedCount = Number(outcomeSummary.failed || 0);
         const needsReviewCount = Number(outcomeSummary.needs_review || 0);
-        sectionWorkbenchCard(box, "Completed", Number(outcomeSummary.completed || 0), outcomeDetail("finished successfully"), "good", null, "check");
-        sectionWorkbenchCard(box, "Failed", failedCount, outcomeDetail("ran into a problem"), failedCount ? "bad" : "", null, "x");
-        sectionWorkbenchCard(box, "Retried", Number(outcomeSummary.retried || 0), outcomeDetail("automatic retry scheduled"), "warn", null, "refresh");
-        sectionWorkbenchCard(box, "Needs review", needsReviewCount, outcomeDetail("waiting on a manual decision"), needsReviewCount ? "bad" : "", null, "eye");
+        sectionWorkbenchCard(box, "Completed", Number(outcomeSummary.completed || 0), "finished successfully", "good", null, "check");
+        sectionWorkbenchCard(box, "Failed", failedCount, "ran into a problem", failedCount ? "bad" : "", null, "x");
+        sectionWorkbenchCard(box, "Retried", Number(outcomeSummary.retried || 0), "automatic retry scheduled", "warn", null, "refresh");
+        sectionWorkbenchCard(box, "Needs review", needsReviewCount, "waiting on a manual decision", needsReviewCount ? "bad" : "", null, "eye");
+        // The sampling caveat used to repeat on all four cards as "(from Xk
+        // recent events)" -- internal methodology, stated four times, right
+        // next to the plain-English action text. State it once, in plain
+        // language, instead of leaking the same "sampled" mechanic onto
+        // every card.
+        if (outcomeSummary.sampled) {
+          const note = document.createElement("p");
+          note.className = "mini section-workbench-note";
+          note.textContent = `Based on the most recent ${Number(outcomeSummary.sample_size || 0).toLocaleString()} events.`;
+          box.appendChild(note);
+        }
         box.hidden = false;
         return;
       }
@@ -21072,19 +21609,36 @@ HTML = r"""<!doctype html>
       if (!endpoint || !viewPayload || typeof viewPayload !== "object") return;
       const view = String(viewPayload.view || "").trim().toLowerCase();
       if (!view) return;
-      inkdropSectionPayloadCache.set(endpoint, cloneInkdropSectionPayload(viewPayload));
+      inkdropSectionPayloadCache.set(endpoint, {payload: cloneInkdropSectionPayload(viewPayload), fetchedAt: Date.now()});
+    }
+
+    // Series (and every other view keyed by loaded_count/total_count) pages
+    // its rows client-side -- a cached payload that hadn't finished loading
+    // every row yet would otherwise paint as if the library ended early.
+    function cachedSectionPayloadIsComplete(payload) {
+      if (String(payload?.view || "").toLowerCase() !== "series") return true;
+      const loaded = Number(payload.loaded_count ?? (Array.isArray(payload.rows) ? payload.rows.length : 0));
+      const total = Number(payload.total_count ?? payload.count ?? loaded);
+      return total <= loaded;
+    }
+
+    // Used to paint instantly on a navigation back to a section visited
+    // moments ago, instead of the full loading skeleton -- a live background
+    // fetch (see loadInkdropSection) still runs and overwrites this, so a
+    // cache hit here is only ever a first paint, never the final render.
+    function freshCachedInkdropSectionPayload(endpoint, maxAgeMs=20000) {
+      const cached = inkdropSectionPayloadCache.get(endpoint);
+      if (!cached || !cached.payload || Date.now() - Number(cached.fetchedAt || 0) > maxAgeMs) return null;
+      const payload = cloneInkdropSectionPayload(cached.payload);
+      if (!payload || !cachedSectionPayloadIsComplete(payload)) return null;
+      return payload;
     }
 
     function restoreCachedInkdropSectionPayload(endpoint) {
       const cached = inkdropSectionPayloadCache.get(endpoint);
-      if (!cached) return false;
-      const payload = cloneInkdropSectionPayload(cached);
-      if (!payload) return false;
-      if (String(payload.view || "").toLowerCase() === "series") {
-        const loaded = Number(payload.loaded_count ?? (Array.isArray(payload.rows) ? payload.rows.length : 0));
-        const total = Number(payload.total_count ?? payload.count ?? loaded);
-        if (total > loaded) return false;
-      }
+      if (!cached || !cached.payload) return false;
+      const payload = cloneInkdropSectionPayload(cached.payload);
+      if (!payload || !cachedSectionPayloadIsComplete(payload)) return false;
       payload.stale_snapshot = true;
       renderInkdropSection(payload);
       return true;
@@ -21221,7 +21775,7 @@ HTML = r"""<!doctype html>
     }
 
     function usesLeanOperationalPretable(view) {
-      return ["queue", "wanted", "source_memory"].includes(String(view || ""));
+      return ["queue", "wanted", "source_memory", "reliability"].includes(String(view || ""));
     }
 
     function usesSeriesTableFirstPretable(view) {
@@ -21732,6 +22286,42 @@ HTML = r"""<!doctype html>
       }
     }
 
+    async function setSeriesEditionIndifferentOverride(row) {
+      const id = row?.id || row?.series_id || "";
+      if (!id) return;
+      const label = row?.title || row?.series || "This series";
+      const enabling = !row?.edition_indifferent_override;
+      if (enabling) {
+        const approved = await openInkdropConfirmModal({
+          title: "Accept Any Edition",
+          actionTitle: "Accept any complete, correctly-identified release",
+          copy: "This series is tracked against one specific edition/printing (e.g. an Absolute or Omnibus hardcover). Turning this on stops InkDrop from holding out for that exact printing -- it will grab the first complete, correctly-identified, English-language release instead, even a different trade or reprint of the same story. Off by default; turn this on only for series where any edition is fine.",
+          subject: label,
+          details: [
+            {text: "Matches any printing", tone: "warn"},
+            {text: "Still requires correct series/issue identity", tone: "good"},
+            {text: "Still requires English language", tone: "good"},
+          ],
+          confirmLabel: "Accept Any Edition",
+          tone: "warn",
+        });
+        if (!approved) return;
+      }
+      try {
+        await api("/api/inkdrop-state/series/edition-indifferent-override/set", {id, enabled: enabling});
+        toast(
+          enabling
+            ? `${label}: now accepts any complete, correctly-identified edition.`
+            : `${label}: back to requiring the specific tracked edition.`,
+          true,
+          "inkdropSectionPanel",
+        );
+        await loadInkdropSection("series", {series_id: id});
+      } catch (err) {
+        toast(err?.message || "Could not update the edition-indifferent override.", false, "inkdropSectionPanel");
+      }
+    }
+
     async function setSeriesFlag(row, field, value) {
       const id = row?.id || row?.series_id || "";
       if (!id) return;
@@ -22110,6 +22700,144 @@ HTML = r"""<!doctype html>
       openSeriesRemoveModal(row);
     }
 
+    async function openSeriesMergeFlow(row) {
+      const seriesId = String(row?.id || row?.series_id || "").trim();
+      if (!seriesId) return;
+      const groupIds = Array.isArray(row?.duplicate_series_group_ids) ? row.duplicate_series_group_ids.map(String) : [];
+      const otherIds = groupIds.filter(id => id && id !== seriesId);
+      if (!otherIds.length) {
+        toast("No duplicate-title series found for this row.", false, "inkdropCore");
+        return;
+      }
+      let otherId = otherIds[0];
+      if (otherIds.length > 1) {
+        const chosen = await openInkdropTextModal({
+          title: "Choose Which Duplicate To Compare",
+          actionTitle: "Type the exact series id",
+          copy: `This title has ${otherIds.length} other duplicate rows. Merges are done one pair at a time -- type the id of the one to compare against first, then repeat this action for the rest afterward.`,
+          subject: row.title || seriesId,
+          label: "Other series id",
+          placeholder: otherIds[0],
+          confirmLabel: "Continue",
+          tone: "warn",
+          meta: otherIds.map(id => ({text: id, tone: ""})),
+          details: [],
+        });
+        if (chosen === null) return;
+        const typedId = String(chosen || "").trim();
+        if (!otherIds.includes(typedId)) {
+          toast("Cancelled: id did not match one of the listed duplicates.", false, "inkdropCore");
+          return;
+        }
+        otherId = typedId;
+      }
+
+      let candidate;
+      try {
+        const data = await window.InkDropApi.request("/api/inkdrop-state/series-merge/candidate", {
+          method: "POST",
+          body: {seriesIdA: seriesId, seriesIdB: otherId},
+        });
+        candidate = data.result?.candidate;
+        if (!candidate || candidate.ok === false) {
+          throw new Error(candidate?.error || data.error || "Could not load a comparison for these series.");
+        }
+      } catch (err) {
+        toast(`Merge comparison failed: ${err?.message || err}`, false, "inkdropCore");
+        return;
+      }
+
+      const a = candidate.series_a;
+      const b = candidate.series_b;
+      const sideLine = item => [
+        item.title,
+        item.publisher || "unknown publisher",
+        item.year || "unknown year",
+        item.metadata_provider ? `${item.metadata_provider}:${item.metadata_id || "?"}` : "no metadata id",
+        `${item.issue_count} issue${item.issue_count === 1 ? "" : "s"}`,
+        `${item.wanted_count} wanted`,
+        `${item.active_queue_count} active`,
+        `${item.verified_imports} verified import${item.verified_imports === 1 ? "" : "s"}`,
+      ].join(" · ");
+
+      const suggestedTitle = candidate.suggested_target_series_id === a.series_id ? a.title : b.title;
+
+      const conflictWarning = candidate.duplicate_series_group_class === "active_identity_conflict"
+        ? "Both rows have active work -- review carefully before merging."
+        : "";
+      const distinctYears = candidate.duplicate_series_distinct_years?.length > 1;
+      const distinctPublishers = candidate.duplicate_series_distinct_publishers?.length > 1;
+      const contextWarning = candidate.duplicate_series_distinct_context
+        ? `Different ${[distinctYears ? "years" : "", distinctPublishers ? "publishers" : ""].filter(Boolean).join("/")} evidence exists -- confirm these are really the same series, not distinct volumes.`
+        : "";
+
+      const typedKeep = await openInkdropTextModal({
+        title: "Merge Duplicate Series",
+        actionTitle: "Type the exact title of the series to KEEP",
+        copy: `Moves every issue, wanted item, queue row, and history entry from the other side onto whichever series you type below. The other series is parked (not deleted) -- its full pre-merge state stays on disk. Suggested keeper: "${suggestedTitle}" (${candidate.suggested_target_reason}) -- type the other title instead to flip this.`,
+        subject: `${a.title}  vs.  ${b.title}`,
+        label: "Series to keep (exact title)",
+        placeholder: suggestedTitle,
+        confirmLabel: "Continue",
+        tone: candidate.duplicate_series_group_class === "active_identity_conflict" ? "bad" : "warn",
+        meta: [
+          {text: `${candidate.shared_issue_count} shared issue #s`, tone: "good"},
+          {text: `${candidate.only_in_a_count} only in "${a.title}"`, tone: ""},
+          {text: `${candidate.only_in_b_count} only in "${b.title}"`, tone: ""},
+        ],
+        details: [`A: ${sideLine(a)}`, `B: ${sideLine(b)}`, conflictWarning, contextWarning].filter(Boolean),
+      });
+      if (typedKeep === null) return;
+      const typedTitle = String(typedKeep || "").trim();
+      let target, shadow;
+      if (typedTitle === a.title) { target = a; shadow = b; }
+      else if (typedTitle === b.title) { target = b; shadow = a; }
+      else {
+        toast("Merge cancelled: title did not exactly match either series.", false, "inkdropCore");
+        return;
+      }
+
+      const ok = await openInkdropConfirmModal({
+        title: "Apply Series Merge",
+        actionTitle: `Merge "${shadow.title}" into "${target.title}"`,
+        copy: `"${shadow.title}" will be parked and its issues/wanted/queue/history moved onto "${target.title}". This cannot be undone from the UI.`,
+        subject: target.title,
+        confirmLabel: "Merge Series",
+        tone: "bad",
+        meta: [
+          {text: `Keeping: ${target.title}`, tone: "good"},
+          {text: `Retiring: ${shadow.title}`, tone: "bad"},
+        ],
+        details: [
+          "Issues are matched by issue number; anything unmatched is carried over, not dropped.",
+          "The retired series stays on disk (parked, not deleted) with its full pre-merge snapshot.",
+        ],
+      });
+      if (!ok) return;
+
+      try {
+        const data = await window.InkDropApi.request("/api/inkdrop-state/series-merge/apply", {
+          method: "POST",
+          body: {
+            shadowSeriesId: shadow.series_id,
+            targetSeriesId: target.series_id,
+            confirmShadowSeriesId: shadow.series_id,
+            confirmTargetSeriesId: target.series_id,
+            enableApply: true,
+            dryRun: false,
+          },
+        });
+        const result = data.result?.merge;
+        if (!result || result.ok === false || (result.blockers && result.blockers.length) || result.reason) {
+          throw new Error((result?.blockers || []).join(", ") || result?.reason || result?.error || "Merge was not applied.");
+        }
+        toast(`Merged "${shadow.title}" into "${target.title}": ${result.issue_mapped} issue(s), ${result.wanted_moved} wanted, ${result.queue_moved} queue row(s) moved.`, true, "inkdropCore");
+        await loadInkdropSection("series", {series_id: target.series_id}, {scroll: "top"});
+      } catch (err) {
+        toast(`Merge failed: ${err?.message || err}`, false, "inkdropCore");
+      }
+    }
+
     async function recoverRemovedSeriesResult(row={}) {
       const id = String(row?.id || row?.series_id || "").trim();
       if (!id) return null;
@@ -22475,7 +23203,20 @@ HTML = r"""<!doctype html>
       setInkdropPrimarySection(key);
       const endpoint = inkdropSectionEndpoint(key, focus, options);
       if (!endpoint) return false;
-      const keepExisting = options?.keepExisting !== false && !activityFocusHasLinks(focus) && hasCurrentInkdropSectionContent(target);
+      const focused = activityFocusHasLinks(focus);
+      let keepExisting = options?.keepExisting !== false && !focused && hasCurrentInkdropSectionContent(target);
+      if (!keepExisting && options?.keepExisting !== false && !focused) {
+        // A navigation away and back within a few seconds used to always
+        // rebuild the full loading skeleton and refetch from scratch, even
+        // though this same payload had already been fetched and cached
+        // moments earlier. Paint it now; the fetch below still runs in the
+        // background and overwrites it with live data.
+        const cached = freshCachedInkdropSectionPayload(endpoint);
+        if (cached) {
+          renderInkdropSection({...cached, stale_snapshot: true});
+          keepExisting = true;
+        }
+      }
       if (keepExisting) renderInkdropSectionRefreshing(key);
       else renderInkdropSectionPending(key, focus);
       try {
@@ -22544,11 +23285,16 @@ HTML = r"""<!doctype html>
       if (!el) return;
       const sections = Array.isArray(state.sections) ? state.sections.length : 0;
       const activeQueue = Number(state.queue_work_items ?? state.queue_active_work_items ?? state.active_queue_items ?? 0);
-      const history = Number(state.history_count || state.history_events || 0);
       const bits = [];
       if (sections) bits.push(`${compactNumber(sections)} sections`);
       bits.push(`${compactNumber(activeQueue)} active queue`);
-      if (history) bits.push(`${compactNumber(history)} history events`);
+      // A lifetime history-event tally used to round out this line (e.g.
+      // "1633k history events") -- it never rolled over to a sane "1.6M"
+      // (compactNumber tops out at "k"), and it cost a full count(*) over
+      // the history_events table (1.8M+ rows and growing) on every core
+      // refresh for a number that told a user nothing actionable. Dropped
+      // rather than reformatted: sections/active-queue are current-state
+      // counts a person can act on, a lifetime event total is not.
       el.textContent = `${bits.join(" · ")}. Collapse this while working a focused section.`;
     }
 
@@ -23527,6 +24273,11 @@ HTML = r"""<!doctype html>
         return index >= 0 ? index : sectionOrder.length;
       };
       const orderedRows = (rows || [])
+        // backup.* has its own editor inside the Full backups panel, above,
+        // where the archive list and the effective-vs-saved distinction are.
+        // Rendering the generic card too would put two boxes for the same
+        // setting on one page, disagreeing whenever an .env pins the value.
+        .filter(setting => !String(setting?.key || "").startsWith("backup."))
         .map((setting, index) => ({setting, index, sectionTitle: settingsAppSectionTitle(setting)}))
         .sort((a, b) => sectionRank(a.sectionTitle) - sectionRank(b.sectionTitle) || a.index - b.index);
       let currentSection = "";
@@ -25677,6 +26428,7 @@ HTML = r"""<!doctype html>
       deduped: "warn",
       filtered: "warn",
       disabled: "warn",
+      skipped: "warn",
     };
 
     const NOTIFICATION_QUEUE_REASON_LABEL = {
@@ -27594,18 +28346,60 @@ HTML = r"""<!doctype html>
       return `${Math.max(1, Math.round(value / 1024))} KB`;
     }
 
+    function describeBackupPreview(result) {
+      result = result || {};
+      const manifest = result.manifest || {};
+      const contains = Object.entries(result.would_restore || {}).filter(([, present]) => present).map(([key]) => key.replace(/_/g, " "));
+      const dbChecks = Object.entries(result.database_validation || {})
+        .map(([key, check]) => `${key.replace(/_/g, " ")}: ${check?.quick_check === "ok" ? "OK" : "FAILED"}`)
+        .join(", ");
+      const pathWarnings = (result.path_warnings || []).map(w => `${w.key} (${w.source_path})`).join(", ");
+      return [
+        `Created ${manifest.created_at || "at an unknown time"}, label "${manifest.label || "unknown"}".`,
+        contains.length ? `Contains: ${contains.join(", ")}.` : "Missing the required state database.",
+        dbChecks ? `Database check -- ${dbChecks}.` : "",
+        pathWarnings ? `Paths that do not exist on this host: ${pathWarnings}.` : "",
+      ].filter(Boolean).join(" ");
+    }
+
     function appendSettingsFullBackups(parent) {
       appendSettingsFormSectionTitle(parent, "Full backups");
       const panel = document.createElement("section");
       panel.className = "settings-backup-restore";
       panel.dataset.settingsFullBackups = "true";
       const intro = document.createElement("p");
-      intro.textContent = "A full backup copies the entire state database (not just settings) plus your logins and API keys. A scheduled backup runs automatically in the background -- InkDrop keeps the most recent ones and deletes older ones on its own. You can also create one manually here at any time.";
+      intro.textContent = "A full backup copies the entire state database (not just settings) plus your logins and API keys. A scheduled backup runs automatically in the background, and older ones are deleted once either limit below is passed. You can also create one manually here at any time -- backups you make yourself are never deleted automatically -- or import a backup file from another install or an older InkDrop version.";
+      const mergePreviewIntro = document.createElement("p");
+      mergePreviewIntro.textContent = "Bringing in a backup from a different InkDrop instance? \"Preview merge\" on any backup below compares its series and issues against your library and shows what's new, what you already have, and anything that needs a human to look at it -- by exact metadata ID only, never by title. This is a preview only: nothing is added, changed, or removed. Actually importing is not available yet.";
+      const restoreDisabledNotice = document.createElement("p");
+      restoreDisabledNotice.className = "settings-backup-restore-disabled-notice";
+      restoreDisabledNotice.textContent = "Restoring a full backup is temporarily disabled while we fix a data-safety issue in the restore path. Creating, downloading, and importing backups still work normally -- the archives below are safe to keep.";
+      const retention = document.createElement("div");
+      retention.dataset.backupRetention = "true";
       const actions = document.createElement("div");
       actions.className = "settings-backup-actions";
       const createButton = document.createElement("button");
       createButton.type = "button";
       createButton.textContent = "Create full backup now";
+      const uploadLabel = document.createElement("label");
+      uploadLabel.className = "settings-backup-file";
+      uploadLabel.textContent = "Import a backup file";
+      const uploadInput = document.createElement("input");
+      uploadInput.type = "file";
+      uploadInput.accept = ".zip";
+      uploadInput.hidden = true;
+      uploadInput.setAttribute("aria-label", "Choose an InkDrop full backup .zip file to import");
+      uploadLabel.appendChild(uploadInput);
+      const preserveAuthRow = document.createElement("label");
+      preserveAuthRow.className = "settings-backup-preserve-auth";
+      const preserveAuthCheckbox = document.createElement("input");
+      preserveAuthCheckbox.type = "checkbox";
+      preserveAuthCheckbox.disabled = true;
+      preserveAuthCheckbox.title = "Restoring a full backup is temporarily disabled while a data-safety issue in the restore path is fixed.";
+      preserveAuthRow.append(
+        preserveAuthCheckbox,
+        document.createTextNode(" Keep today's logins and API keys instead of the backup's, when restoring"),
+      );
       const status = document.createElement("p");
       status.className = "settings-backup-status";
       const list = document.createElement("div");
@@ -27621,6 +28415,8 @@ HTML = r"""<!doctype html>
           return;
         }
         for (const archive of archives) {
+          const rowWrap = document.createElement("div");
+          rowWrap.className = "settings-backup-archive-row-wrap";
           const row = document.createElement("div");
           row.className = "settings-backup-archive-row";
           const label = document.createElement("span");
@@ -27629,6 +28425,38 @@ HTML = r"""<!doctype html>
           const downloadLink = document.createElement("a");
           downloadLink.href = `/api/inkdrop-settings/backup/archives/download?name=${encodeURIComponent(archive.name)}`;
           downloadLink.textContent = "Download";
+          const restoreButton = document.createElement("button");
+          restoreButton.type = "button";
+          restoreButton.textContent = "Restore (disabled)";
+          restoreButton.disabled = true;
+          restoreButton.title = "Restoring a full backup is temporarily disabled while a data-safety issue in the restore path is fixed.";
+          const mergePreviewDetail = document.createElement("div");
+          mergePreviewDetail.className = "settings-backup-merge-preview";
+          mergePreviewDetail.hidden = true;
+          const mergePreviewButton = document.createElement("button");
+          mergePreviewButton.type = "button";
+          mergePreviewButton.textContent = "Preview merge";
+          mergePreviewButton.title = "Compare this backup's series and issues against your library. Read-only -- nothing is imported.";
+          mergePreviewButton.onclick = async () => {
+            mergePreviewButton.disabled = true;
+            mergePreviewDetail.hidden = false;
+            mergePreviewDetail.replaceChildren();
+            const loading = document.createElement("p");
+            loading.className = "mini";
+            loading.textContent = "Comparing against your library…";
+            mergePreviewDetail.appendChild(loading);
+            try {
+              const data = await api("/api/inkdrop-settings/backup/archives/merge/preview", {name: archive.name}, {timeoutMs: 300000});
+              renderMergePreviewDetail(mergePreviewDetail, data?.result);
+            } catch (error) {
+              mergePreviewDetail.replaceChildren();
+              const failed = document.createElement("p");
+              failed.textContent = `Could not preview this backup: ${error?.message || error}`;
+              mergePreviewDetail.appendChild(failed);
+            } finally {
+              mergePreviewButton.disabled = false;
+            }
+          };
           const deleteButton = document.createElement("button");
           deleteButton.type = "button";
           deleteButton.className = "danger";
@@ -27645,9 +28473,68 @@ HTML = r"""<!doctype html>
               deleteButton.disabled = false;
             }
           };
-          row.append(label, downloadLink, deleteButton);
-          list.appendChild(row);
+          row.append(label, downloadLink, restoreButton, mergePreviewButton, deleteButton);
+          rowWrap.append(row, mergePreviewDetail);
+          list.appendChild(rowWrap);
         }
+      }
+
+      function describeMergePreview(result) {
+        result = result || {};
+        const manifest = result.manifest || {};
+        const series = result.series || {};
+        const issues = result.issues || {};
+        const count = (bucket) => bucket?.count ?? 0;
+        return [
+          `From a backup created ${manifest.created_at || "at an unknown time"} (label "${manifest.label || "unknown"}").`,
+          `Series -- ${count(series.new)} new, ${count(series.matched)} already in your library, ${count(series.needs_review)} need review.`,
+          `Issues -- ${count(issues.new)} new, ${count(issues.matched)} already in your library, ${count(issues.needs_review)} need review.`,
+          "This is a preview only -- nothing has been imported. Importing is not available yet.",
+        ].join(" ");
+      }
+
+      function renderMergePreviewDetail(container, result) {
+        container.replaceChildren();
+        if (!result) {
+          const empty = document.createElement("p");
+          empty.textContent = "No preview data was returned.";
+          container.appendChild(empty);
+          return;
+        }
+        const summary = document.createElement("p");
+        summary.textContent = describeMergePreview(result);
+        container.appendChild(summary);
+        const sections = [
+          {label: "New series", bucket: result.series?.new},
+          {label: "Series needing review", bucket: result.series?.needs_review},
+          {label: "New issues", bucket: result.issues?.new},
+          {label: "Issues needing review", bucket: result.issues?.needs_review},
+        ];
+        for (const section of sections) {
+          const rows = section.bucket?.sample || [];
+          if (!rows.length) continue;
+          const details = document.createElement("details");
+          const summaryEl = document.createElement("summary");
+          const shownNote = section.bucket.sample_truncated ? `, showing first ${rows.length}` : "";
+          summaryEl.textContent = `${section.label} (${section.bucket.count}${shownNote})`;
+          details.appendChild(summaryEl);
+          const ul = document.createElement("ul");
+          ul.className = "mini";
+          for (const row of rows) {
+            const li = document.createElement("li");
+            const title = row.title || row.issue_number || row.backup_id;
+            const idBits = [row.metadata_provider, row.metadata_id].filter(Boolean).join(":");
+            const reason = row.reason ? ` -- ${String(row.reason).replace(/_/g, " ")}` : "";
+            li.textContent = `${title}${idBits ? ` (${idBits})` : ""}${reason}`;
+            ul.appendChild(li);
+          }
+          details.appendChild(ul);
+          container.appendChild(details);
+        }
+        const scopeNote = document.createElement("p");
+        scopeNote.className = "mini";
+        scopeNote.textContent = result.scope?.note || "";
+        container.appendChild(scopeNote);
       }
 
       createButton.onclick = async () => {
@@ -27664,13 +28551,161 @@ HTML = r"""<!doctype html>
         }
       };
 
-      actions.append(createButton);
-      panel.append(intro, actions, status, list);
+      uploadInput.onchange = async () => {
+        const file = uploadInput.files && uploadInput.files[0];
+        if (!file) return;
+        status.textContent = `Uploading and validating ${file.name}… this can take a while for a large backup.`;
+        try {
+          const data = await window.InkDropApi.request("/api/inkdrop-settings/backup/archives/upload", {
+            method: "POST",
+            body: file,
+            headers: {"Content-Type": "application/zip"},
+          });
+          renderArchiveList(data?.archives || []);
+          status.textContent = `Imported ${data?.archive?.name || file.name}. ${describeBackupPreview(data?.preview)} Restore is temporarily disabled -- see the notice above.`;
+        } catch (error) {
+          status.textContent = `Import failed and nothing was kept: ${error?.message || error}`;
+        } finally {
+          uploadInput.value = "";
+        }
+      };
+
+      actions.append(createButton, uploadLabel);
+      panel.append(intro, mergePreviewIntro, restoreDisabledNotice, retention, actions, preserveAuthRow, status, list);
       parent.appendChild(panel);
 
       getJsonWithTimeout("/api/inkdrop-settings/backup/archives", 12000, "Loading full backups")
-        .then(data => renderArchiveList(data?.archives || []))
+        .then(data => {
+          renderArchiveList(data?.archives || []);
+          renderBackupRetentionControls(retention, data?.retention || {});
+        })
         .catch(error => { status.textContent = `Could not load existing backups: ${error?.message || error}`; });
+    }
+
+    // The generic app-setting cards for these two keys are suppressed in
+    // appendAppSettingRows() -- they are rendered here instead, next to the
+    // archive list they govern. A card could not say what this panel says:
+    // the API reports the *effective* limit, so an install whose .env pins
+    // INKDROP_BACKUP_RETENTION_COUNT sees that the file is in charge rather
+    // than editing a box that quietly loses to it on the next run.
+    const BACKUP_RETENTION_FIELDS = [
+      {
+        name: "retention_count",
+        label: "Backups to keep",
+        suffix: "most recent",
+        help: "Once there are more scheduled backups than this, the oldest are deleted. Each one is a full copy of the state database, so this is what decides how much disk the backups folder uses.",
+      },
+      {
+        name: "retention_days",
+        label: "Delete backups older than",
+        suffix: "days",
+        help: "A scheduled backup this old is deleted even if the number kept has not been reached. The newest backup is always kept, whatever both limits say.",
+      },
+    ];
+
+    function backupRetentionSourceNote(field) {
+      if (field.source === "environment") {
+        const variable = field.key === "backup.retention_count"
+          ? "INKDROP_BACKUP_RETENTION_COUNT"
+          : "INKDROP_BACKUP_RETENTION_DAYS";
+        return `Currently set by ${variable} in your .env file. Saving here takes over from it.`;
+      }
+      if (field.source === "settings") return "";
+      return `Using the default of ${field.default}.`;
+    }
+
+    function renderBackupRetentionControls(parent, model={}) {
+      if (!parent) return;
+      parent.replaceChildren();
+      for (const spec of BACKUP_RETENTION_FIELDS) {
+        const field = model?.[spec.name] || {};
+        if (!field.key) continue;
+        const row = document.createElement("div");
+        row.className = "settings-form-row";
+        row.dataset.settingKey = field.key;
+        row.dataset.backupRetentionField = spec.name;
+        row.dataset.settingsSearchText = [spec.label, field.key, "backup retention", spec.help].join(" ");
+
+        const label = document.createElement("div");
+        label.className = "settings-form-label";
+        label.textContent = spec.label;
+        const keyHint = document.createElement("span");
+        keyHint.textContent = field.key;
+        label.appendChild(keyHint);
+
+        const control = document.createElement("div");
+        control.className = "settings-form-control";
+        const inputRow = document.createElement("div");
+        inputRow.className = "settings-backup-retention-input";
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "1";
+        input.min = String(field.minimum);
+        input.max = String(field.maximum);
+        input.value = String(field.value);
+        input.dataset.backupRetentionValue = "1";
+        input.setAttribute("aria-label", spec.label);
+        const suffix = document.createElement("span");
+        suffix.className = "mini";
+        suffix.textContent = spec.suffix;
+        inputRow.append(input, suffix);
+        const help = document.createElement("p");
+        help.className = "setting-description";
+        help.textContent = spec.help;
+        const note = document.createElement("p");
+        note.className = "setting-description";
+        note.dataset.backupRetentionNote = "1";
+        note.textContent = backupRetentionSourceNote(field);
+        note.hidden = !note.textContent;
+        control.append(inputRow, help, note);
+
+        const rowActions = document.createElement("div");
+        rowActions.className = "settings-form-actions";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "Cancel";
+        cancel.title = "Discard this unsaved change";
+        cancel.onclick = () => { input.value = String(field.value); };
+        const save = document.createElement("button");
+        save.type = "button";
+        save.textContent = "Save";
+        save.onclick = async () => {
+          // Check the range here as well as on the server. The server does
+          // refuse it -- the registry minimum of 1 is the real gate, and 0 is
+          // the dangerous one because prune_backup_archives() reads it as "no
+          // limit at all" -- but a rejected save surfaces through the shared
+          // API error path as "Bad Request", which tells someone who typed 0
+          // nothing about what to type instead.
+          const raw = String(input.value || "").trim();
+          const parsed = Number(raw);
+          if (!raw || !Number.isInteger(parsed) || parsed < field.minimum || parsed > field.maximum) {
+            toast(
+              `${spec.label} must be a whole number from ${field.minimum} to ${field.maximum}. `
+              + `InkDrop always keeps at least one backup, so ${field.minimum} is the lowest this goes.`,
+              false,
+              "inkdropSettings",
+            );
+            return;
+          }
+          save.disabled = true;
+          try {
+            await api("/api/inkdrop-settings/app/update", {key: field.key, value: parsed});
+            field.value = parsed;
+            field.source = "settings";
+            note.textContent = backupRetentionSourceNote(field);
+            note.hidden = !note.textContent;
+            toast("Backup retention saved.", true, "inkdropSettings");
+          } catch (err) {
+            toast(err?.message || "Could not save backup retention.", false, "inkdropSettings");
+          } finally {
+            save.disabled = false;
+          }
+        };
+        rowActions.append(cancel, save);
+
+        row.append(label, control, rowActions);
+        parent.appendChild(row);
+      }
     }
 
     function appendSettingsOpds(parent) {
@@ -30610,12 +31645,17 @@ HTML = r"""<!doctype html>
       const value = String(provider || "").toLowerCase();
       if (value === "all") return "All sources";
       if (value === "mangadex") return "MangaDex";
+      if (value === "metron") return "Metron";
       return "ComicVine";
     }
 
+    function seriesResultProvider(item={}) {
+      return String(item.provider || item.metadataProvider || (item.mangadexId ? "mangadex" : item.metronId ? "metron" : "comicvine")).toLowerCase();
+    }
+
     function seriesSearchResultKey(item={}) {
-      const provider = String(item.provider || item.metadataProvider || (item.mangadexId ? "mangadex" : "comicvine")).toLowerCase();
-      const providerId = String(item.comicvineId || item.mangadexId || item.metadataId || item.id || "").trim().toLowerCase();
+      const provider = seriesResultProvider(item);
+      const providerId = String(item.comicvineId || item.mangadexId || item.metronId || item.metadataId || item.id || "").trim().toLowerCase();
       if (provider && providerId) return `${provider}:${providerId}`;
       const title = compactUiKey(item.name || item.title || item.series || "");
       const year = String(item.year || "").trim();
@@ -30623,9 +31663,9 @@ HTML = r"""<!doctype html>
     }
 
     function seriesSearchResultRank(item={}) {
-      const provider = String(item.provider || item.metadataProvider || (item.mangadexId ? "mangadex" : "comicvine")).toLowerCase();
+      const provider = seriesResultProvider(item);
       const score = Number(item.matchScore || 0);
-      const providerWeight = provider === "mangadex" ? 32 : provider === "comicvine" ? 8 : 0;
+      const providerWeight = provider === "mangadex" ? 32 : provider === "comicvine" ? 8 : provider === "metron" ? 4 : 0;
       const canMonitorWeight = item.canMonitor === false ? -40 : 0;
       return score + providerWeight + canMonitorWeight;
     }
@@ -31865,10 +32905,21 @@ HTML = r"""<!doctype html>
           const providers = [
             {id: "mangadex", label: "MangaDex", endpoint: "/api/mangadex/search"},
             {id: "comicvine", label: "ComicVine", endpoint: "/api/comicvine/search"},
+            {id: "metron", label: "Metron", endpoint: "/api/metron/search"},
           ];
           const settled = await Promise.all(providers.map(async source => {
             try {
               const data = await api(source.endpoint, {query, limit});
+              // A source that reports "unconfigured" (Metron, off by default)
+              // contributed nothing on purpose -- it must read the same as a
+              // source that was never in the list, not as a failure every
+              // ComicVine-only search would otherwise show.
+              if (data.providerStatus === "unconfigured") {
+                return {provider: source.id, label: source.label, providerStatus: "unconfigured", results: []};
+              }
+              if (data.providerStatus === "failed") {
+                return {provider: source.id, label: source.label, providerStatus: "failed", error: data.error || "Search failed", results: []};
+              }
               return {provider: source.id, label: source.label, providerStatus: "ok", results: data.results || []};
             } catch (err) {
               return {provider: source.id, label: source.label, providerStatus: "failed", error: err?.message || String(err), results: []};
@@ -31878,14 +32929,22 @@ HTML = r"""<!doctype html>
           renderSeriesResults(results);
           $("output").textContent = JSON.stringify({query, providers: settled, results}, null, 2);
           const failures = settled.filter(row => row.providerStatus === "failed");
+          const contributing = settled.filter(row => row.providerStatus !== "unconfigured");
           const suffix = failures.length ? ` (${failures.map(row => `${row.label}: ${row.error}`).join("; ")})` : "";
-          toast(`Found ${results.length} match(es) across metadata sources.${suffix}`, failures.length < settled.length);
+          toast(`Found ${results.length} match(es) across metadata sources.${suffix}`, failures.length < contributing.length);
         } else {
-          const endpoint = provider === "mangadex" ? "/api/mangadex/search" : "/api/comicvine/search";
+          const endpoints = {mangadex: "/api/mangadex/search", metron: "/api/metron/search"};
+          const endpoint = endpoints[provider] || "/api/comicvine/search";
           const data = await api(endpoint, {query, limit});
-          renderSeriesResults(data.results || []);
-          $("output").textContent = JSON.stringify(data.results || [], null, 2);
-          toast(`Found ${(data.results || []).length} ${providerLabel} match(es).`);
+          if (data.providerStatus === "unconfigured") {
+            renderSeriesResults([]);
+            $("output").textContent = data.error || `${providerLabel} is not configured.`;
+            toast(data.error || `${providerLabel} is not configured. Add credentials in InkDrop Settings.`, false, "inkdropSettingsMetadata");
+          } else {
+            renderSeriesResults(data.results || []);
+            $("output").textContent = JSON.stringify(data.results || [], null, 2);
+            toast(`Found ${(data.results || []).length} ${providerLabel} match(es).`);
+          }
         }
       } catch (err) {
         $("output").textContent = err?.message || String(err);
@@ -31924,6 +32983,7 @@ HTML = r"""<!doctype html>
       const labels = {
         issue_fetch_failed: "ComicVine issue fetch failed",
         comicvine_issue_fetch_failed: "ComicVine issue fetch failed",
+        metron_issue_fetch_failed: "Metron issue fetch failed",
         no_issue_catalog: "No issue catalog was returned",
         already_satisfied: "Already in library",
         all_missing_suppressed: "Already suppressed",
@@ -32058,6 +33118,9 @@ HTML = r"""<!doctype html>
       if (message.includes("mangadex") && message.includes("provider is disabled")) {
         return "inkdropSettingsMetadata";
       }
+      if (message.includes("metron") && (message.includes("username") || message.includes("password") || message.includes("disabled"))) {
+        return "inkdropSettingsMetadata";
+      }
       return "seriesSearchSection";
     }
 
@@ -32081,8 +33144,9 @@ HTML = r"""<!doctype html>
       }
       setSeriesAddStatus(statusEl, "Saving series and creating queue rows...", "warn");
       try {
-        const provider = String(item.provider || item.metadataProvider || (item.mangadexId ? "mangadex" : "comicvine")).toLowerCase();
-        const endpoint = provider === "mangadex" ? "/api/mangadex/add" : "/api/comicvine/add";
+        const provider = seriesResultProvider(item);
+        const addEndpoints = {mangadex: "/api/mangadex/add", metron: "/api/metron/add"};
+        const endpoint = addEndpoints[provider] || "/api/comicvine/add";
         const data = await api(endpoint, {volume: item, autoGrab: auto}, {timeoutMs: 18000});
         $("output").textContent = JSON.stringify(data.result || data, null, 2);
         const result = data.result || {};
@@ -35992,6 +37056,156 @@ HTML = HTML.replace("__INKDROP_UI_CSS_VERSION__", INKDROP_UI_CSS_VERSION)
 HTML = HTML.replace("__INKDROP_UI_JS_VERSION__", INKDROP_UI_JS_VERSION)
 HTML = HTML.replace("__INKDROP_UI_REACT_VERSION__", INKDROP_UI_REACT_VERSION)
 
+# Standalone lightweight mobile status view. Deliberately its own tiny HTML
+# document rather than a responsive mode of the desktop shell above -- a
+# phone loads this page's ~small CSS/JS instead of the full app shell/React
+# bundle. Read-only for now (Phase 1): a library-status glance and a list of
+# items needing operator attention (Manual Review), both via the same JSON
+# APIs and session-cookie auth the desktop shell already uses. All content
+# is rendered client-side by inkdrop-mobile.js into the placeholder sections
+# below; this template only owns the page shell and screen containers.
+MOBILE_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <script>
+    // Server-computed at request time -- see send_mobile_html() and the
+    // matching flag on the desktop shell ("/").
+    window.__INKDROP_SETUP_REQUIRED__ = __INKDROP_SETUP_REQUIRED_JSON__;
+  </script>
+  <script>
+    // Mirror of the gate script in the desktop shell ("/"): a wide viewport
+    // here (nobody typed /m by hand expecting it, they just crossed back
+    // over the breakpoint) sends them back to the full desktop app, live on
+    // resize/rotation too, unless this tab has an explicit "mobile" or
+    // "desktop" preference (see the "Desktop site" link in the header, and
+    // its onclick handler in inkdrop-mobile.js). Setup takes priority over
+    // all of that: this page has no bootstrap form, so while no
+    // administrator exists yet it always bounces to "/" regardless of
+    // viewport or remembered preference -- inkdrop-mobile.js's own boot()
+    // repeats this check as a fallback in case this inline script didn't
+    // get to run first (see its comment).
+    //
+    // Same shared-cooldown guard as the desktop side: a live resize/rotate
+    // through 768px can fire matchMedia's change event repeatedly while the
+    // width is still settling, and each hard-navigating redirect takes long
+    // enough that the other page's gate script can see the width still (or
+    // again) on the wrong side and bounce straight back -- see the longer
+    // comment in the desktop shell's copy of this script.
+    (function () {
+      var BREAKPOINT = "(max-width: 768px)";
+      var SWITCH_COOLDOWN_MS = 1500;
+      var CHANGE_SETTLE_MS = 250;
+      function preference() {
+        try { return sessionStorage.getItem("inkdropViewPreference"); } catch (e) { return null; }
+      }
+      function recentlyAutoSwitched() {
+        try {
+          var at = Number(sessionStorage.getItem("inkdropViewSwitchedAt") || 0);
+          return !!at && (Date.now() - at) < SWITCH_COOLDOWN_MS;
+        } catch (e) { return false; }
+      }
+      function markAutoSwitched() {
+        try { sessionStorage.setItem("inkdropViewSwitchedAt", String(Date.now())); } catch (e) {}
+      }
+      try {
+        var requested = new URLSearchParams(location.search).get("view");
+        if (requested === "mobile" || requested === "desktop") {
+          sessionStorage.setItem("inkdropViewPreference", requested);
+        }
+      } catch (e) {}
+      function isNarrow() {
+        return !!(window.matchMedia && window.matchMedia(BREAKPOINT).matches);
+      }
+      function maybeSwitch() {
+        if (window.__INKDROP_SETUP_REQUIRED__) { location.replace("/" + location.search); return; }
+        var pref = preference();
+        if (pref === "mobile") return;
+        if (pref === "desktop") { location.replace("/" + location.search); return; }
+        if (!isNarrow() && !recentlyAutoSwitched()) {
+          markAutoSwitched();
+          location.replace("/" + location.search);
+        }
+      }
+      maybeSwitch();
+      if (window.matchMedia) {
+        var mql = window.matchMedia(BREAKPOINT);
+        var settleTimer = null;
+        var onChange = function () {
+          if (settleTimer) clearTimeout(settleTimer);
+          settleTimer = setTimeout(maybeSwitch, CHANGE_SETTLE_MS);
+        };
+        if (mql.addEventListener) mql.addEventListener("change", onChange);
+        else if (mql.addListener) mql.addListener(onChange);
+      }
+      window.addEventListener("pageshow", maybeSwitch);
+    })();
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#12141a">
+  <meta name="robots" content="noindex">
+  <title>InkDrop</title>
+  <link rel="icon" href="/inkdrop-logo-mark.png">
+  <link rel="stylesheet" href="/static/css/mobile.css?v=__INKDROP_MOBILE_CSS_VERSION__">
+</head>
+<body>
+  <div id="mobileRoot">
+    <header class="m-header">
+      <span class="m-header-title">InkDrop</span>
+      <div class="m-header-actions">
+        <button id="mobileDesktopLink" class="m-text-link" type="button">Desktop site</button>
+        <button id="mobileRefreshBtn" class="m-icon-btn" type="button" aria-label="Refresh" hidden>&#8635;</button>
+      </div>
+    </header>
+
+    <main id="mobileMain">
+      <p id="mobileBootError" class="m-error" hidden></p>
+
+      <section id="mobileLogin" class="m-login" hidden>
+        <form id="mobileLoginForm" class="m-login-form" autocomplete="on">
+          <h1>Sign in</h1>
+          <p class="m-login-sub">Use your InkDrop account to check status on the go.</p>
+          <label class="m-field">
+            <span>Username</span>
+            <input id="mobileUsername" name="username" autocomplete="username" required>
+          </label>
+          <label class="m-field">
+            <span>Password</span>
+            <input id="mobilePassword" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit" class="m-btn-primary">Sign in</button>
+          <p id="mobileLoginError" class="m-error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section id="mobileHome" class="m-screen" hidden>
+        <div id="mobileHomeContent" class="m-screen-content"></div>
+      </section>
+
+      <section id="mobileStuck" class="m-screen" hidden>
+        <div id="mobileStuckContent" class="m-screen-content"></div>
+      </section>
+    </main>
+
+    <nav id="mobileNav" class="m-nav" hidden>
+      <button class="m-nav-btn" data-screen="home" type="button">
+        <span class="m-nav-icon" aria-hidden="true">&#8962;</span>
+        <span>Home</span>
+      </button>
+      <button class="m-nav-btn" data-screen="stuck" type="button">
+        <span class="m-nav-icon" aria-hidden="true">&#9873;</span>
+        <span>Needs Attention</span>
+        <span id="mobileStuckBadge" class="m-badge" hidden>0</span>
+      </button>
+    </nav>
+  </div>
+  <script src="/static/js/inkdrop-mobile.js?v=__INKDROP_MOBILE_JS_VERSION__"></script>
+</body>
+</html>
+"""
+MOBILE_HTML = MOBILE_HTML.replace("__INKDROP_MOBILE_CSS_VERSION__", INKDROP_MOBILE_CSS_VERSION)
+MOBILE_HTML = MOBILE_HTML.replace("__INKDROP_MOBILE_JS_VERSION__", INKDROP_MOBILE_JS_VERSION)
+
 
 def command_env(extra=None):
     env = os.environ.copy()
@@ -36211,6 +37425,20 @@ INKDROP_AUTH_SETUP_SAFE_PATHS = {
     # against a never-set-up container too. It stays reachable; what it says
     # before setup is what changes -- see setup_required_status_payload().
     "/status.json",
+    # Lightweight mobile status view shell -- same contract as "/": always
+    # servable regardless of setup state. It has no bootstrap form of its
+    # own, so its inline script (and inkdrop-mobile.js's boot() as a
+    # fallback) immediately bounces to "/" while setup_required is true,
+    # the same way the desktop shell's narrow-viewport redirect is
+    # suppressed until setup completes -- see the __INKDROP_SETUP_REQUIRED__
+    # flag both shells are rendered with. Once setup is done, its JS decides
+    # whether to show a login form or the dashboard by calling
+    # /api/auth/status (also setup-safe). Its CSS/JS assets need no separate
+    # entry -- every "/static/*" path is already public via
+    # inkdrop_auth_public_without_status_lookup(). The data APIs the page
+    # calls (manual-review, activity summary, etc.) stay behind the normal
+    # session/API-key gate.
+    "/m",
 }
 # Reachable once setup is no longer required. /status.json and
 # /api/system/version carry real operational data (host paths, counts) --
@@ -38285,8 +39513,392 @@ def comicvine_api_health():
         return {
             "state": "unavailable",
             "label": "API unavailable",
+            "detail": redact_secret_url_params(exc),
+        }
+
+
+class MetronNotConfiguredError(RuntimeError):
+    """Metron is off or missing credentials -- distinct from a real reachability failure.
+
+    Callers that treat Metron as an optional fallback (the "All sources" series
+    search) need to tell "nobody turned this on" apart from "it's on and broken"
+    so an unconfigured Metron never surfaces as an error to ComicVine-only users.
+    """
+
+
+def load_metron_settings():
+    try:
+        config = inkdrop_state.provider_config(INKDROP_STATE_DB, "metron") or {}
+    except Exception:
+        config = {}
+    if not config or not config.get("enabled", False):
+        raise MetronNotConfiguredError(
+            "Metron metadata provider is disabled. Enable it in InkDrop Settings > Metadata Source to use it as a fallback."
+        )
+    settings = config.get("settings") if isinstance(config.get("settings"), dict) else {}
+    username = str(settings.get("username") or "").strip()
+    password = str(settings.get("password") or "").strip()
+    if not username or not password:
+        raise MetronNotConfiguredError(
+            "Metron needs a username and password. Add them in InkDrop Settings > Metadata Source to use it as a fallback."
+        )
+    return {
+        "base_url": str(config.get("base_url") or METRON_API).rstrip("/"),
+        "username": username,
+        "password": password,
+        "user_agent": str(settings.get("user_agent") or METRON_USER_AGENT).strip() or METRON_USER_AGENT,
+        "source_order": normalize_metron_source_order(settings.get("source_order")),
+        "source": config.get("source") or ("inkdrop_state" if config else "default"),
+    }
+
+
+def metron_provider_runtime_status():
+    try:
+        config = inkdrop_state.provider_config(INKDROP_STATE_DB, "metron") or {}
+    except Exception:
+        config = {}
+    if not config or not config.get("enabled", False):
+        return "disabled"
+    settings = config.get("settings") if isinstance(config.get("settings"), dict) else {}
+    if str(settings.get("username") or "").strip() and str(settings.get("password") or "").strip():
+        return "configured"
+    return "configuration_needed"
+
+
+def metron_get(path, params=None, timeout=15, attempts=2):
+    settings = load_metron_settings()
+    path = str(path or "")
+    absolute = path.startswith("http://") or path.startswith("https://")
+    if absolute:
+        # `path` here can be the "next" pagination link Metron's API hands back
+        # (see metron_fetch_issues), not something InkDrop constructed itself.
+        # metron_get always attaches the user's Metron credentials, so a
+        # malicious or compromised upstream response could otherwise redirect
+        # a credentialed request anywhere (internal services, cloud metadata
+        # endpoints, etc.) -- pin it to the configured Metron host/scheme.
+        allowed = urlparse(settings["base_url"])
+        requested = urlparse(path)
+        if (requested.scheme, requested.hostname, requested.port) != (allowed.scheme, allowed.hostname, allowed.port):
+            raise RuntimeError(
+                "Metron API returned a pagination link pointing outside the configured Metron host; refusing to follow it."
+            )
+        url = path
+    else:
+        url = settings["base_url"] + "/" + path.lstrip("/")
+        if not url.endswith("/"):
+            url += "/"
+    request_params = dict(params or {})
+    attempts = max(1, min(int(attempts or 1), 3))
+    timeout = max(1, min(float(timeout or 15), 30))
+    for attempt in range(attempts):
+        try:
+            response = requests.get(
+                url,
+                params=request_params,
+                auth=(settings["username"], settings["password"]),
+                headers={"User-Agent": settings["user_agent"], "Accept": "application/json"},
+                timeout=timeout,
+            )
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After") or response.headers.get("X-RateLimit-Burst-Reset")
+                raise RuntimeError(
+                    "Metron rate limit reached (20 requests/minute, 5,000/day)."
+                    + (f" Try again in about {retry_after} seconds." if retry_after else " Try again in a few minutes.")
+                )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status in {502, 503, 504} and attempt < attempts - 1:
+                time.sleep(1)
+                continue
+            if status in {502, 503, 504}:
+                raise RuntimeError(
+                    f"Metron API is temporarily unavailable (HTTP {status}). Try again in a few minutes; nothing was added or changed."
+                ) from exc
+            if status in {401, 403}:
+                raise RuntimeError(
+                    f"Metron rejected the API request (HTTP {status}). Check the Metron username/password in InkDrop Settings."
+                ) from exc
+            raise RuntimeError(f"Metron API request failed (HTTP {status or 'unknown'}).") from exc
+        except requests.exceptions.Timeout as exc:
+            if attempt < attempts - 1:
+                continue
+            raise RuntimeError("Metron API timed out. Try again in a few minutes.") from exc
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError("Could not reach Metron API. Try again in a few minutes.") from exc
+        except ValueError as exc:
+            raise RuntimeError("Metron returned a response InkDrop could not read. Try again in a few minutes.") from exc
+    raise RuntimeError("Metron API request failed.")
+
+
+def metron_api_health():
+    started = time.time()
+    try:
+        data = metron_get("/series/", {"page_size": 1})
+        elapsed_ms = round((time.time() - started) * 1000)
+        count = data.get("count") if isinstance(data, dict) else None
+        return {
+            "state": "healthy",
+            "label": "API reachable",
+            "detail": f"Metron answered in {elapsed_ms} ms" + (f"; {count} series indexed" if isinstance(count, int) else ""),
+            "latency_ms": elapsed_ms,
+        }
+    except MetronNotConfiguredError as exc:
+        return {"state": "disabled", "label": "Not configured", "detail": str(exc)}
+    except Exception as exc:
+        return {
+            "state": "unavailable",
+            "label": "API unavailable",
             "detail": str(exc),
         }
+
+
+def metron_search_series(query, limit=8, timeout=15, attempts=2):
+    requested_limit = max(1, min(int(limit or 8), 50))
+    data = metron_get(
+        "/series/",
+        {"name": query, "page_size": min(50, max(requested_limit, 10))},
+        timeout=max(1, min(int(timeout or 15), 30)),
+        attempts=max(1, min(int(attempts or 1), 2)),
+    )
+    quality_settings = load_quality_language_settings()
+    results = []
+    for rank, item in enumerate(data.get("results") or []):
+        # Metron's /series/ list endpoint is intentionally light (id, name,
+        # volume, year, issue count -- no publisher/description/cover); those
+        # only come back from the per-id detail fetch (metron_fetch_series),
+        # which happens once, on Add, rather than once per search result, to
+        # stay well inside the 20-requests/minute burst window.
+        series_id = item.get("id")
+        result = {
+            "metronId": series_id,
+            "provider": "metron",
+            "name": item.get("series") or item.get("name") or "",
+            "year": item.get("year_began"),
+            "publisher": "",
+            "issueCount": item.get("issue_count"),
+            "description": "",
+            "siteUrl": f"{METRON_SITE_URL}/{series_id}/" if series_id else "",
+            "image": "",
+        }
+        scoring = comicvine_result_score(query, result, quality_settings)
+        result["matchScore"] = scoring["score"]
+        result["matchNote"] = scoring["note"]
+        result["editionWarning"] = scoring["warning"]
+        result["_metronRank"] = rank
+        results.append(result)
+    results.sort(key=lambda row: (-(row.get("matchScore") or 0), row.get("_metronRank") or 0))
+    for row in results:
+        row.pop("_metronRank", None)
+    return results[:requested_limit]
+
+
+def metron_fetch_series(metron_id, timeout=15, attempts=2):
+    data = metron_get(f"/series/{int(metron_id)}/", timeout=timeout, attempts=attempts)
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("Metron series was not found")
+    publisher = data.get("publisher") if isinstance(data.get("publisher"), dict) else {}
+    genres = data.get("genres") if isinstance(data.get("genres"), list) else []
+    return {
+        "metronId": data.get("id"),
+        "provider": "metron",
+        "name": data.get("name") or data.get("series") or "",
+        "aliases": [str(v).strip() for v in (data.get("alt_names") or []) if str(v or "").strip()],
+        "year": data.get("year_began"),
+        "yearEnd": data.get("year_end"),
+        "publisher": publisher.get("name") or "",
+        "issueCount": data.get("issue_count"),
+        "description": inkdrop_state.series_clean_description(data.get("desc") or ""),
+        "genres": [g.get("name") for g in genres if isinstance(g, dict) and g.get("name")],
+        "siteUrl": data.get("resource_url") or (f"{METRON_SITE_URL}/{data.get('id')}/" if data.get("id") else ""),
+        "image": "",
+    }
+
+
+def metron_fetch_issues(metron_id, limit=300, timeout=15, attempts=2):
+    # Returns (issues, truncated). `truncated` is true only when the loop
+    # stopped because it hit `limit` while Metron still had more pages
+    # (`next_path` still set) -- not when Metron's own catalog is exhausted.
+    # Callers must not report a catalog as complete when this is true; see
+    # SIXH-20260812-METRON-P1-02.
+    limit = max(1, min(int(limit or 300), 1000))
+    issues = []
+    seen_numbers = set()
+    next_path = "/issue/"
+    next_params = {"series": int(metron_id), "page_size": 100}
+    while next_path and len(issues) < limit:
+        data = metron_get(next_path, next_params, timeout=timeout, attempts=attempts)
+        for item in data.get("results") or []:
+            number = str(item.get("number") or "").strip()
+            number_key = normalize_manga_number(number) or normalize_key(number)
+            if number_key and number_key in seen_numbers:
+                continue
+            if number_key:
+                seen_numbers.add(number_key)
+            issues.append(
+                {
+                    "id": str(item.get("id")),
+                    "issueNumber": number,
+                    "title": "",
+                    "date": item.get("store_date") or item.get("cover_date"),
+                    "deck": "",
+                    "description": "",
+                    "siteUrl": item.get("resource_url") or "",
+                    "person_credits": [],
+                }
+            )
+            if len(issues) >= limit:
+                break
+        next_path = data.get("next") or ""
+        next_params = None
+    return issues, bool(next_path)
+
+
+def add_metron_series(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    volume = payload.get("volume") if isinstance(payload.get("volume"), dict) else payload
+    raw_id = volume.get("metronId") or volume.get("metron_id") or volume.get("id")
+    try:
+        metron_id = int(raw_id)
+    except (TypeError, ValueError):
+        metron_id = 0
+    if not metron_id:
+        raise ValueError("Metron series id is required")
+    auto_grab = inkdrop_gate_bool(payload, "autoGrab", default=inkdrop_bool_setting("automation.default_auto_future", True))
+    settings = load_metron_settings()
+    detail = metron_fetch_series(metron_id)
+    detail.update({key: value for key, value in volume.items() if value not in (None, "", [], {})})
+    title = detail.get("name") or "Untitled series"
+    native_issue_error = None
+    native_issues_truncated = False
+    try:
+        native_issues, native_issues_truncated = metron_fetch_issues(metron_id, limit=1000)
+    except Exception as exc:
+        native_issues = []
+        native_issue_error = f"{type(exc).__name__}: {exc}"
+    catalog = inkdrop_state.record_provider_series_catalog(
+        INKDROP_STATE_DB,
+        provider="metron",
+        provider_series_id=str(metron_id),
+        title=title,
+        metadata={
+            **detail,
+            "mediaType": "comic",
+            "publisher": detail.get("publisher") or "Metron",
+            "source": "metron",
+            "catalog_source": "metron_series_detail",
+        },
+        items=native_issues,
+        monitored=True,
+        auto_grab=auto_grab,
+    )
+    issue_by_metadata = {
+        str(row.get("metadata_id") or ""): row
+        for row in catalog.get("issues") or []
+        if row.get("metadata_id")
+    }
+    wanted_source = []
+    for issue in native_issues:
+        issue_row = issue_by_metadata.get(str(issue.get("id") or ""))
+        if not issue_row:
+            continue
+        wanted_source.append({**issue_row, "raw": issue})
+    wanted = inkdrop_state.upsert_provider_wanted_items(
+        INKDROP_STATE_DB,
+        provider="metron",
+        series_id=catalog.get("series_id"),
+        missing_items=wanted_source,
+        reason="metron_issue_missing",
+    )
+    queue = inkdrop_state.enqueue_wanted_items(
+        INKDROP_STATE_DB,
+        wanted_ids=wanted.get("wanted_ids") or [],
+        source_order=settings.get("source_order") or ["prowlarr", "rss", "slskd"],
+        recovery_steps=["failed_retry"],
+        reason="metron_monitor_backfill",
+    )
+    first_queue_id = ""
+    for row in queue.get("queue_rows") or []:
+        if isinstance(row, dict) and row.get("queue_id"):
+            first_queue_id = str(row.get("queue_id") or "")
+            break
+    autopilot_export = {"ok": False, "reason": "no_queue_rows"}
+    autopilot_trigger = {"ok": False, "reason": "no_queue_rows"}
+    if queue.get("queued"):
+        try:
+            autopilot_export = export_series_autopilot_queue_from_db(reason="metron_add_series", focus_queue_id=first_queue_id)
+        except Exception as exc:
+            autopilot_export = {"ok": False, "error": str(exc)}
+        try:
+            autopilot_trigger = launch_series_autopilot(
+                {"series": title, "maxIssuesPerSeries": min(12, max(1, int(queue.get("queued") or 1)))},
+                reason="metron_add_series",
+            )
+        except Exception as exc:
+            autopilot_trigger = {"ok": False, "error": str(exc)}
+    if queue.get("queued"):
+        status = "queued"
+    elif native_issue_error:
+        status = "added_but_issue_fetch_failed"
+    elif not wanted_source:
+        status = "added_no_missing"
+    else:
+        status = "added_but_queue_empty"
+    message = (
+        f"{title} queued {queue.get('queued') or 0} Metron issue row"
+        f"{'' if int(queue.get('queued') or 0) == 1 else 's'}."
+    )
+    if not queue.get("queued"):
+        message = f"{title} was monitored from Metron, but no queue rows were created."
+    if native_issue_error:
+        message = f"{title} was monitored from Metron, but the issue list could not be fetched ({native_issue_error})."
+    elif native_issues_truncated and not queue.get("queued"):
+        message = f"{title} was monitored from Metron, but its issue catalog is larger than could be fetched in one pass -- some issues may be missing."
+    return {
+        "ok": True,
+        "status": status,
+        "message": message,
+        "seriesId": catalog.get("series_id"),
+        "metronId": metron_id,
+        "provider": "metron",
+        "catalog": catalog,
+        "issueCount": len(native_issues),
+        "wanted": wanted,
+        "queue": queue,
+        "sourceOrder": settings.get("source_order") or [],
+        "autopilotExport": autopilot_export,
+        "autopilotTrigger": autopilot_trigger,
+        "standaloneWantedRecorded": wanted.get("wanted_recorded") or 0,
+        "standaloneQueueRecorded": queue.get("queued") or 0,
+        "postAddVerification": {
+            "status": status,
+            "message": message,
+            "nativeIssueCount": len(native_issues),
+            "missingIssueCount": len(wanted_source),
+            "standaloneSeriesRecorded": bool(catalog.get("series_id")),
+            "standaloneWantedRecorded": wanted.get("wanted_recorded") or 0,
+            "standaloneQueueRecorded": queue.get("queued") or 0,
+            "standaloneActiveQueueRecorded": queue.get("queued") or 0,
+            "legacyQueueRecorded": 0,
+            "autopilotExported": bool(autopilot_export.get("ok")),
+            "autopilotTriggered": bool(autopilot_trigger.get("ok")),
+            "zeroQueueReason": (
+                ""
+                if queue.get("queued")
+                else "metron_issue_fetch_failed"
+                if native_issue_error
+                else "no_missing_issues"
+                if not wanted_source
+                else "queue_rows_missing"
+            ),
+            "catalogTruncated": bool(native_issues_truncated),
+            "warnings": (
+                ([{"message": f"Issue list fetch failed: {native_issue_error}"}] if native_issue_error else [])
+                + ([{"message": "Metron's issue catalog is larger than could be fetched in one pass; some issues may be missing."}] if native_issues_truncated else [])
+            ),
+        },
+    }
 
 
 def setting_list_values(value, default=None):
@@ -38971,10 +40583,11 @@ _SECRET_URL_PARAM_RE = re.compile(r"(?i)\b(api[_-]?key|password|passwd|token|sec
 def redact_secret_url_params(value):
     """Strip secret-shaped query values from request-exception text.
 
-    A handful of provider health checks (Kavita, SABnzbd) send their API key
-    as a URL query parameter. `requests` connection/HTTP-error messages embed
-    the full request URL, so an unredacted `str(exc)` here would put the
-    plaintext key straight into a Test Provider response or a log line.
+    Several provider health checks (Kavita, SABnzbd, Prowlarr, ComicVine) send
+    their API key as a URL query parameter. `requests` connection/HTTP-error
+    messages embed the full request URL, so an unredacted `str(exc)` here
+    would put the plaintext key straight into a Test Provider response or a
+    log line.
     """
     return _SECRET_URL_PARAM_RE.sub(lambda m: f"{m.group(1)}=<redacted>", str(value or ""))
 
@@ -39080,10 +40693,21 @@ def komga_api_health(provider=None, timeout=None):
             payload = response.json()
         except ValueError:
             payload = None
-        library_count = len(payload) if isinstance(payload, list) else None
+        libraries = [
+            {"id": str(entry.get("id") or "").strip(), "name": str(entry.get("name") or "").strip()}
+            for entry in (payload if isinstance(payload, list) else [])
+            if isinstance(entry, dict) and str(entry.get("id") or "").strip()
+        ]
+        library_count = len(libraries) if isinstance(payload, list) else None
         detail = f"Komga answered in {elapsed_ms} ms"
         if library_count is not None:
             detail = f"{detail}; {library_count} libraries visible"
+        if libraries:
+            # Comic/Manga Library IDs are hand-entered settings fields; without this,
+            # the operator has no way to learn a library's id short of querying
+            # Komga's API directly, since Komga's own UI doesn't surface it either.
+            named = ", ".join(f"{lib['name'] or 'Unnamed'} ({lib['id']})" for lib in libraries[:5])
+            detail = f"{detail} -- {named}"
         return {
             "state": "healthy",
             "label": "API reachable",
@@ -39091,6 +40715,7 @@ def komga_api_health(provider=None, timeout=None):
             "base_url": settings.get("base_url"),
             "latency_ms": elapsed_ms,
             "library_count": library_count,
+            "libraries": libraries,
         }
     except Exception as exc:
         return {
@@ -40266,6 +41891,7 @@ def _ensure_manga_companion_series_stub(provider, title, candidate, auto_grab):
         items=[],
         monitored=False,
         auto_grab=False,
+        explicit_user_add=False,
     )
 
 
@@ -40553,6 +42179,7 @@ def refresh_linked_mangadex_companions(limit=1, min_age_seconds=6 * 3600):
             items=chapters,
             monitored=True,
             auto_grab=bool(link.get("mangadex_auto_grab", True)),
+            explicit_user_add=False,
         )
 
     return inkdrop_manga_companion.refresh_due_mangadex_companions(
@@ -40678,6 +42305,7 @@ def run_post_provider_manga_companion_maintenance(reconcile_limit=1, refresh_lim
         "pending": process_pending_manga_companion_jobs(limit=1),
         "reconcile": reconcile_existing_manga_companions(limit=reconcile_limit, synchronous=True),
         "refresh": refresh_linked_mangadex_companions(limit=refresh_limit),
+        "discovery_only_staleness": inkdrop_state.reconcile_discovery_only_companion_staleness(INKDROP_STATE_DB),
     }
 
 
@@ -41062,9 +42690,36 @@ def scan_comic_series(payload):
     enqueue_targets = touched_watches if filtered else data.get("watches", [])
     summary["queueTargets"] = len(enqueue_targets)
     summary["queue"] = enqueue_comic_series_watches(enqueue_targets, reason="comic_series_scan")
-    summary["standaloneState"] = inkdrop_state_public(sync=True)
+    # Ingest the watch file this scan just wrote, and only that. The previous
+    # call here was inkdrop_state_public(sync=True) -- the single full sync_state
+    # pass in the codebase -- which ran forty-odd whole-database backfills and
+    # cleanups the scan had produced no work for. Measured against production it
+    # cost 430s on top of the scan's own 71s, so the scheduled job was killed at
+    # its 300s timeout on all 128 of its consecutive failures. Those passes now
+    # run as their own scheduled job, where a slow whole-database sweep is the
+    # thing being timed rather than an invisible tail on a discovery scan.
+    summary["standaloneState"] = comic_scan_watch_state_sync()
     watch_log("comic_series_scan", summary)
     return summary
+
+
+def comic_scan_watch_state_sync():
+    """Land the scan's watch changes in the database without failing the scan.
+
+    A scan whose ComicVine work succeeded is a successful scan; the ingest is
+    reported inside the summary rather than raised, so a locked database costs
+    the caller a stale Series page and not the discovery pass it just paid the
+    provider for.
+    """
+    try:
+        return inkdrop_state.sync_watch_state(STATE_DIR, INKDROP_STATE_DB)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "scope": "watches",
+            "error": str(exc),
+            "db_path": str(INKDROP_STATE_DB),
+        }
 
 
 def grab_comic_issue(payload):
@@ -44004,8 +45659,16 @@ def inkdrop_gate_bool(payload, *fields, default=False):
     return result if result is not None else bool(default)
 
 
-def inkdrop_query_first(query, *keys, default=None):
-    return inkdrop_web_state_views.query_first(query, *keys, default=default)
+def inkdrop_optional_gate_bool(value, field):
+    """Like inkdrop_gate_bool, but for a per-series override already pulled
+    out of its payload, where None must mean "leave the existing override
+    untouched" rather than fall back to a default value.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be JSON true or false, not {value!r}")
+    return value
 
 
 def inkdrop_query_summary_mode(query):
@@ -44024,6 +45687,8 @@ def inkdrop_runtime_paths():
     return {
         "comic_root": inkdrop_path_setting("path.comic_root", COMIC_ROOT),
         "manga_root": inkdrop_path_setting("path.manga_root", MANGA_ROOT),
+        "comic_incoming_root": inkdrop_path_setting("path.comic_incoming_root", COMIC_INCOMING_ROOT),
+        "ebook_incoming_root": inkdrop_path_setting("path.ebook_incoming_root", EBOOK_INCOMING_ROOT),
         "kavita_comic_root": inkdrop_text_setting("path.kavita_comic_root", KAVITA_COMIC_ROOT),
         "kavita_manga_root": inkdrop_text_setting("path.kavita_manga_root", KAVITA_MANGA_ROOT),
         "manual_comics_inbox": inkdrop_path_setting("path.manual_comics_inbox", MANUAL_COMICS_INBOX),
@@ -44208,6 +45873,90 @@ def inkdrop_log_health_items(log_dir=None, explicit_paths=None, limit=SYSTEM_HEA
     return items[: max(0, int(limit or 0))]
 
 
+def database_health_item(status=None, *, now=None, stale_after_seconds=None):
+    """Surface whether dead database pages are actually being reclaimed.
+
+    The failure mode this exists for is not a crash. Reclaim can report success
+    every hour while freeing nothing -- that is precisely what happened for the
+    life of this install, where auto_vacuum was off and no VACUUM ever ran, and
+    the 11.4GB of dead space was only ever found by looking by hand. So this
+    reports the resulting dead-space ratio and the age of the last pass, not
+    just the last exit code.
+    """
+    now = time.time() if now is None else float(now)
+    report = status if isinstance(status, dict) else inkdrop_db_maintenance.read_status()
+    item = {
+        "key": "state_database",
+        "label": "State database",
+        "state": "healthy",
+        "detail": "",
+    }
+    if not report:
+        item.update(
+            state="unknown",
+            detail="Database maintenance has not reported yet.",
+        )
+        return item
+
+    generated_at = float(report.get("generated_at") or 0)
+    age = max(0.0, now - generated_at) if generated_at else None
+    # Default to three intervals so an ordinary missed run, or a pass that
+    # deferred on a busy database, does not read as a fault.
+    stale_after = float(
+        stale_after_seconds
+        if stale_after_seconds is not None
+        else 3 * int(os.environ.get("INKDROP_SCHEDULER_DB_MAINTENANCE_INTERVAL_SECONDS") or 3600)
+    )
+    total_bytes = int(report.get("total_bytes") or 0)
+    dead_bytes = int(report.get("dead_bytes") or 0)
+    dead_ratio = float(report.get("dead_ratio") or 0.0)
+    item.update({
+        "total_gib": round(total_bytes / (1024 ** 3), 2),
+        "dead_gib": round(dead_bytes / (1024 ** 3), 2),
+        "dead_percent": round(dead_ratio * 100, 1),
+        "auto_vacuum": report.get("auto_vacuum_name"),
+        "reclaimed_mib": round(int(report.get("reclaimed_bytes") or 0) / (1024 ** 2), 1),
+        "last_run_age_seconds": None if age is None else round(age, 1),
+        "last_run_ok": bool(report.get("ok", True)),
+    })
+
+    if age is not None and age > stale_after:
+        item.update(
+            state="watch",
+            detail=(
+                f"Database maintenance last reported {round(age / 3600, 1)}h ago; "
+                "the job may be stuck or not running."
+            ),
+        )
+    elif not report.get("ok", True):
+        item.update(
+            state="watch",
+            detail=f"Last database maintenance pass failed: {report.get('reason') or 'unknown reason'}.",
+        )
+    elif report.get("advisory") == "auto_vacuum_not_incremental":
+        item.update(
+            state="watch",
+            detail=(
+                f"{item['dead_percent']}% of the {item['total_gib']} GiB state database is "
+                "unreclaimed free space, and automatic reclaim is off for it. Converting "
+                "needs one maintenance window."
+            ),
+        )
+    elif report.get("advisory") == "dead_space_high":
+        item.update(
+            state="watch",
+            detail=(
+                f"{item['dead_percent']}% of the {item['total_gib']} GiB state database is "
+                "free space that has not been handed back yet."
+            ),
+        )
+    else:
+        item["detail"] = (
+            f"State database is {item['total_gib']} GiB with {item['dead_percent']}% free space pending reclaim."
+        )
+    return item
+
+
 def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=None):
     runtime_paths = inkdrop_runtime_paths()
     slskd_settings = slskd_provider_runtime_settings()
@@ -44217,6 +45966,8 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
             ("inkdrop_state", STATE_DIR, "InkDrop state"),
             ("comic_root", runtime_paths.get("comic_root") or COMIC_ROOT, "Comic root"),
             ("manga_root", runtime_paths.get("manga_root") or MANGA_ROOT, "Manga root"),
+            ("comic_incoming_root", runtime_paths.get("comic_incoming_root") or COMIC_INCOMING_ROOT, "Comic incoming"),
+            ("ebook_incoming_root", runtime_paths.get("ebook_incoming_root") or EBOOK_INCOMING_ROOT, "Ebook incoming"),
         ]
     disks = [disk_health_item(key, path, label) for key, path, label in disk_targets]
     logs = inkdrop_log_health_items(log_dir=log_dir, explicit_paths=explicit_log_paths, limit=None)
@@ -44228,6 +45979,8 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
         configured=slskd_settings.get("configured", False),
     )
     path_checks = slskd_paths["roots"]
+    database = database_health_item()
+    database_problem_count = 1 if system_health_severity(database.get("state")) >= 2 else 0
     disk_problem_count = sum(1 for item in disks if system_health_severity(item.get("state")) >= 2)
     log_problem_count = sum(1 for item in logs if system_health_severity(item.get("state")) >= 2)
     path_problem_count = int(slskd_paths.get("problem_count") or 0)
@@ -44238,6 +45991,13 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
         severity = max(severity, system_health_severity(item.get("state")))
     for item in path_checks:
         severity = max(severity, system_health_severity(item.get("state")))
+    # Only a real finding moves the overall state. Before the first maintenance
+    # pass reports there is simply nothing measured yet, and a fresh install
+    # would otherwise sit at UNKNOWN for its first quarter hour purely because
+    # a scheduled job has not had its turn.
+    database_severity = system_health_severity(database.get("state"))
+    if database_severity >= 2:
+        severity = max(severity, database_severity)
     state = system_health_state_from_severity(severity)
     local = next((item for item in disks if item.get("key") == "local_root"), disks[0] if disks else {})
     detail_bits = []
@@ -44262,6 +46022,8 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
         )
     if path_problem_count:
         detail_bits.append(f"{path_problem_count} SLSKD download path{'s' if path_problem_count != 1 else ''} cannot be read and written by InkDrop")
+    if database_problem_count and database.get("detail"):
+        detail_bits.append(str(database["detail"]).rstrip("."))
     if not detail_bits:
         detail_bits.append("Disk space and log sizes look fine")
     # status stays an uppercase token: statusTone(), sourceTone() and
@@ -44284,10 +46046,12 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
         "status": status,
         "label": label,
         "detail": ". ".join(detail_bits) + ".",
-        "problem_count": disk_problem_count + log_problem_count + path_problem_count,
+        "problem_count": disk_problem_count + log_problem_count + path_problem_count + database_problem_count,
         "disk_problem_count": disk_problem_count,
         "log_problem_count": log_problem_count,
         "path_problem_count": path_problem_count,
+        "database_problem_count": database_problem_count,
+        "database": database,
         "path_checks": path_checks,
         "disks": disks,
         "logs": visible_logs,
@@ -44308,6 +46072,8 @@ def operator_storage_metrics():
         ("state_root", STATE_DIR, "InkDrop state"),
         ("comics_root", runtime_paths.get("comic_root") or COMIC_ROOT, "Comics root"),
         ("manga_root", runtime_paths.get("manga_root") or MANGA_ROOT, "Manga root"),
+        ("comic_incoming_root", runtime_paths.get("comic_incoming_root") or COMIC_INCOMING_ROOT, "Comic incoming"),
+        ("ebook_incoming_root", runtime_paths.get("ebook_incoming_root") or EBOOK_INCOMING_ROOT, "Ebook incoming"),
         ("manual_comics_inbox", runtime_paths.get("manual_comics_inbox") or MANUAL_COMICS_INBOX, "Manual comics inbox"),
         ("slskd_download_root", runtime_paths.get("slskd_download_root") or SLSKD_DOWNLOAD_ROOT, "SLSKD download root"),
     ]
@@ -44321,6 +46087,16 @@ def support_bundle_system_health_summary():
         ("inkdrop_state", STATE_DIR, "InkDrop state"),
         ("comic_root", runtime_paths.get("comic_root") or COMIC_ROOT, "Comic root"),
         ("manga_root", runtime_paths.get("manga_root") or MANGA_ROOT, "Manga root"),
+        (
+            "comic_incoming_root",
+            runtime_paths.get("comic_incoming_root") or COMIC_INCOMING_ROOT,
+            "Comic incoming",
+        ),
+        (
+            "ebook_incoming_root",
+            runtime_paths.get("ebook_incoming_root") or EBOOK_INCOMING_ROOT,
+            "Ebook incoming",
+        ),
         (
             "manual_comics_inbox",
             runtime_paths.get("manual_comics_inbox") or MANUAL_COMICS_INBOX,
@@ -44815,7 +46591,10 @@ def slskd_provider_runtime_settings():
             config = inkdrop_state.provider_config(INKDROP_STATE_DB, "slskd") or {}
         except Exception:
             config = {}
-    settings = config.get("settings") if isinstance(config.get("settings"), dict) else {}
+    # flatten_legacy_nested_settings guards every lookup below (base_url,
+    # download_root, incomplete_root, api_key), not just the api_key one --
+    # a pre-existing nested row would otherwise still hide any of the four.
+    settings = flatten_legacy_nested_settings(config.get("settings"))
     environment_base_url = str(os.environ.get("INKDROP_SLSKD_API_BASE_URL") or SLSKD_API_BASE_URL or "").strip()
     environment_api_key = str(os.environ.get("INKDROP_SLSKD_API_KEY") or "").strip()
     config_text = read_slskd_config_text()
@@ -44842,8 +46621,24 @@ def slskd_provider_runtime_settings():
     }
 
 
+def flatten_legacy_nested_settings(settings, *, max_depth=8):
+    """Unwrap a settings dict that a prior bug could have nested under its own
+    "settings" key, one layer per save. Existing installs may already have
+    rows written that way; a value at an outer (more recent) layer wins over
+    the same key found deeper (older)."""
+    flat = dict(settings) if isinstance(settings, dict) else {}
+    current = flat
+    depth = 0
+    while isinstance(current.get("settings"), dict) and depth < max_depth:
+        current = current["settings"]
+        for key, value in current.items():
+            flat.setdefault(key, value)
+        depth += 1
+    return flat
+
+
 def slskd_api_key_for_health(settings):
-    provider_key = str((settings or {}).get("api_key") or "").strip()
+    provider_key = str(flatten_legacy_nested_settings(settings).get("api_key") or "").strip()
     if provider_key:
         return provider_key
     text = read_slskd_config_text()
@@ -45185,6 +46980,46 @@ def prowlarr_torrentleech_coverage(indexers):
     }
 
 
+def prowlarr_json_probe_failure_detail(context, response, exc):
+    """Build an actionable message for a Prowlarr call that answered but
+    didn't return JSON, and log the real status/content-type/body for
+    diagnosis. The raw JSONDecodeError text alone ("Expecting value: line 1
+    column 1 (char 0)") tells a user nothing they can act on, and support
+    bundles otherwise have no record of what Prowlarr actually sent back."""
+    status_code = getattr(response, "status_code", None)
+    content_type = str((getattr(response, "headers", None) or {}).get("Content-Type") or "").strip() or "unknown"
+    try:
+        body_preview = (response.content or b"")[:500].decode("utf-8", "replace")
+    except Exception:
+        body_preview = ""
+    # Prowlarr calls now carry the API key as an `apikey` query param (see
+    # prowlarr_api_health), and error/login pages from a misconfigured proxy
+    # commonly echo the requested URL back in the body -- redact the same
+    # secret-shaped query values here that redact_secret_url_params already
+    # strips from exception text, or this print would put the plaintext key
+    # straight into the container logs.
+    print(
+        json.dumps(
+            {
+                "event": "prowlarr_health_non_json_response",
+                "context": context,
+                "status_code": status_code,
+                "content_type": content_type,
+                "body_preview": redact_secret_url_params(body_preview),
+                "error": redact_secret_url_params(exc),
+                "ts": time.time(),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return (
+        f"Prowlarr answered (HTTP {status_code}) but didn't return JSON (content-type: {content_type}). "
+        "Double-check the Prowlarr base URL and API key -- this usually means the URL is pointing at a "
+        "login page or the wrong path rather than Prowlarr's API."
+    )
+
+
 def prowlarr_api_health(timeout=3.0):
     started = time.time()
     try:
@@ -45201,12 +47036,23 @@ def prowlarr_api_health(timeout=3.0):
                 "detail": message,
                 "api_reachable": False,
             }
-        base_url = str(settings.get("base_url") or os.environ.get("INKDROP_PROWLARR_URL") or "").strip().rstrip("/")
+        base_url = acquire.normalize_prowlarr_api_url(settings.get("base_url") or os.environ.get("INKDROP_PROWLARR_URL") or "")
         if not base_url:
             raise RuntimeError("Prowlarr URL is not configured; set INKDROP_PROWLARR_URL or the Prowlarr provider base_url setting.")
-        headers = {"X-Api-Key": api_key}
+        headers = {
+            "X-Api-Key": api_key,
+            "User-Agent": "InkDropSourceWorker/1",
+            "Accept": "application/json",
+        }
+        # Header-only by default -- an apikey query param lands in
+        # reverse-proxy/ingress access logs and Prowlarr's own request logs
+        # regardless of anything redact_secret_url_params() strips locally.
+        # Only add it when the operator has explicitly opted in, for the
+        # rare proxy in front of Prowlarr that strips the X-Api-Key header.
+        query_params = {"apikey": api_key} if settings.get("apikey_query_param_fallback") else {}
         status_response = requests.get(
             f"{base_url}/system/status",
+            params=query_params,
             headers=headers,
             timeout=timeout,
         )
@@ -45223,8 +47069,18 @@ def prowlarr_api_health(timeout=3.0):
         status_response.raise_for_status()
         try:
             status_payload = status_response.json() if status_response.content else {}
-        except ValueError:
-            status_payload = {}
+        except ValueError as exc:
+            # Previously swallowed silently, leaving "API reachable" language
+            # standing even though the body was never actually understood --
+            # surface it the same way an /indexer parse failure already is.
+            return {
+                "state": "watch",
+                "label": "invalid response",
+                "detail": prowlarr_json_probe_failure_detail("system_status", status_response, exc),
+                "base_url": base_url,
+                "latency_ms": elapsed_ms,
+                "api_reachable": True,
+            }
         version = ""
         app_name = ""
         if isinstance(status_payload, dict):
@@ -45237,6 +47093,7 @@ def prowlarr_api_health(timeout=3.0):
         try:
             indexer_response = requests.get(
                 f"{base_url}/indexer",
+                params=query_params,
                 headers=headers,
                 timeout=timeout,
             )
@@ -45252,10 +47109,15 @@ def prowlarr_api_health(timeout=3.0):
                 if not isinstance(item, dict) or item.get("enable", item.get("enabled", True)) is not False
             )
             torrentleech_coverage = prowlarr_torrentleech_coverage(indexers)
+        except ValueError as exc:
+            # requests.exceptions.JSONDecodeError is *also* a RequestException
+            # subclass (via InvalidJSONError, requests>=2.27), so this must be
+            # caught before the RequestException clause below or it's never
+            # reached -- Prowlarr answered but the body wasn't JSON, which is
+            # a different, more actionable failure than not reaching it at all.
+            indexer_error = prowlarr_json_probe_failure_detail("indexer", indexer_response, exc)
         except requests.exceptions.RequestException as exc:
-            indexer_error = f"{type(exc).__name__}: {exc}"
-        except ValueError:
-            indexer_error = "bad_json"
+            indexer_error = f"could not reach Prowlarr: {type(exc).__name__}: {redact_secret_url_params(exc)}"
         detail = f"API reachable in {elapsed_ms} ms"
         if version:
             detail += f"; version {version}"
@@ -45309,14 +47171,14 @@ def prowlarr_api_health(timeout=3.0):
         return {
             "state": "watch",
             "label": "API error",
-            "detail": f"{type(exc).__name__}: {exc}",
+            "detail": f"{type(exc).__name__}: {redact_secret_url_params(exc)}",
             "api_reachable": False,
         }
     except Exception as exc:
         return {
             "state": "watch",
             "label": "health check failed",
-            "detail": f"{type(exc).__name__}: {exc}",
+            "detail": f"{type(exc).__name__}: {redact_secret_url_params(exc)}",
             "api_reachable": False,
         }
 
@@ -45366,7 +47228,7 @@ def qbittorrent_api_health(timeout=4.0):
         return {
             "state": "unavailable",
             "label": "unavailable",
-            "detail": f"{type(exc).__name__}: {exc}",
+            "detail": f"{type(exc).__name__}: {redact_secret_url_params(exc)}",
             "api_reachable": False,
         }
 
@@ -45907,7 +47769,10 @@ def source_health_summary(
     source_errors = []
     for source in comicscodes_status.get("sources") or []:
         if isinstance(source, dict) and source.get("last_error"):
-            source_errors.append(str(source.get("last_error")))
+            raw_error = str(source.get("last_error"))
+            source_errors.append(
+                inkdrop_cloudflare_bypass_proxy.cloudflare_bypass_status_hint(raw_error) or raw_error
+            )
     if not comicscodes_enabled:
         # An operator turned it off; say that plainly instead of reusing
         # stale backoff/candidate counts from before it was turned off,
@@ -46411,9 +48276,31 @@ def inkdrop_state_public(sync=False, include_history=False, include_views=False)
             }
 
 
+INKDROP_QUEUE_SETTLEMENT_CACHE = {"ts": 0.0, "result": None}
+INKDROP_QUEUE_SETTLEMENT_CACHE_LOCK = threading.Lock()
+# The scheduler already runs the full version of this scan every 180s
+# (queue-maintenance job -> sync_queue_state --mode maintenance). This
+# "best effort" copy exists only so a page view sees a just-verified import
+# sooner than that cadence -- but on a real library it walks every
+# unsettled queue item and re-validates each candidate's archive (zip
+# testzip/decompress over the media mount) from scratch, with no
+# memoization even between two page loads a second apart. Measured 1.7s of
+# pure re-scan cost on Wanted alone in production, unconditionally, on
+# every request. A short TTL keeps the "see it fast" property (still far
+# tighter than the 180s background cadence) while stopping the identical
+# scan from re-running dozens of times a minute under normal browsing.
+INKDROP_QUEUE_SETTLEMENT_CACHE_TTL_SECONDS = 15
+
+
 def inkdrop_settle_verified_queue_best_effort():
+    now = time.time()
+    with INKDROP_QUEUE_SETTLEMENT_CACHE_LOCK:
+        cached = INKDROP_QUEUE_SETTLEMENT_CACHE["result"]
+        cached_at = INKDROP_QUEUE_SETTLEMENT_CACHE["ts"]
+    if isinstance(cached, dict) and now - cached_at <= INKDROP_QUEUE_SETTLEMENT_CACHE_TTL_SECONDS:
+        return cached
     try:
-        return inkdrop_state.settle_verified_import_queue_state(
+        result = inkdrop_state.settle_verified_import_queue_state(
             INKDROP_STATE_DB,
             attempts=1,
             initial_delay=0.05,
@@ -46422,13 +48309,17 @@ def inkdrop_settle_verified_queue_best_effort():
             ensure_schema=False,
         )
     except Exception as exc:
-        return {
+        result = {
             "ok": False,
             "skipped": True,
             "reason": "database_busy" if "database is locked" in str(exc).lower() else "settlement_failed",
             "error": str(exc),
             "db_path": str(INKDROP_STATE_DB),
         }
+    with INKDROP_QUEUE_SETTLEMENT_CACHE_LOCK:
+        INKDROP_QUEUE_SETTLEMENT_CACHE["ts"] = now
+        INKDROP_QUEUE_SETTLEMENT_CACHE["result"] = result
+    return result
 
 
 def inkdrop_state_summary_public(include_sections=False, *, sync_review=True, settle=True):
@@ -46488,7 +48379,77 @@ def inkdrop_state_sections_public():
         }
 
 
-def managed_library_audit_public(max_files=25000, sample_limit=8, include_frontend=True, include_cleanup_plan=True, include_hash_proof=False, hash_max_bytes=512 * 1024 * 1024):
+# Archive-opening is far more expensive than the walk-and-stat the rest of
+# the managed-library audit does -- a .cbz testzip() CRCs every member, and a
+# .cbr goes through a full external unrar/7z extraction. Unlike include_hash_proof
+# (which only touches already-detected duplicate groups), this would touch
+# every archive in the library, so it stays opt-in with its own bounded cap
+# and wall-clock budget rather than inheriting max_files.
+MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_DEFAULT = 3000
+MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_CEILING = 20000
+MANAGED_LIBRARY_ARCHIVE_INTEGRITY_BUDGET_SECONDS = 180
+
+
+def managed_library_archive_integrity_scan(max_files=MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_DEFAULT, sample_limit=50, budget_seconds=MANAGED_LIBRARY_ARCHIVE_INTEGRITY_BUDGET_SECONDS):
+    """Re-open every already-imported .cbz/.cbr and report corruption.
+
+    Read-only / report-only: flags corrupt files, never quarantines or
+    deletes them (that stays a follow-up decision). Reuses
+    inkdrop_completed_import.archive_corruption_check(), which wraps the same
+    validate_comic_archive() import-time uses -- this is the one check of the
+    four managed-library-audit sections that previously only ran once, at
+    import time, and never re-checked files already sitting in the library.
+    """
+    try:
+        max_files = max(1, min(int(max_files or MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_DEFAULT), MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_CEILING))
+    except (TypeError, ValueError):
+        max_files = MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_DEFAULT
+    try:
+        sample_limit = max(0, min(int(sample_limit or 50), 200))
+    except (TypeError, ValueError):
+        sample_limit = 50
+    if inkdrop_state is None or not INKDROP_STATE_DB.exists():
+        return {"ok": False, "reason": "inkdrop_state_unavailable", "db_path": str(INKDROP_STATE_DB)}
+    try:
+        with inkdrop_state.connect_read(INKDROP_STATE_DB) as con:
+            scan = inkdrop_state.managed_library_scan_files(con, max_files=max_files, sample_limit=0)
+    except Exception as exc:
+        return {"ok": False, "reason": "archive_integrity_scan_failed", "error": str(exc), "db_path": str(INKDROP_STATE_DB)}
+    started = time.time()
+    checked = 0
+    corrupt = []
+    truncated = bool(scan.get("truncated"))
+    for row in scan.get("files") or []:
+        if time.time() - started > budget_seconds:
+            truncated = True
+            break
+        finding = inkdrop_completed_import.archive_corruption_check(row.get("path"))
+        if finding is None:
+            if inkdrop_completed_import.comic_archive_suffix(row.get("path") or "") in (".cbz", ".cbr"):
+                checked += 1
+            continue
+        checked += 1
+        corrupt.append({
+            "path": row.get("path"),
+            "media_type": row.get("media_type"),
+            "reason": finding.get("reason"),
+            "detail": finding.get("detail") or "",
+        })
+    return {
+        "ok": True,
+        "requested": True,
+        "checked_at": time.time(),
+        "scanned_total": len(scan.get("files") or []),
+        "checked_files": checked,
+        "corrupt_count": len(corrupt),
+        "truncated": truncated,
+        "max_files": max_files,
+        "budget_seconds": budget_seconds,
+        "samples": corrupt[:sample_limit],
+    }
+
+
+def managed_library_audit_public(max_files=25000, sample_limit=8, include_frontend=True, include_cleanup_plan=True, include_hash_proof=False, hash_max_bytes=512 * 1024 * 1024, include_archive_integrity=False, archive_integrity_max_files=MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_DEFAULT):
     try:
         max_files = max(1, min(int(max_files or 25000), 100000))
     except (TypeError, ValueError):
@@ -46504,7 +48465,7 @@ def managed_library_audit_public(max_files=25000, sample_limit=8, include_fronte
             "db_path": str(INKDROP_STATE_DB),
         }
     try:
-        return inkdrop_state.managed_library_scan_audit(
+        audit = inkdrop_state.managed_library_scan_audit(
             INKDROP_STATE_DB,
             max_files=max_files,
             sample_limit=sample_limit,
@@ -46523,6 +48484,14 @@ def managed_library_audit_public(max_files=25000, sample_limit=8, include_fronte
             "max_files": max_files,
             "sample_limit": sample_limit,
         }
+    if bool(include_archive_integrity) and isinstance(audit, dict) and audit.get("ok"):
+        audit["archive_integrity"] = managed_library_archive_integrity_scan(
+            max_files=archive_integrity_max_files,
+            sample_limit=sample_limit,
+        )
+    else:
+        audit["archive_integrity"] = {"ok": True, "requested": False}
+    return audit
 
 
 MANAGED_LIBRARY_AUDIT_RUN_LOCK = threading.Lock()
@@ -47516,6 +49485,10 @@ def normalize_comicvine_source_order(value):
     return normalize_provider_source_order(value, ["local", "prowlarr", "rss", "slskd"])
 
 
+def normalize_metron_source_order(value):
+    return normalize_provider_source_order(value, ["prowlarr", "rss", "slskd"])
+
+
 def normalize_protocol_order(value):
     if isinstance(value, str):
         raw = [part.strip() for part in value.split(",")]
@@ -48099,6 +50072,234 @@ def run_inkdrop_queue_retry(payload, expected_revision=None):
     }
 
 
+def recent_failed_sources_for_queue_item(queue_id, lookback_seconds=14 * 24 * 3600, limit=25):
+    """Distinct sources whose most recent attempt against this item failed.
+
+    Feeds "retry with another source": excluding these from the configured source
+    order forces a genuinely different candidate rather than re-offering the one
+    that just failed. Only the most recent attempt per distinct source is judged
+    (an older failure followed by a since-fixed success should not exclude that
+    source), classified with the same source_attempt_outcome() the Attempts panel
+    itself uses to call a row "problem".
+    """
+    queue_id = str(queue_id or "").strip()
+    if not queue_id:
+        return []
+    cutoff = time.time() - lookback_seconds
+    with inkdrop_state.connect_read(INKDROP_STATE_DB) as con:
+        rows = con.execute(
+            """
+            select provider_id, source, status, lifecycle_phase
+            from source_attempts
+            where queue_id=? and coalesce(completed_at, started_at, 0) >= ?
+            order by coalesce(completed_at, started_at, 0) desc
+            limit ?
+            """,
+            (queue_id, cutoff, limit),
+        ).fetchall()
+    seen = set()
+    excluded = []
+    for row in rows:
+        key = str(row["provider_id"] or row["source"] or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if inkdrop_state.source_attempt_outcome(row["status"], row["lifecycle_phase"]) == "problem":
+            excluded.append(key)
+    return excluded
+
+
+def run_inkdrop_queue_retry_new_source(payload, expected_revision=None):
+    queue_id = str((payload or {}).get("id") or "").strip()
+    row = inkdrop_state.queue_item(INKDROP_STATE_DB, queue_id)
+    if not row:
+        raise ValueError("queue row not found")
+    series = safe_optional_text(row.get("series"), 180)
+    if not series:
+        raise ValueError("queue row has no series")
+    excluded_sources = recent_failed_sources_for_queue_item(queue_id)
+    full_order = configured_comicvine_source_order()
+    filtered_order = [source for source in full_order if source not in excluded_sources]
+    if not filtered_order:
+        return {
+            "ok": False,
+            "reason": "no_alternate_source_available",
+            "queue_id": queue_id,
+            "excluded_sources": excluded_sources,
+        }
+    db_retry = inkdrop_state.request_queue_retry(
+        INKDROP_STATE_DB,
+        queue_id,
+        source_order=filtered_order,
+        recovery_steps=list(SERIES_AUTOPILOT_RECOVERY_STEPS),
+        source="inkdrop_web",
+        expected_revision=expected_revision,
+    )
+    if db_retry.get("reason") == "revision_conflict":
+        return {"ok": False, "reason": "revision_conflict", "current_revision": db_retry.get("current_revision")}
+    if not db_retry.get("ok"):
+        raise ValueError(db_retry.get("reason") or db_retry.get("error") or "queue retry failed")
+    row = inkdrop_state.queue_item(INKDROP_STATE_DB, queue_id) or row
+    update = ensure_autopilot_queue_item_for_retry(row)
+    trigger = launch_series_autopilot(
+        {"series": series, "maxIssuesPerSeries": 8},
+        reason="inkdrop_queue_retry_new_source",
+    )
+    watch_log(
+        "inkdrop_queue_retry_new_source",
+        {
+            "queueId": queue_id,
+            "series": series,
+            "issue": row.get("issue_number"),
+            "excludedSources": excluded_sources,
+            "sourceOrder": filtered_order,
+            "dbRetry": db_retry,
+            "update": update,
+            "autopilotTrigger": trigger,
+        },
+    )
+    return {
+        "ok": True,
+        "queue": row,
+        "series": series,
+        "issue": row.get("issue_number"),
+        "action": db_retry.get("action") or update.get("action"),
+        "excluded_sources": excluded_sources,
+        "source_order": filtered_order,
+        "dbRetry": db_retry,
+        "update": update,
+        "autopilotTrigger": trigger,
+    }
+
+
+def block_inkdrop_source_candidate(payload, *, blocked_by="inkdrop_user", expected_revision=None):
+    """Permanently reject one already-offered candidate via the same bad_source_candidates
+    table the automatic acquisition pipeline blocks candidates in -- this is a manual
+    entry point into that existing machinery, not a second blocklist. Scoped to this
+    item's issue (bad_source_scope_key prioritizes issue_id) so the block stops this
+    exact release from being re-offered here without affecting other wanted items.
+    """
+    payload = payload if isinstance(payload, dict) else {}
+    queue_id = str(payload.get("id") or "").strip()
+    if not queue_id:
+        raise ValueError("queue id is required")
+    row = inkdrop_state.queue_item(INKDROP_STATE_DB, queue_id)
+    if not row:
+        raise ValueError("queue row not found")
+    source_attempt_id = str(payload.get("source_attempt_id") or "").strip()
+    with inkdrop_state.connect_read(INKDROP_STATE_DB) as con:
+        if source_attempt_id:
+            attempt = con.execute(
+                "select * from source_attempts where id=? and queue_id=? limit 1",
+                (source_attempt_id, queue_id),
+            ).fetchone()
+        else:
+            attempt = con.execute(
+                """
+                select * from source_attempts where queue_id=?
+                order by coalesce(completed_at, started_at, 0) desc limit 1
+                """,
+                (queue_id,),
+            ).fetchone()
+    if not attempt:
+        return {"ok": False, "reason": "no_candidate_to_block", "queue_id": queue_id}
+    attempt = dict(attempt)
+    scope_key = inkdrop_state.bad_source_scope_key(
+        series_id=row.get("series_id"),
+        issue_id=row.get("issue_id"),
+        wanted_id=row.get("wanted_id"),
+        queue_id=queue_id,
+    )
+    block_result = inkdrop_state.record_bad_source_candidate(
+        INKDROP_STATE_DB,
+        source=attempt.get("provider_id") or attempt.get("source"),
+        provider=attempt.get("provider"),
+        protocol=attempt.get("protocol"),
+        scope_key=scope_key,
+        series=row.get("series"),
+        title=attempt.get("title"),
+        download_url_hash=attempt.get("download_url_hash"),
+        source_path=attempt.get("save_path"),
+        reason="manually_blocked_by_user",
+        raw={"blocked_by": blocked_by, "queue_id": queue_id, "source_attempt_id": attempt.get("id")},
+        seen_at=time.time(),
+    )
+    if not block_result.get("ok"):
+        return {"ok": False, "reason": "block_write_failed", "queue_id": queue_id}
+    watch_log(
+        "inkdrop_source_candidate_block",
+        {
+            "queueId": queue_id,
+            "series": row.get("series"),
+            "candidateId": block_result.get("candidate_id"),
+            "sourceAttemptId": attempt.get("id"),
+            "blockedBy": blocked_by,
+        },
+    )
+    retry = {"ok": True, "skipped": True, "reason": "retry_not_requested"}
+    if payload.get("retry", True):
+        try:
+            retry = {"ok": True, "result": run_inkdrop_queue_retry({"id": queue_id}, expected_revision=expected_revision)}
+        except Exception as exc:
+            retry = {"ok": False, "reason": "retry_request_failed", "error": str(exc)}
+    return {
+        "ok": True,
+        "queue_id": queue_id,
+        "candidate_id": block_result.get("candidate_id"),
+        "source_attempt_id": attempt.get("id"),
+        "retry": retry,
+    }
+
+
+def run_inkdrop_queue_reopen_import(payload, expected_revision=None):
+    queue_id = str((payload or {}).get("id") or "").strip()
+    row = inkdrop_state.queue_item(INKDROP_STATE_DB, queue_id)
+    if not row:
+        raise ValueError("queue row not found")
+    series = safe_optional_text(row.get("series"), 180)
+    db_result = inkdrop_state.reopen_stuck_import(
+        INKDROP_STATE_DB,
+        queue_id,
+        source="inkdrop_web",
+        expected_revision=expected_revision,
+    )
+    if db_result.get("reason") == "revision_conflict":
+        return {"ok": False, "reason": "revision_conflict", "current_revision": db_result.get("current_revision")}
+    if not db_result.get("ok"):
+        raise ValueError(db_result.get("reason") or db_result.get("error") or "reopen import failed")
+    row = inkdrop_state.queue_item(INKDROP_STATE_DB, queue_id) or row
+    update = None
+    trigger = None
+    if db_result.get("action") == "reset_to_searching" and series:
+        update = ensure_autopilot_queue_item_for_retry(row)
+        trigger = launch_series_autopilot(
+            {"series": series, "maxIssuesPerSeries": 8},
+            reason="inkdrop_queue_reopen_import",
+        )
+    watch_log(
+        "inkdrop_queue_reopen_import",
+        {
+            "queueId": queue_id,
+            "series": series,
+            "issue": row.get("issue_number"),
+            "dbResult": db_result,
+            "update": update,
+            "autopilotTrigger": trigger,
+        },
+    )
+    return {
+        "ok": True,
+        "queue": row,
+        "series": series,
+        "issue": row.get("issue_number"),
+        "action": db_result.get("action"),
+        "message": db_result.get("message"),
+        "dbResult": db_result,
+        "update": update,
+        "autopilotTrigger": trigger,
+    }
+
+
 def ensure_series_watch_queued(row):
     # Same lock discipline as ensure_wanted_watch_queued: the whole
     # load -> mutate -> save cycle must be atomic against sibling clicks.
@@ -48183,8 +50384,8 @@ def update_inkdrop_series_flags(payload):
     result = inkdrop_state.set_series_flags(
         INKDROP_STATE_DB,
         series_id,
-        monitored=bool(monitored) if monitored is not None else None,
-        auto_grab=bool(auto_grab) if auto_grab is not None else None,
+        monitored=inkdrop_optional_gate_bool(monitored, "monitored"),
+        auto_grab=inkdrop_optional_gate_bool(auto_grab, "autoGrab"),
         source="series_detail_edit",
     )
     if not result.get("ok"):
@@ -48203,6 +50404,47 @@ def update_inkdrop_series_manga_unit_override(payload):
     if not result.get("ok"):
         raise ValueError(result.get("error") or "series manga-unit override update failed")
     watch_log("inkdrop_series_manga_unit_override_update", {"seriesId": series_id, **result})
+    return result
+
+
+def update_inkdrop_series_media_type(payload):
+    """Manually reclassify a series (comic <-> manga/manhwa/manhua) and lock
+    it so the next ComicVine/Kapowarr watch sync doesn't silently revert it.
+
+    No UI wired to this yet -- see the reclassify-endpoint follow-up flagged
+    alongside the Akira/Ghost in the Shell classification fix. The existing
+    "move series to a different library" flow (/api/inkdrop-state/series/
+    library/migrate) already sets media_type as a side effect of picking a
+    destination root and now locks it the same way; this endpoint is for
+    correcting classification alone, without requiring a file move.
+    """
+    payload = payload if isinstance(payload, dict) else {}
+    series_id = str(payload.get("id") or payload.get("seriesId") or payload.get("series_id") or "").strip()
+    if not series_id:
+        raise ValueError("series id is required")
+    media_type = safe_optional_text(payload.get("mediaType") or payload.get("media_type"), 20)
+    if not media_type:
+        raise ValueError("mediaType is required")
+    result = inkdrop_state.set_series_media_type(INKDROP_STATE_DB, series_id, media_type)
+    if not result.get("ok"):
+        raise ValueError(result.get("error") or "series media type update failed")
+    watch_log("inkdrop_series_media_type_update", {"seriesId": series_id, **result})
+    return result
+
+
+def update_inkdrop_series_edition_indifferent_override(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    series_id = str(payload.get("id") or payload.get("seriesId") or payload.get("series_id") or "").strip()
+    if not series_id:
+        raise ValueError("series id is required")
+    raw_enabled = payload.get("enabled")
+    if raw_enabled is None:
+        raw_enabled = payload.get("editionIndifferent")
+    enabled = inkdrop_optional_gate_bool(raw_enabled, "enabled")
+    result = inkdrop_state.set_series_edition_indifferent_override(INKDROP_STATE_DB, series_id, enabled)
+    if not result.get("ok"):
+        raise ValueError(result.get("error") or "series edition-indifferent override update failed")
+    watch_log("inkdrop_series_edition_indifferent_override_update", {"seriesId": series_id, **result})
     return result
 
 
@@ -48810,6 +51052,9 @@ def remove_inkdrop_series(payload):
         file_removal["requested"] = True
         if not file_removal.get("ok"):
             raise ValueError(file_removal.get("message") or file_removal.get("reason") or "series file removal is not safe")
+    confirm_discovery_only_removal = inkdrop_bool_value(
+        payload.get("confirm_discovery_only_removal", payload.get("confirmDiscoveryOnlyRemoval")), False
+    )
     result = inkdrop_state.park_series_automation(
         INKDROP_STATE_DB,
         series_id,
@@ -48828,9 +51073,10 @@ def remove_inkdrop_series(payload):
             "library_path": series_row.get("library_path") or series_row.get("library_adapter_path") or series_row.get("library_root"),
             "file_removal": file_removal,
         },
+        allow_removing_discovery_only=confirm_discovery_only_removal,
     )
     if not result.get("ok"):
-        raise ValueError(result.get("error") or result.get("reason") or "series remove failed")
+        raise ValueError(result.get("error") or result.get("message") or result.get("reason") or "series remove failed")
     if remove_files:
         file_removal = remove_inkdrop_series_library_files(file_removal)
     updated = inkdrop_state.series_item(INKDROP_STATE_DB, series_id)
@@ -49390,6 +51636,72 @@ def run_inkdrop_series_shadow_retire_apply(payload):
     return {"retire": result}
 
 
+def run_inkdrop_series_merge_candidate(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    series_id_a = str(payload.get("series_id_a") or payload.get("seriesIdA") or payload.get("series_id") or payload.get("seriesId") or "").strip()
+    series_id_b = str(payload.get("series_id_b") or payload.get("seriesIdB") or "").strip()
+    result = inkdrop_state.series_merge_candidate_detail(INKDROP_STATE_DB, series_id_a, series_id_b)
+    watch_log(
+        "inkdrop_series_merge_candidate",
+        {"result": {key: result.get(key) for key in ("ok", "error", "suggested_target_series_id", "shared_issue_count", "only_in_a_count", "only_in_b_count")}},
+    )
+    return {"candidate": result}
+
+
+def run_inkdrop_series_merge_apply(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    # HOTFIX 2026-08-13: re-disabled pending fix for the P1s identified in
+    # INKDROP_SIX_HOUR_AUDIT_20260813_2200.md -- apply_series_duplicate_merge()'s
+    # hand-maintained retarget list still omits collected_edition_links,
+    # manga_companion_links/jobs/reconcile_attempts, and
+    # series_source_profile_overrides, so a merge can silently strand
+    # acquisition-coverage and source/language policy authority on the parked
+    # shadow series. Do not remove this block without the real fix (a complete
+    # semantic reference plan covering every table a series identity appears
+    # in, not another hand-maintained list).
+    return {
+        "merge": {
+            "ok": False,
+            "error": "series_merge_temporarily_disabled",
+            "reason": "Merge Series is temporarily disabled while a data-safety issue is fixed. See INKDROP_SIX_HOUR_AUDIT_20260813_2200.md.",
+        }
+    }
+    dry_run = inkdrop_gate_bool(payload, "dryRun", "dry_run")
+    apply_requested = inkdrop_gate_bool(payload, "apply", "confirm", "confirmed", "enableApply", "enable_apply")
+    if not apply_requested:
+        dry_run = True
+    result = inkdrop_state.apply_series_duplicate_merge(
+        INKDROP_STATE_DB,
+        str(payload.get("shadow_series_id") or payload.get("shadowSeriesId") or "").strip(),
+        str(payload.get("target_series_id") or payload.get("targetSeriesId") or "").strip(),
+        confirm_shadow_series_id=str(payload.get("confirm_shadow_series_id") or payload.get("confirmShadowSeriesId") or "").strip() or None,
+        confirm_target_series_id=str(payload.get("confirm_target_series_id") or payload.get("confirmTargetSeriesId") or "").strip() or None,
+        enable_apply=inkdrop_gate_bool(payload, "enableApply", "enable_apply"),
+        dry_run=dry_run,
+        source="inkdrop_web",
+    )
+    watch_log(
+        "inkdrop_series_merge_apply",
+        {
+            "result": {
+                key: result.get(key)
+                for key in (
+                    "ok",
+                    "reason",
+                    "dry_run",
+                    "apply_enabled",
+                    "blockers",
+                    "issue_mapped",
+                    "issue_minted",
+                    "wanted_moved",
+                    "queue_moved",
+                )
+            },
+        },
+    )
+    return {"merge": result}
+
+
 def runtime_provider_settings():
     providers = []
     settings = []
@@ -49535,6 +51847,23 @@ def runtime_provider_settings():
         },
     )
     provider(
+        "metron",
+        "metadata",
+        "Metron",
+        enabled=False,
+        base_url=METRON_API,
+        secret_ref="InkDrop provider settings: username/password",
+        settings_payload={
+            "adapter": "native_search",
+            "username": "",
+            "password": "",
+            "user_agent": METRON_USER_AGENT,
+            "source_order": ["prowlarr", "rss", "slskd"],
+            "secret_fields": ["password"],
+            "editable_fields": ["username", "password", "user_agent", "source_order"],
+        },
+    )
+    provider(
         "kavita",
         "library",
         "Kavita",
@@ -49596,6 +51925,7 @@ def runtime_provider_settings():
         secret_ref="InkDrop provider setting: api_key; fallback Prowlarr config.xml: ApiKey",
         settings_payload={
             "api_key": "",
+            "apikey_query_param_fallback": False,
             "comic_categories": ["7030", "7000"],
             "ebook_categories": ["7020"],
             "limit": SERIES_AUTOPILOT_PROWLARR_LIMIT,
@@ -49613,6 +51943,7 @@ def runtime_provider_settings():
             "secret_fields": ["api_key"],
             "editable_fields": [
                 "api_key",
+                "apikey_query_param_fallback",
                 "comic_categories",
                 "limit",
                 "max_queries_per_issue",
@@ -49872,6 +52203,7 @@ def runtime_provider_settings():
             "use_series_folders": True,
             "create_empty_series_folders": True,
             "rename_imported_files": True,
+            "hardlink_imports": False,
             "delete_empty_folders": False,
             "unmonitor_deleted_issues": False,
             "apply_planned_path": True,
@@ -49895,6 +52227,7 @@ def runtime_provider_settings():
                 "use_series_folders",
                 "create_empty_series_folders",
                 "rename_imported_files",
+                "hardlink_imports",
                 "delete_empty_folders",
                 "unmonitor_deleted_issues",
                 "apply_planned_path",
@@ -50016,6 +52349,14 @@ def runtime_provider_settings():
                 "source": "runtime",
             },
             {
+                "key": inkdrop_cloudflare_bypass_proxy.PROXY_URL_SETTING_KEY,
+                "scope": "automation",
+                "label": "Cloudflare-Bypass Proxy URL",
+                "value": inkdrop_cloudflare_bypass_proxy.cloudflare_bypass_proxy_url(INKDROP_STATE_DB),
+                "description": "FlareSolverr-API-compatible proxy used only for Buzzheavier, ComicsCodes, and GetComics, the three direct-download sources Cloudflare can block. Leave blank to disable -- those sources behave exactly as they do today, with no bypass attempted.",
+                "source": "runtime",
+            },
+            {
                 "key": "automation.queue_watchdog_enabled",
                 "scope": "automation",
                 "label": "Queue Watchdog",
@@ -50045,6 +52386,30 @@ def runtime_provider_settings():
                 "label": "SLSKD Queued-Transfer Wait Threshold",
                 "value": 48,
                 "description": "Give up on an SLSKD transfer that reached a peer's queue (or our own) but hasn't started moving bytes yet after this many hours. Busy uploaders routinely take a long time to open a slot, so this is intentionally patient -- separate from the Active Stall Threshold above, which only covers a transfer that already started and then stopped. Range: 1–336 hours; default: 48.",
+                "source": "runtime",
+            },
+            {
+                "key": "automation.queue_watchdog_max_stall_retries",
+                "scope": "automation",
+                "label": "Max Automatic Stall Retries",
+                "value": 3,
+                "description": "How many times the Queue Watchdog will automatically retry a download that stalls (zero progress, never started, or a stale handoff with no local file) before giving up and sending it to Manual Review for a human to pick a different source or release. Counts only genuine stalls, not ordinary candidate rejections. Range: 1–20; default: 3.",
+                "source": "runtime",
+            },
+            {
+                "key": "automation.awaiting_release_hours",
+                "scope": "automation",
+                "label": "Awaiting-Release Threshold",
+                "value": 72,
+                "description": "Park a Wanted item as Awaiting-Release once every currently enabled provider that applies to it has searched and found nothing, on every attempt, for this many hours straight -- it stops eating a search slot every autopilot cycle. This is an inference from an exhausted search, not a confirmed publish date -- InkDrop has no reliable forward release-date data, so a parked item still gets a fresh search pass on the Revival Interval below rather than being snoozed indefinitely. Any provider error, rejected candidate, found-but-not-grabbed candidate, or provider that hasn't had its turn yet resets or blocks the streak, since that means the search didn't complete cleanly across every applicable provider. Range: 24–720 hours; default: 72.",
+                "source": "runtime",
+            },
+            {
+                "key": "automation.awaiting_release_revival_hours",
+                "scope": "automation",
+                "label": "Awaiting-Release Revival Interval",
+                "value": 24,
+                "description": "How often an Awaiting-Release item gets one fresh full search pass through the normal pipeline. If a candidate turns up, it resumes full search cadence immediately; if not, it goes back to Awaiting-Release once the threshold above is reached again. Range: 6–168 hours; default: 24.",
                 "source": "runtime",
             },
             {
@@ -50136,11 +52501,27 @@ def runtime_provider_settings():
                 "source": "runtime",
             },
             {
+                "key": "path.comic_incoming_root",
+                "scope": "path",
+                "label": "Comic Incoming Root",
+                "value": str(runtime_paths["comic_incoming_root"]),
+                "description": "Folder inside the comic library where newly imported comics are placed (e.g. /library/comics/_Incoming). Defaults to {Comic Library Root}/_Incoming. Must be a path InkDrop's own container can see.",
+                "source": "runtime",
+            },
+            {
+                "key": "path.ebook_incoming_root",
+                "scope": "path",
+                "label": "Ebook Incoming Root",
+                "value": str(runtime_paths["ebook_incoming_root"]),
+                "description": "Folder where newly imported ebooks are placed (e.g. /library/ebooks/_Incoming). Must be a path InkDrop's own container can see.",
+                "source": "runtime",
+            },
+            {
                 "key": "path.slskd_download_root",
                 "scope": "path",
                 "label": "SLSKD Download Root",
                 "value": str(runtime_paths["slskd_download_root"]),
-                "description": "Host folder watched for completed SLSKD downloads.",
+                "description": "Folder InkDrop watches for completed SLSKD downloads, as seen inside InkDrop's own container. This is the default for new SLSKD download client instances -- a per-instance Download Client override takes priority over this global setting.",
                 "source": "runtime",
             },
             {
@@ -50148,7 +52529,7 @@ def runtime_provider_settings():
                 "scope": "path",
                 "label": "SLSKD Incomplete Root",
                 "value": str(runtime_paths["slskd_incomplete_root"]),
-                "description": "Host folder where SLSKD keeps incomplete downloads.",
+                "description": "Folder where SLSKD keeps incomplete/in-progress downloads, as seen inside InkDrop's own container. Defaults to {SLSKD Download Root}/incomplete -- a per-instance Download Client override takes priority over this global setting.",
                 "source": "runtime",
             },
             {
@@ -50465,6 +52846,31 @@ def runtime_provider_settings():
                 "source": "runtime",
             },
             {
+                "key": "backup.retention_count",
+                "scope": "general",
+                "label": "Full Backups Kept",
+                "value": inkdrop_backup_restore.DEFAULT_BACKUP_RETENTION_COUNT,
+                "description": (
+                    "How many scheduled full backups to keep. Older ones are deleted once there are more "
+                    "than this. Each backup is a complete copy of the state database, so on a large library "
+                    "this is the number that decides how much disk the backups folder uses. Manual backups "
+                    "you create yourself are never counted or deleted by this."
+                ),
+                "source": "runtime",
+            },
+            {
+                "key": "backup.retention_days",
+                "scope": "general",
+                "label": "Full Backup Age Limit",
+                "value": inkdrop_backup_restore.DEFAULT_BACKUP_RETENTION_DAYS,
+                "description": (
+                    "Delete a scheduled full backup once it is older than this many days, even if the "
+                    "number kept has not been reached. The newest backup is always kept, whatever these "
+                    "two limits say."
+                ),
+                "source": "runtime",
+            },
+            {
                 "key": "import_lists.enabled",
                 "scope": "import_lists",
                 "label": "Import Lists Enabled",
@@ -50600,6 +53006,14 @@ PROVIDER_SETTINGS_META = {
         "description": "API-backed manga search, chapter catalog, and native MangaDex direct downloader.",
         "next_action": "Keep translated languages/content ratings strict so MangaDex rows can stay zero-touch.",
         "applied_by": ["Add Series search", "MangaDex feed", "Series Autopilot", "MangaDex direct downloader"],
+        "ownership": "native",
+    },
+    "metron": {
+        "settings_group": "metadata",
+        "automation_role": "Fallback metadata source",
+        "description": "Optional second comic metadata source alongside ComicVine. Off by default; ComicVine stays primary.",
+        "next_action": "Add a Metron username/password to search and add series from it as well as ComicVine.",
+        "applied_by": ["Add Series search"],
         "ownership": "native",
     },
     "prowlarr": {
@@ -50783,6 +53197,7 @@ COMMON_PROVIDER_FIELD_SCHEMA = {
     "use_series_folders": {"label": "Use Series Folders", "kind": "boolean"},
     "create_empty_series_folders": {"label": "Create Empty Series Folders", "kind": "boolean"},
     "rename_imported_files": {"label": "Rename Imported Files", "kind": "boolean"},
+    "hardlink_imports": {"label": "Hardlink Instead of Copy", "kind": "boolean"},
     "delete_empty_folders": {"label": "Delete empty folders", "kind": "boolean"},
     "unmonitor_deleted_issues": {"label": "Unmonitor deleted issues", "kind": "boolean"},
     "apply_planned_path": {"label": "Apply Planned Import Path", "kind": "boolean"},
@@ -50817,6 +53232,7 @@ COMMON_PROVIDER_FIELD_SCHEMA = {
     "scan_after_import": {"label": "Scan After Import", "kind": "boolean"},
     "completion_role": {"label": "Completion Role"},
     "verification_mode": {"label": "Verification Mode"},
+    "apikey_query_param_fallback": {"label": "Also Send API Key As Query Param", "kind": "boolean"},
     "comic_categories": {"label": "Comic Categories", "kind": "array"},
     "ebook_categories": {"label": "Ebook Categories", "kind": "array"},
     "comics_category": {"label": "Comics Category"},
@@ -50925,6 +53341,8 @@ PROVIDER_FIELD_HELP = {
         "source_order": "Per-row source order for MangaDex wanted rows created from Add Series.",
     },
     "prowlarr": {
+        "base_url": "Prowlarr's own URL, e.g. http://prowlarr:9696 -- /api/v1 is added automatically if you leave it off.",
+        "apikey_query_param_fallback": "Off by default: InkDrop authenticates to Prowlarr with the X-Api-Key header only. Turn this on only if a proxy in front of Prowlarr strips custom headers and calls are failing auth -- it also sends the key as a ?apikey= query parameter, which is weaker (it can land in proxy/access logs) so leave it off unless you've hit that specific problem.",
         "comic_categories": "Comma-separated Newznab/Torznab categories used for comic searches.",
         "ebook_categories": "Comma-separated categories used when ebook acquisition is enabled.",
     },
@@ -50967,8 +53385,8 @@ PROVIDER_FIELD_HELP = {
     "qbittorrent": {
         "username": "Your qBittorrent WebUI username, if WebUI authentication is enabled. Leave blank if WebUI auth is off.",
         "password": "Your qBittorrent WebUI password. Leave blank to keep the saved value.",
-        "comics_category": "The qBittorrent category InkDrop assigns to comic downloads, used to find and manage them once they're grabbed.",
-        "comics_save_path": "Where qBittorrent saves comic downloads. Should be a path InkDrop's own container can also see, so completed downloads can be picked up for import.",
+        "comics_category": "The qBittorrent category InkDrop assigns to comic downloads (\"comics\" unless changed here), used to find and manage them once they're grabbed. Any per-category rules you've set in qBittorrent -- save path, share-ratio/seed-time limits, \"remove torrent\" on limit reached -- apply to everything InkDrop adds under this category, which matters most on private trackers with seeding requirements.",
+        "comics_save_path": "Where qBittorrent saves comic downloads. Should be a path InkDrop's own container can also see, so completed downloads can be picked up for import. InkDrop tells qBittorrent to use this path directly (Automatic Torrent Management off) so a global auto-management default can't silently redirect it -- but a save-path rule on the category itself can still override it, which will make the completed download invisible to InkDrop until you move it.",
         "torrent_cleanup_policy": "Informational only. Torrent deletion is handled by the configured torrent client or an external retention tool so InkDrop does not delete torrents before seeding rules are satisfied.",
     },
     "quality_language_rules": {
@@ -50980,6 +53398,7 @@ PROVIDER_FIELD_HELP = {
     },
     "media_management": {
         "root_folder_strategy": "Use media type by default: comics land under the comic root and manga lands under the manga root.",
+        "hardlink_imports": "When a file is placed in your library unchanged (no CBR repack, PDF-to-CBZ conversion, collection rebuild, or ComicInfo.xml injection -- those always write a fresh file), link it into place instead of copying it. The original stays put for your torrent client to keep seeding, at zero extra disk. Falls back to a plain copy with no error whenever staging and your library sit on different filesystems or Docker bind mounts -- hardlinks can't cross that boundary. Off by default; turn it on only if your download client's staging path and your library share one filesystem/mount.",
         "delete_empty_folders": "When a move or removal leaves a folder holding nothing, remove the folder too. The library root itself is never touched.",
         "unmonitor_deleted_issues": "If an issue's file disappears from the library, stop monitoring that issue instead of hunting for a replacement. Turn this on if deleting a file is how you say \"I don't want this one.\"",
         "apply_planned_path": "On lets completed imports use the planned Media Management path when it is inside configured roots and does not collide. Turn off only to preview without moving files.",
@@ -52693,6 +55112,7 @@ def test_inkdrop_provider(payload):
     }.get(provider_id, provider_id)
     active_health_checks = {
         "comicvine": comicvine_api_health,
+        "metron": metron_api_health,
         "kavita": kavita_api_health,
         "komga": lambda: komga_api_health(provider_for_direct_test("komga"), timeout=4.0),
         "prowlarr": lambda: prowlarr_api_health(timeout=4.0),
@@ -52875,6 +55295,11 @@ def update_inkdrop_app_setting(payload):
         value = normalize_series_autopilot_source_order(value)
     elif key == "automation.protocol_order":
         value = normalize_protocol_order(value)
+    elif key == inkdrop_cloudflare_bypass_proxy.PROXY_URL_SETTING_KEY:
+        value = str(value or "").strip()
+        if value and not (value.startswith("http://") or value.startswith("https://")):
+            raise ValueError("proxy URL must start with http:// or https://, or be left blank")
+        value = value.rstrip("/")
     try:
         return inkdrop_state.update_app_setting(INKDROP_STATE_DB, key, value)
     except ValueError as exc:
@@ -56059,8 +58484,18 @@ def quarantine_unmatched_group(payload):
     for path in paths:
         dest = unique_dest_path(batch_dir / safe_slug(path.parent.name) / path.name)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(path), str(dest))
-        moved.append({"source": str(path), "dest": str(dest)})
+        # A file under a download-client-owned root (e.g. qBittorrent's save
+        # path) can still be an active seed on a private tracker -- moving it
+        # makes the client lose its handle and can break seeding. Copy it into
+        # quarantine and leave the original alone; the client (or the user)
+        # is the only thing that should ever remove it from there.
+        if inkdrop_runtime_config.path_is_download_client_owned(path):
+            shutil.copy2(str(path), str(dest))
+            method = "copied_seeding_preserved"
+        else:
+            shutil.move(str(path), str(dest))
+            method = "moved"
+        moved.append({"source": str(path), "dest": str(dest), "method": method})
     write_unmatched_action({"event": "quarantine_unmatched_group", "group": group_name, "moved_count": len(moved), "dest": str(batch_dir), "forced": force})
     return {"group": group_name, "moved_count": len(moved), "dest": str(batch_dir), "forced": force, "moved": moved[:20]}
 
@@ -57056,6 +59491,19 @@ def maybe_finish_pack_after_import(review_id, result, live):
         result["pack_review_finished"] = False
         result["pack_review_finish_reason"] = reason
         return result
+    if not imported:
+        ambiguous_pending = [
+            row for row in (result.get("not_imported") or [])
+            if row.get("skip_reason") == "unit_type_unproven"
+        ]
+        if ambiguous_pending:
+            reason = (
+                f"{len(ambiguous_pending)} file(s) have a volume/chapter number InkDrop can't "
+                "resolve on its own; sent to Manual Review, keeping this pack review open"
+            )
+            result["pack_review_finished"] = False
+            result["pack_review_finish_reason"] = reason
+            return result
     if status == "blocked_supplemental_release":
         reason = "supplemental or guide release is not a missing-volume pack"
         if finish_pack_review(review_id, "finished_supplemental_release_blocked", reason, result):
@@ -61450,21 +63898,194 @@ def cached_script_status():
     return warming_script_status("warming" if refresh_started else "busy")
 
 
+def cover_proxy_contained_path(raw_path, prefix):
+    """The path has to name a file inside the provider's cover directory and
+    stay there -- no climbing out with dot segments, encoded or not."""
+
+    path = str(raw_path or "")
+    if not path.startswith("/") or "\\" in path:
+        return ""
+    lowered = path.lower()
+    if "%2e" in lowered or "%2f" in lowered or "%5c" in lowered:
+        return ""
+    if any(segment in {"", ".", ".."} for segment in path.split("/")[1:]):
+        return ""
+    return path if path.startswith(prefix) else ""
+
+
 def cover_proxy_allowed_url(raw_url):
+    """Accept only a provider cover URL that cannot steer the fetch elsewhere:
+    no credentials, no fragment, no alternate port, no path escape."""
+
     text = str(raw_url or "").strip()
-    if not text:
+    if not text or any(ord(char) < 32 or ord(char) == 127 for char in text):
         return None
-    parsed = urlparse(text)
-    scheme = str(parsed.scheme or "").lower()
-    host = str(parsed.hostname or "").lower()
-    if scheme != "https" or host not in COVER_PROXY_ALLOWED_HOSTS:
+    parsed = urlsplit(text)
+    if str(parsed.scheme or "").lower() != "https":
         return None
-    path = str(parsed.path or "")
-    if host in {"comicvine.gamespot.com", "www.comicvine.gamespot.com"} and not path.startswith("/a/uploads/"):
+    if parsed.username is not None or parsed.password is not None:
         return None
-    if host == "uploads.mangadex.org" and not path.startswith("/covers/"):
+    if parsed.fragment or "#" in text:
         return None
-    return parsed.geturl()
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port not in {None, 443}:
+        return None
+    host = str(parsed.hostname or "").lower().rstrip(".")
+    if "%" in host:
+        return None
+    prefix = COVER_PROXY_HOST_PATH_PREFIXES.get(host)
+    if not prefix:
+        return None
+    path = cover_proxy_contained_path(parsed.path, prefix)
+    if not path:
+        return None
+    return urlunsplit(("https", host, path, parsed.query, ""))
+
+
+def cover_proxy_canonical_address(value):
+    try:
+        address = ipaddress.ip_address(str(value or "").split("%", 1)[0])
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return address.ipv4_mapped
+    return address
+
+
+def cover_proxy_public_address(address):
+    return bool(
+        address
+        and address.is_global
+        and not address.is_private
+        and not address.is_loopback
+        and not address.is_link_local
+        and not address.is_reserved
+        and not address.is_multicast
+        and not address.is_unspecified
+    )
+
+
+def cover_proxy_public_addresses(host, resolver=None):
+    """Every address an approved provider name answers with must be publicly
+    routable. A cover host that resolves to 127.0.0.1 or 169.254.169.254 is a
+    rebind, not a cover, so one bad answer rejects the whole hop."""
+
+    resolver = resolver or socket.getaddrinfo
+    try:
+        rows = resolver(str(host or ""), 443, type=socket.SOCK_STREAM)
+    except (OSError, TypeError, ValueError):
+        return []
+    addresses = []
+    for row in list(rows or [])[:32]:
+        raw = ""
+        if isinstance(row, str):
+            raw = row
+        elif isinstance(row, (tuple, list)) and len(row) >= 5 and isinstance(row[4], (tuple, list)) and row[4]:
+            raw = row[4][0]
+        address = cover_proxy_canonical_address(raw)
+        if not cover_proxy_public_address(address):
+            return []
+        value = str(address)
+        if value not in addresses:
+            addresses.append(value)
+    return addresses
+
+
+def cover_proxy_peer_address(response):
+    """The address the socket actually connected to, when urllib3 exposes it.
+    Closes the window between our DNS answer and the one requests used."""
+
+    raw = getattr(response, "raw", None)
+    candidates = (
+        getattr(getattr(raw, "_connection", None), "sock", None),
+        getattr(getattr(raw, "connection", None), "sock", None),
+        getattr(getattr(getattr(getattr(raw, "_fp", None), "fp", None), "raw", None), "_sock", None),
+    )
+    for sock in candidates:
+        if not sock:
+            continue
+        try:
+            peer = sock.getpeername()
+        except (AttributeError, OSError, TypeError, ValueError):
+            continue
+        if peer and peer[0]:
+            return cover_proxy_canonical_address(str(peer[0]))
+    return None
+
+
+def cover_proxy_direct_connection():
+    """With an outbound proxy configured the socket lands on the proxy rather
+    than the provider, so comparing the peer to the provider's addresses would
+    reject every cover. The URL and hop rules still apply either way."""
+
+    return not any(
+        str(os.environ.get(name) or "").strip()
+        for name in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+    )
+
+
+def cover_proxy_close(response):
+    close = getattr(response, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def cover_proxy_fetch(url, *, transport=None, resolver=None):
+    """Walk the redirect chain by hand. requests' automatic redirects re-validate
+    nothing, so every hop gets the same scheme/host/path/address checks the
+    caller's URL got, and the response we keep has to be the one we asked for.
+
+    Returns (response, "") or (None, stable_reason). Reasons never carry a URL."""
+
+    transport = transport if transport is not None else requests
+    seen = set()
+    current = url
+    for _ in range(COVER_PROXY_MAX_REDIRECTS + 1):
+        if current in seen:
+            return None, "cover_redirect_loop"
+        seen.add(current)
+        addresses = cover_proxy_public_addresses(urlsplit(current).hostname, resolver)
+        if not addresses:
+            return None, "cover_host_not_publicly_routable"
+        try:
+            response = transport.get(
+                current,
+                timeout=COVER_PROXY_TIMEOUT_SECONDS,
+                stream=True,
+                allow_redirects=False,
+                headers={"User-Agent": f"{COMICVINE_USER_AGENT} InkDrop-cover-cache/1.0"},
+            )
+        except requests.exceptions.RequestException:
+            return None, "cover_fetch_failed"
+        reported = str(getattr(response, "url", "") or current)
+        settled = cover_proxy_allowed_url(reported)
+        if not settled or urlsplit(settled).hostname != urlsplit(current).hostname:
+            cover_proxy_close(response)
+            return None, "cover_response_url_mismatch"
+        status = int(getattr(response, "status_code", 0) or 0)
+        if status in COVER_PROXY_REDIRECT_STATUSES:
+            location = str((getattr(response, "headers", {}) or {}).get("Location") or "")
+            cover_proxy_close(response)
+            following = cover_proxy_allowed_url(urljoin(current, location)) if location else None
+            if not following:
+                return None, "cover_redirect_refused"
+            current = following
+            continue
+        if status < 200 or status >= 300:
+            cover_proxy_close(response)
+            return None, "cover_fetch_failed"
+        peer = cover_proxy_peer_address(response) if cover_proxy_direct_connection() else None
+        if peer is not None and (str(peer) not in addresses or not cover_proxy_public_address(peer)):
+            cover_proxy_close(response)
+            return None, "cover_peer_not_approved"
+        return response, ""
+    return None, "cover_redirect_limit"
 
 
 def cover_proxy_content_type_for_path(path):
@@ -61491,10 +64112,23 @@ def cover_proxy_cache_path(url, content_type=None):
     return COVER_CACHE_DIR / f"{digest}.img"
 
 
-def inkdrop_cover_proxy_response(raw_url):
+def cover_proxy_refusal(reason, status=502):
+    """Refusals say what rule fired and nothing else -- no URL, no upstream text,
+    and never a byte of whatever the fetch actually reached."""
+
+    return {
+        "ok": False,
+        "status": status,
+        "content_type": "text/plain; charset=utf-8",
+        "body": str(reason).encode("ascii", "replace"),
+        "reason": str(reason),
+    }
+
+
+def inkdrop_cover_proxy_response(raw_url, *, transport=None, resolver=None):
     url = cover_proxy_allowed_url(raw_url)
     if not url:
-        return {"ok": False, "status": 400, "content_type": "text/plain; charset=utf-8", "body": b"unsupported cover url"}
+        return cover_proxy_refusal("unsupported_cover_url", status=400)
     cached_path = cover_proxy_cache_path(url)
     if cached_path.exists():
         cached_type = cover_proxy_content_type_for_path(cached_path)
@@ -61511,21 +64145,13 @@ def inkdrop_cover_proxy_response(raw_url):
                 "body": cached_path.read_bytes(),
                 "cached": True,
             }
-    try:
-        response = requests.get(
-            url,
-            timeout=COVER_PROXY_TIMEOUT_SECONDS,
-            stream=True,
-            headers={"User-Agent": f"{COMICVINE_USER_AGENT} InkDrop-cover-cache/1.0"},
-        )
-        response.raise_for_status()
-    except requests.exceptions.RequestException as exc:
-        body = f"cover fetch failed: {exc}".encode("utf-8", "replace")
-        return {"ok": False, "status": 502, "content_type": "text/plain; charset=utf-8", "body": body}
-    content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+    response, reason = cover_proxy_fetch(url, transport=transport, resolver=resolver)
+    if reason:
+        return cover_proxy_refusal(reason)
+    content_type = str((getattr(response, "headers", {}) or {}).get("Content-Type") or "").split(";", 1)[0].strip().lower()
     if content_type not in COVER_PROXY_CONTENT_TYPES:
-        response.close()
-        return {"ok": False, "status": 502, "content_type": "text/plain; charset=utf-8", "body": b"cover response was not an image"}
+        cover_proxy_close(response)
+        return cover_proxy_refusal("cover_response_not_an_image")
     body = bytearray()
     try:
         for chunk in response.iter_content(chunk_size=65536):
@@ -61533,10 +64159,11 @@ def inkdrop_cover_proxy_response(raw_url):
                 continue
             body.extend(chunk)
             if len(body) > COVER_PROXY_MAX_BYTES:
-                response.close()
-                return {"ok": False, "status": 502, "content_type": "text/plain; charset=utf-8", "body": b"cover image too large"}
+                return cover_proxy_refusal("cover_image_too_large")
+    except requests.exceptions.RequestException:
+        return cover_proxy_refusal("cover_fetch_failed")
     finally:
-        response.close()
+        cover_proxy_close(response)
     cache_path = cover_proxy_cache_path(url, content_type)
     try:
         COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -61955,8 +64582,44 @@ class Handler(BaseHTTPRequestHandler):
         self.send_bytes(body, "application/json; charset=utf-8", status, headers=headers)
 
     def send_html(self):
-        body = HTML.encode("utf-8")
+        setup_flag = "true" if inkdrop_status_setup_required() else "false"
+        body = HTML.replace("__INKDROP_SETUP_REQUIRED_JSON__", setup_flag).encode("utf-8")
         self.send_bytes(body, "text/html; charset=utf-8")
+
+    def send_mobile_html(self):
+        setup_flag = "true" if inkdrop_status_setup_required() else "false"
+        body = MOBILE_HTML.replace("__INKDROP_SETUP_REQUIRED_JSON__", setup_flag).encode("utf-8")
+        self.send_bytes(body, "text/html; charset=utf-8")
+
+    def send_mobile_stylesheet(self):
+        try:
+            body = INKDROP_MOBILE_CSS_FILE.read_bytes()
+        except OSError:
+            self.send_bytes(b"", "text/css; charset=utf-8", status=404)
+            return
+        self.send_bytes(
+            body,
+            "text/css; charset=utf-8",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "ETag": f'"{INKDROP_MOBILE_CSS_VERSION}"',
+            },
+        )
+
+    def send_mobile_javascript(self):
+        try:
+            body = INKDROP_MOBILE_JS_FILE.read_bytes()
+        except OSError:
+            self.send_bytes(b"", "application/javascript; charset=utf-8", status=404)
+            return
+        self.send_bytes(
+            body,
+            "application/javascript; charset=utf-8",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "ETag": f'"{INKDROP_MOBILE_JS_VERSION}"',
+            },
+        )
 
     def send_logo_mark(self):
         try:
@@ -62174,6 +64837,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("X-InkDrop-Cover-Cache", "hit" if payload.get("cached") else "miss")
             else:
                 self.send_header("Cache-Control", "no-store, max-age=0")
+                self.send_header("X-InkDrop-Cover-Reason", str(payload.get("reason") or "cover_fetch_failed"))
             self.end_headers()
             self.wfile.write(body)
             self.close_connection = True
@@ -62327,6 +64991,12 @@ class Handler(BaseHTTPRequestHandler):
             self._state_endpoint_acquired = True
         if path == "/":
             self.send_html()
+        elif path == "/m":
+            self.send_mobile_html()
+        elif path == "/static/css/mobile.css":
+            self.send_mobile_stylesheet()
+        elif path == "/static/js/inkdrop-mobile.js":
+            self.send_mobile_javascript()
         elif path == "/static/css/inkdrop.css":
             self.send_ui_stylesheet()
         elif path == "/static/img/inkdrop-auth-backdrop.webp":
@@ -62336,7 +65006,19 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/static/dist/"):
             self.send_ui_react_bundle(path.removeprefix("/static/dist/"))
         elif path == "/api/inkdrop-settings/backup/archives":
-            self.send_json({"ok": True, "archives": inkdrop_backup_restore.list_backup_archives()}, headers={"Cache-Control": "no-store"})
+            self.send_json(
+                {
+                    "ok": True,
+                    "archives": inkdrop_backup_restore.list_backup_archives(),
+                    # Effective retention, not just the saved setting: the
+                    # panel has to be able to say when an install's .env is
+                    # what is actually in charge.
+                    "retention": inkdrop_backup_restore.backup_retention_contract(
+                        state_db_path=INKDROP_STATE_DB,
+                    ),
+                },
+                headers={"Cache-Control": "no-store"},
+            )
         elif path == "/api/inkdrop-settings/backup/archives/download":
             name = str((query.get("name") or [""])[0])
             archive_path = backup_archive_path_by_name(name)
@@ -62852,10 +65534,114 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def handle_backup_archive_upload(self):
+        """Stream an uploaded full-backup archive straight to disk and
+        validate it the same way an existing archive's restore preview
+        would, before it is ever kept or usable for a restore.
+
+        Nothing here writes to a live restore target -- restore_backup_archive
+        is called with apply=False, exactly like the preview endpoint for an
+        archive already on disk. A bad upload (wrong product, truncated,
+        corrupt SQLite) is deleted immediately and never appears in the
+        archive list.
+        """
+        max_bytes = int(os.environ.get("INKDROP_BACKUP_UPLOAD_MAX_BYTES") or 20 * 1024 ** 3)
+        length = int(self.headers.get("Content-Length") or "0")
+        if length <= 0:
+            self.send_json({"ok": False, "error": "empty_upload", "detail": "No file was received."}, status=400, headers={"Cache-Control": "no-store"})
+            return
+        if length > max_bytes:
+            self.send_json(
+                {"ok": False, "error": "upload_too_large", "detail": f"Backup archives over {max_bytes // (1024 ** 3)}GB are not accepted."},
+                status=413,
+                headers={"Cache-Control": "no-store"},
+            )
+            return
+        backup_dir = Path(inkdrop_runtime_config.backup_dir())
+        backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name == "posix":
+            os.chmod(backup_dir, 0o700)
+        try:
+            free_bytes = shutil.disk_usage(backup_dir).free
+        except OSError:
+            free_bytes = None
+        if free_bytes is not None and free_bytes < length * 1.05:
+            self.send_json(
+                {"ok": False, "error": "insufficient_disk_space", "detail": "Not enough free space in the backup directory to receive this upload."},
+                status=507,
+                headers={"Cache-Control": "no-store"},
+            )
+            return
+        fd, temp_name = tempfile.mkstemp(prefix=".inkdrop-backup-upload-", suffix=".zip.tmp", dir=backup_dir)
+        temp_path = Path(temp_name)
+        try:
+            if os.name == "posix":
+                os.fchmod(fd, 0o600)
+            remaining = length
+            with os.fdopen(fd, "wb") as handle:
+                fd = -1
+                while remaining > 0:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise ValueError("upload connection closed before the full archive was received")
+                    handle.write(chunk)
+                    remaining -= len(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                preview = inkdrop_backup_restore.restore_backup_archive(temp_path, apply=False)
+            except (ValueError, OSError, zipfile.BadZipFile) as exc:
+                # Delete before responding, not after -- a caller that lists
+                # the backups directory the instant it sees this response
+                # must never be able to observe the rejected temp file, even
+                # though its name would never match list_backup_archives()'s
+                # naming pattern anyway.
+                Path(temp_path).unlink(missing_ok=True)
+                temp_path = None
+                self.send_json({"ok": False, "error": "invalid_backup_archive", "detail": str(exc)}, status=400, headers={"Cache-Control": "no-store"})
+                return
+            stamp = inkdrop_backup_restore.compact_stamp()
+            final_name = f"inkdrop-backup-{stamp}-imported.zip"
+            final_path = backup_dir / final_name
+            if final_path.exists():
+                final_name = f"inkdrop-backup-{stamp}-imported-{uuid.uuid4().hex[:6]}.zip"
+                final_path = backup_dir / final_name
+            os.replace(temp_path, final_path)
+            if os.name == "posix":
+                os.chmod(final_path, 0o600)
+            temp_path = None
+            self.send_json(
+                {
+                    "ok": True,
+                    "archive": {"name": final_name},
+                    "preview": preview,
+                    "archives": inkdrop_backup_restore.list_backup_archives(),
+                },
+                headers={"Cache-Control": "no-store"},
+            )
+        except Exception as exc:
+            self.send_json({"ok": False, "error": "upload_failed", "detail": str(exc)}, status=500, headers={"Cache-Control": "no-store"})
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if temp_path is not None:
+                Path(temp_path).unlink(missing_ok=True)
+
     def do_POST(self):
         try:
             path = urlparse(self.path).path
             if not self.ensure_authorized(path, "POST"):
+                return
+            if path == "/api/inkdrop-settings/backup/archives/upload":
+                # A full backup archive can be gigabytes -- it embeds a raw
+                # SQLite state-DB copy -- so it cannot go through
+                # read_strict_json_body like the rest of this prefix: that
+                # caps bodies at ~1MB and expects JSON, not a zip's raw bytes.
+                # This streams straight to disk instead of buffering in memory.
+                self.handle_backup_archive_upload()
                 return
             if path.startswith("/api/inkdrop-settings/backup/"):
                 data = read_strict_json_body(self, inkdrop_backup_restore.PORTABLE_SETTINGS_MAX_BYTES + 65536)
@@ -63001,6 +65787,29 @@ class Handler(BaseHTTPRequestHandler):
                     if results:
                         break
                 self.send_json({"ok": True, "results": results})
+            elif path == "/api/metron/search":
+                raw_query = safe_query(data.get("query"))
+                limit = safe_limit(data.get("limit") or 8)
+                results = []
+                provider_status = "ok"
+                error_message = ""
+                try:
+                    for candidate in series_lookup_query_variants(raw_query):
+                        if not candidate:
+                            continue
+                        results = metron_search_series(candidate, limit)
+                        if results:
+                            break
+                except MetronNotConfiguredError as exc:
+                    # Not an error -- Metron defaults off, and an unconfigured
+                    # fallback provider must stay invisible to ComicVine-only
+                    # users, not show up as a search failure every time.
+                    provider_status = "unconfigured"
+                    error_message = str(exc)
+                except Exception as exc:
+                    provider_status = "failed"
+                    error_message = str(exc)
+                self.send_json({"ok": True, "results": results, "providerStatus": provider_status, "error": error_message})
             elif path == "/api/mangadex/feed":
                 manga_id = safe_query(data.get("mangadexId") or data.get("mangadex_id") or data.get("id"))
                 limit = max(1, min(int(data.get("limit") or data.get("maxChapters") or 500), 1000))
@@ -63008,6 +65817,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "manga": detail, "feed": mangadex_feed_chapters(manga_id, max_chapters=limit, title=detail.get("name"))})
             elif path == "/api/mangadex/add":
                 self.send_json({"ok": True, "result": add_mangadex_series(data)})
+            elif path == "/api/metron/add":
+                self.send_json({"ok": True, "result": add_metron_series(data)})
             elif path == "/api/comicvine/add":
                 self.send_json({"ok": True, "result": add_comic_series(data)})
             elif path == "/api/comicvine/update":
@@ -63045,6 +65856,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "result": update_inkdrop_series_flags(data)})
             elif path == "/api/inkdrop-state/series/manga-unit-override/set":
                 self.send_json({"ok": True, "result": update_inkdrop_series_manga_unit_override(data)})
+            elif path == "/api/inkdrop-state/series/media-type/set":
+                self.send_json({"ok": True, "result": update_inkdrop_series_media_type(data)})
+            elif path == "/api/inkdrop-state/series/edition-indifferent-override/set":
+                self.send_json({"ok": True, "result": update_inkdrop_series_edition_indifferent_override(data)})
             elif path == "/api/inkdrop-state/series/remove":
                 self.send_json({"ok": True, "result": remove_inkdrop_series(data)})
             elif path == "/api/inkdrop-state/import/mark-wrong":
@@ -63075,6 +65890,18 @@ class Handler(BaseHTTPRequestHandler):
                     {"ok": bool(result.get("ok")), "result": result},
                     status=200 if result.get("ok") else mutation_conflict_status(result),
                 )
+            elif path == "/api/inkdrop-state/queue/retry-new-source":
+                result = run_inkdrop_queue_retry_new_source(data, expected_revision=mutation_expected_revision(self.headers, data))
+                self.send_json(
+                    {"ok": bool(result.get("ok")), "result": result},
+                    status=200 if result.get("ok") else mutation_conflict_status(result),
+                )
+            elif path == "/api/inkdrop-state/queue/reopen-import":
+                result = run_inkdrop_queue_reopen_import(data, expected_revision=mutation_expected_revision(self.headers, data))
+                self.send_json(
+                    {"ok": bool(result.get("ok")), "result": result},
+                    status=200 if result.get("ok") else mutation_conflict_status(result),
+                )
             elif path == "/api/inkdrop-state/source-memory/allow":
                 principal = manual_search_principal_label(getattr(self, "inkdrop_principal", None))
                 result = allow_inkdrop_blocklist_candidate(
@@ -63096,6 +65923,15 @@ class Handler(BaseHTTPRequestHandler):
                     {"ok": bool(result.get("ok")), "result": result},
                     status=200 if result.get("ok") else mutation_conflict_status(result),
                 )
+            elif path == "/api/inkdrop-state/source-memory/block":
+                principal = manual_search_principal_label(getattr(self, "inkdrop_principal", None))
+                result = block_inkdrop_source_candidate(
+                    data, blocked_by=principal, expected_revision=mutation_expected_revision(self.headers, data)
+                )
+                self.send_json(
+                    {"ok": bool(result.get("ok")), "result": result},
+                    status=200 if result.get("ok") else mutation_conflict_status(result),
+                )
             elif path in {"/api/inkdrop-state/readiness-repair/apply", "/api/inkdrop-state/readiness_repair/apply"}:
                 self.send_json({"ok": True, "result": run_inkdrop_readiness_repair(data)})
             elif path in {"/api/inkdrop-state/adapter-merge/apply", "/api/inkdrop-state/adapter_merge/apply", "/api/inkdrop-state/adapter-retire/apply", "/api/inkdrop-state/adapter_retire/apply"}:
@@ -63108,6 +65944,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "result": run_inkdrop_series_shadow_ref_merge_preview(data, apply_endpoint=True)})
             elif path in {"/api/inkdrop-state/series-shadow-retire/apply", "/api/inkdrop-state/series_shadow_retire/apply", "/api/inkdrop-state/duplicate-series-retire/apply", "/api/inkdrop-state/duplicate_series_retire/apply"}:
                 self.send_json({"ok": True, "result": run_inkdrop_series_shadow_retire_apply(data)})
+            elif path in {"/api/inkdrop-state/series-merge/candidate", "/api/inkdrop-state/series_merge/candidate"}:
+                self.send_json({"ok": True, "result": run_inkdrop_series_merge_candidate(data)})
+            elif path in {"/api/inkdrop-state/series-merge/apply", "/api/inkdrop-state/series_merge/apply"}:
+                self.send_json({"ok": True, "result": run_inkdrop_series_merge_apply(data)})
             elif path in {"/api/inkdrop-diagnostics/manga-chapter-artifacts/apply", "/api/inkdrop-diagnostics/manga_chapter_artifacts/apply"}:
                 result = run_manga_chapter_artifact_repair(data)
                 self.send_json({"ok": bool(result.get("ok")), "result": result}, status=200 if result.get("ok") else 400)
@@ -63128,6 +65968,10 @@ class Handler(BaseHTTPRequestHandler):
                     hash_max_bytes = max(1, min(int(data.get("hashMaxBytes") or data.get("hash_max_bytes") or 512 * 1024 * 1024), 8 * 1024 * 1024 * 1024))
                 except (TypeError, ValueError):
                     hash_max_bytes = 512 * 1024 * 1024
+                try:
+                    archive_integrity_max_files = max(1, min(int(data.get("archiveIntegrityMaxFiles") or data.get("archive_integrity_max_files") or MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_DEFAULT), MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_CEILING))
+                except (TypeError, ValueError):
+                    archive_integrity_max_files = MANAGED_LIBRARY_ARCHIVE_INTEGRITY_MAX_FILES_DEFAULT
                 started = start_managed_library_audit_scan(
                     {
                         "max_files": max_files,
@@ -63136,6 +65980,12 @@ class Handler(BaseHTTPRequestHandler):
                         "include_cleanup_plan": inkdrop_bool_value(data.get("includeCleanupPlan", data.get("include_cleanup_plan")), True),
                         "include_hash_proof": inkdrop_bool_value(data.get("includeHashProof", data.get("include_hash_proof")), True),
                         "hash_max_bytes": hash_max_bytes,
+                        # Opt-in and off by default -- unlike the other checks
+                        # above, this opens every archive in the library
+                        # instead of just walking/stat-ing it. See
+                        # managed_library_archive_integrity_scan()'s docstring.
+                        "include_archive_integrity": inkdrop_bool_value(data.get("includeArchiveIntegrity", data.get("include_archive_integrity")), False),
+                        "archive_integrity_max_files": archive_integrity_max_files,
                     }
                 )
                 self.send_json(
@@ -63228,6 +66078,49 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     archive_path.unlink()
                     self.send_json({"ok": True, "deleted": name, "archives": inkdrop_backup_restore.list_backup_archives()})
+            elif path == "/api/inkdrop-settings/backup/archives/restore/preview":
+                name = str((data or {}).get("name") or "").strip()
+                archive_path = backup_archive_path_by_name(name)
+                if archive_path is None:
+                    self.send_json({"ok": False, "error": "unknown backup archive"}, status=404, headers={"Cache-Control": "no-store"})
+                else:
+                    try:
+                        result = inkdrop_backup_restore.restore_backup_archive(archive_path, apply=False)
+                        self.send_json({"ok": True, "result": result}, headers={"Cache-Control": "no-store"})
+                    except (ValueError, OSError, zipfile.BadZipFile) as exc:
+                        self.send_json({"ok": False, "error": "invalid_backup_archive", "detail": str(exc)}, status=400, headers={"Cache-Control": "no-store"})
+            elif path == "/api/inkdrop-settings/backup/archives/merge/preview":
+                # Read-only: classifies the archive's series/issues against the live
+                # library and returns counts + samples. Never writes anything -- the
+                # apply/write path for this feature does not exist yet.
+                name = str((data or {}).get("name") or "").strip()
+                archive_path = backup_archive_path_by_name(name)
+                if archive_path is None:
+                    self.send_json({"ok": False, "error": "unknown backup archive"}, status=404, headers={"Cache-Control": "no-store"})
+                else:
+                    try:
+                        result = inkdrop_backup_restore.preview_backup_merge(archive_path)
+                        self.send_json({"ok": True, "result": result}, headers={"Cache-Control": "no-store"})
+                    except (ValueError, OSError, zipfile.BadZipFile) as exc:
+                        self.send_json({"ok": False, "error": "invalid_backup_archive", "detail": str(exc)}, status=400, headers={"Cache-Control": "no-store"})
+            elif path == "/api/inkdrop-settings/backup/archives/restore/apply":
+                # Applying a restore in-process replaces the live state DB,
+                # auth DB, and config/secret files with no web/worker
+                # quiescence, no maintenance lease, and no rollback if a
+                # later step fails -- a failure partway through leaves the
+                # install split across state/auth/config epochs with no
+                # recovery path (SIXH-20260812-RESTORE-P0-01). Disabled here
+                # until that path gets real coordination; preview, create,
+                # list, download, and upload are untouched.
+                self.send_json(
+                    {
+                        "ok": False,
+                        "error": "restore_apply_disabled",
+                        "detail": "Restoring a full backup is temporarily disabled while a data-safety issue in the restore path is fixed. Creating, previewing, downloading, and importing backups still work normally.",
+                    },
+                    status=503,
+                    headers={"Cache-Control": "no-store"},
+                )
             elif path == "/api/system/logs/download":
                 payload, manifest = inkdrop_log_export.build_log_archive_bytes()
                 filename = inkdrop_log_export.log_archive_filename(manifest["generated_at"])

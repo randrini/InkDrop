@@ -6,7 +6,6 @@ import hashlib
 import html.parser
 import json
 import re
-import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import PurePosixPath
@@ -14,7 +13,6 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse
 
 from core import inkdrop_bencode
 from core import inkdrop_candidate_matching
-from core import inkdrop_runtime_config
 from core import inkdrop_sources
 
 
@@ -138,14 +136,24 @@ PACK_CONTENTS_SAFE_COVERAGE_SOURCES = {
     "pack_contents_filename",
     "pack_contents_volume_filename",
 }
+# Range separators a release title may use between the two ends of a volume or
+# issue range.  Hyphen and plus were the only ones recognized, so common
+# spellings -- "Vol. 1~21" (the usual manga/scanlation convention), "Volume 7 & 8",
+# and a range that repeats the marker on both ends such as "v01-v19" -- read as a
+# single unit and skipped the pack gate in indexer_candidate_verdict.
+PACK_RANGE_SEPARATORS = r"-+~〜～&"
 PACK_TITLE_RE = re.compile(
     r"(?i)("
     r"\bcomplete\b|\bpack\b|\bbatch\b|"
     r"\bweekly[\W_]+(?:comics?|releases?)\b|"
     r"\b(?:dc|marvel|image|dark[\W_]+horse|idw|boom)(?:[\W_]+comics?)?[\W_]+week\b|"
     r"\b(?:dc|marvel|image|dark[\W_]+horse|idw|boom)(?:[\W_]+comics?)?[\W_]+weekly[\W_]+releases\b|"
-    r"v(?:ol(?:ume)?)?\.?\s*\d+\s*[-+]\s*\d+|"
-    r"\b\d{1,4}\s*[-+]\s*\d{1,4}\b"
+    r"v(?:ol(?:ume)?)?\.?\s*\d+\s*[" + PACK_RANGE_SEPARATORS + r"]\s*\d+|"
+    r"v(?:ol(?:ume)?)?\.?\s*\d+\s*[" + PACK_RANGE_SEPARATORS + r"]\s*v(?:ol(?:ume)?)?\.?\s*\d+|"
+    # A bare numeric range keeps the narrower separator set: an unmarked "&"
+    # between two numbers is ordinary title punctuation ("Love & Rockets 27"),
+    # not a range.
+    r"\b\d{1,4}\s*[-+~〜～]\s*\d{1,4}\b"
     r")"
 )
 COMIC_FILE_EXTENSION_RE = re.compile(r"(?i)\.(?:cbz|cbr|pdf|epub|zip|rar|7z)\b")
@@ -1823,6 +1831,20 @@ def _indexer_quality_label(result):
     return "unknown"
 
 
+def _wanted_number_decimal_suffix(wanted_text):
+    """Twin copy of inkdrop_missing_acquire._issue_number_decimal_suffix() --
+    see that function for the rationale (SEL-03 in the search/acquisition
+    audit). Returns the exact post-decimal digit pattern for a fractional
+    want, or None when the want is a whole number (including "6.0")."""
+    match = re.fullmatch(r"\s*0*(\d+)\.(\d+)\s*", str(wanted_text or ""))
+    if not match:
+        return None
+    frac = match.group(2).rstrip("0")
+    if not frac:
+        return None
+    return re.escape(frac) + r"(?:0)*"
+
+
 def _indexer_title_has_wanted_number(title, wanted_item=None):
     unit_metadata = _wanted_unit_metadata(wanted_item)
     wanted = first_text(
@@ -1839,7 +1861,21 @@ def _indexer_title_has_wanted_number(title, wanted_item=None):
     title_text = str(title or "")
     try:
         number = int(float(wanted_text))
-        return bool(re.search(rf"(?<!\d)0*{number}(?!\d)", title_text))
+        decimal_suffix = _wanted_number_decimal_suffix(wanted_text)
+        # A decimal continuation of the wanted number is a genuinely distinct
+        # issue/chapter, not a loose variant -- "#6" must not accept "6.5",
+        # and when the want is itself fractional ("23.1"), only that exact
+        # fractional suffix should count, not a bare "23". But a dot
+        # immediately after the number isn't always a decimal point --
+        # scene-style releases spell "<series>.<issue>.<year>.<group>" (e.g.
+        # "300.005.1998.Digital-Empire"), where the dot-year is release
+        # metadata, not a fractional continuation of the issue number.
+        boundary = (
+            rf"\.{decimal_suffix}(?!\d)"
+            if decimal_suffix
+            else r"(?!\d)(?!\.(?!(?:19|20)\d{2}(?!\d))\d)"
+        )
+        return bool(re.search(rf"(?<!\d)0*{number}{boundary}", title_text))
     except Exception:
         wanted_key = inkdrop_sources.normalize_title(wanted_text)
         title_key = inkdrop_sources.normalize_title(title_text)
@@ -2086,60 +2122,6 @@ def _candidate_source_is_single_part_without_collection(candidate):
     if not source_norm:
         return False
     return bool(SINGLE_PART_SOURCE_RE.search(source_norm)) and not COLLECTION_TARGET_RE.search(source_text)
-
-
-# TEMPORARY diagnostic instrumentation for the open Ascender #7 match_confidence
-# anomaly (2026-08-06 Prowlarr reaudit): an isolated replay of this function
-# against a real blocked row's series/issue/candidate-title returns the correct
-# "series_title_only", but production stored "mismatch" for that exact row.
-# Persisted source_attempts.raw_json is a trimmed projection that doesn't retain
-# the fields this function actually reads, so replay can't reconstruct the real
-# input. This logs the live wanted_item/candidate the moment "mismatch" is set,
-# so the next occurrence can be diagnosed from ground truth instead of a guess.
-# Remove this block (and its call site below) once the anomaly is captured and
-# root-caused.
-#
-# Revision (2026-08-10): a first real capture (50 rows, forced via a manual
-# search) all independently replayed as genuine "mismatch" -- confirmed by
-# calling _query_matches_result() directly against the logged fields, not
-# just by inspection. Not the anomaly; a real but boring case (wanted a
-# volume, every candidate was either a bare chapter or a volume range that
-# didn't cover it). The gap: this only logged series_query_aliases' presence
-# as a policy key, not the actual alias list _series_query_aliases() computed
-# at decision time -- and aliases are the one input here that can legitimately
-# drift between decision-time and any later replay (unlike the other logged
-# fields, which are just copied off wanted_item/candidate). Now logging the
-# real list plus the candidate's summary/description, since haystack is built
-# from title+summary+description and a difference there would otherwise look
-# identical to this bug from title alone.
-def _debug_log_match_confidence_mismatch(candidate, wanted_item=None, policy=None):
-    try:
-        candidate = candidate if isinstance(candidate, dict) else {}
-        wanted_item = wanted_item if isinstance(wanted_item, dict) else {}
-        path = inkdrop_runtime_config.log_dir() / "match-confidence-mismatch-debug.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "ts": time.time(),
-            "candidate_title": candidate.get("title"),
-            "candidate_summary": candidate.get("summary"),
-            "candidate_description": candidate.get("description"),
-            "candidate_series_query_aliases": candidate.get("series_query_aliases"),
-            "indexer": candidate.get("indexer"),
-            "wanted": {
-                key: wanted_item.get(key)
-                for key in (
-                    "series_title", "series", "manga_title", "title", "query",
-                    "issue_number", "chapter_number", "normalized_number",
-                    "media_type", "manual_search", "metadata_provider",
-                    "series_source", "publisher",
-                )
-            },
-            "policy_keys": sorted(policy.keys()) if isinstance(policy, dict) else None,
-        }
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
-    except Exception:
-        pass
 
 
 def _indexer_match_confidence(candidate, wanted_item=None, policy=None):
@@ -2513,8 +2495,6 @@ def prowlarr_candidate_from_result(result, registry_row=None, wanted_item=None):
     if aliases:
         candidate["series_query_aliases"] = aliases
     candidate["match_confidence"] = _indexer_match_confidence(candidate, wanted_item, policy=policy)
-    if candidate["match_confidence"] == "mismatch":
-        _debug_log_match_confidence_mismatch(candidate, wanted_item, policy=policy)
     manifest_match = indexer_manifest_pack_match(candidate)
     if manifest_match:
         candidate["pack_contents_match"] = manifest_match

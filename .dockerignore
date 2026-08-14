@@ -12,6 +12,10 @@
 !/web/static/
 !/web/static/css/
 !/web/static/css/inkdrop.css
+!/web/static/css/mobile.css
+# Authored CSS source compiles into inkdrop.css above; the runtime stage
+# never reads these modules, so they don't belong in the build context.
+/web/static/css/src/
 !/web/static/img/
 !/web/static/img/inkdrop-auth-backdrop.webp
 !/web/static/js/
@@ -39,8 +43,13 @@
 # frontend-builder stage installs its own via `npm ci` from the lockfile).
 /web/frontend/node_modules/
 /web/frontend/dist/
+# The frontend-builder stage writes its build output to this same path
+# inside the image; a locally-built copy on the host must not leak into
+# the context, or a pre-build-then-measure workflow silently doubles it.
+/web/static/dist/
 !/inkdrop-completion-identity-audit-diff-alert.sh
 !/inkdrop-completion-identity-audit-diff-check.sh
+!/inkdrop-docker-entrypoint.sh
 !/inkdrop-import-ready-worker.sh
 !/inkdrop-series-autopilot-cron.sh
 !/inkdrop-source-worker-mangadex-cron.sh

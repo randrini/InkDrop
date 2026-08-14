@@ -365,6 +365,12 @@ def _singleton_issue_context_from_rows(
     metadata_fresh = bool(updated_at > 0 and 0 <= metadata_age <= SINGLETON_METADATA_MAX_AGE_SECONDS)
     raw = _json_loads(series_row["raw_json"] if series_row and stable_provider_identity and metadata_fresh else None)
     metadata_issue_count = inkdrop_state.series_display_metadata_from_raw(raw).get("issue_count")
+    # An explicit per-series override, read independent of the ComicVine
+    # freshness gate above -- it is an operator decision, not a confidence
+    # signal, and must not silently expire when metadata goes stale.
+    edition_indifferent_override = bool(
+        _json_loads(series_row["raw_json"] if series_row else None).get("edition_indifferent_override")
+    )
     raw_canonical_one_row_count = len(target_issue_rows)
     raw_collected_wanted_count = len(collected_wanted_rows)
     explicit_replay_alias_count = 0
@@ -466,6 +472,7 @@ def _singleton_issue_context_from_rows(
         "collected_singleton_proof_source": (
             "comicvine_collected_single_wanted_identity" if collected_singleton_proof else ""
         ),
+        "edition_indifferent": edition_indifferent_override,
     }
 
 

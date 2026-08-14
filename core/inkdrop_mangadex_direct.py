@@ -7,14 +7,17 @@ if str(_ROOT) not in _sys.path:
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import socket
 import sqlite3
 import tempfile
 import time
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 from xml.sax.saxutils import escape as xml_escape
 
 import requests
@@ -31,6 +34,8 @@ try:
     from core import inkdrop_completed_import as completed_import
 except Exception:
     completed_import = None
+
+from core import inkdrop_library_paths
 
 
 STATE_DIR = inkdrop_runtime_config.state_dir()
@@ -188,12 +193,10 @@ def destination_path(row, payload):
 
 def configured_manga_root():
     global MANGA_ROOT
-    if completed_import is not None:
-        try:
-            completed_import.apply_path_provider_settings()
-            MANGA_ROOT = Path(completed_import.MANGA_ROOT)
-        except Exception as exc:
-            log("path_settings_failed", error=f"{type(exc).__name__}: {exc}")
+    try:
+        MANGA_ROOT = inkdrop_library_paths.current_paths()["manga_root"]
+    except Exception as exc:
+        log("path_settings_failed", error=f"{type(exc).__name__}: {exc}")
     return MANGA_ROOT
 
 
@@ -207,6 +210,37 @@ def get_json(url, timeout=30):
     return response.json()
 
 
+def _unsafe_host(host):
+    host = str(host or "").strip().lower().rstrip(".").strip("[]")
+    if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        return True
+    try:
+        address = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    return not address.is_global
+
+
+def assert_safe_at_home_base_url(base_url):
+    # At-Home hands us a URL pointing at a third-party, volunteer-hosted mirror
+    # node chosen by MangaDex; treat it as untrusted external input, the same
+    # way inkdrop_page_pack_downloader validates page-image hosts.
+    parsed = urlparse(base_url)
+    host = str(parsed.hostname or "")
+    if parsed.scheme not in {"http", "https"} or not host:
+        raise RuntimeError("MangaDex At-Home base URL is not a safe http(s) URL")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if _unsafe_host(host):
+        raise RuntimeError("MangaDex At-Home base URL host is not a public address")
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise RuntimeError(f"MangaDex At-Home base URL host could not be resolved: {exc}") from exc
+    ips = {str(info[4][0]) for info in infos if info and info[4]}
+    if not ips or any(_unsafe_host(ip) for ip in ips):
+        raise RuntimeError("MangaDex At-Home base URL resolves to a non-public address")
+
+
 def at_home(chapter_id):
     chapter_id = str(chapter_id or "").strip()
     if not chapter_id:
@@ -216,6 +250,7 @@ def at_home(chapter_id):
         raise RuntimeError(f"MangaDex At-Home returned {data.get('result')}")
     chapter = data.get("chapter") if isinstance(data.get("chapter"), dict) else {}
     base_url = str(data.get("baseUrl") or "").rstrip("/")
+    assert_safe_at_home_base_url(base_url)
     chapter_hash = str(chapter.get("hash") or "").strip()
     pages = chapter.get("data") if isinstance(chapter.get("data"), list) else []
     saver_pages = chapter.get("dataSaver") if isinstance(chapter.get("dataSaver"), list) else []

@@ -330,14 +330,6 @@ FOLDER_VERIFIED_STATUSES = {"folder_verified"}
 IMPORT_VERIFIED_STATUSES = LIBRARY_VISIBLE_STATUSES | FOLDER_VERIFIED_STATUSES
 
 
-def is_library_scan_wait_state(value):
-    return str(value or "").strip().lower() in LIBRARY_SCAN_WAIT_STATES
-
-
-def is_import_visible_status(value):
-    return str(value or "").strip().lower() in IMPORT_VERIFIED_STATUSES
-
-
 def canonical_library_scan_reason(reason=None):
     text = str(reason or "").strip().lower()
     if text in {"importer_copied_waiting_for_kavita_scan", "importer_copied_waiting_for_library_scan"}:
@@ -2095,9 +2087,20 @@ def sab_settings():
 
 def sab_api(settings, mode, **params):
     params = {"mode": mode, "output": "json", "apikey": settings["apikey"], **params}
-    response = requests.get(settings["host"] + "/api", params=params, timeout=20)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = requests.get(settings["host"] + "/api", params=params, timeout=20)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as exc:
+        # SABnzbd authenticates over a URL query parameter (no header option),
+        # so requests' own exception text -- built from response.url, which
+        # still carries "...&apikey=<key>" -- would otherwise leak the API key
+        # in cleartext into sab_items()'s "error" field. That field is
+        # persisted verbatim to import-reconcile-status.json (write_status())
+        # and served back through the dashboard/system-health API. Scrub it
+        # the same way qBittorrent's own diagnostic text already is before it
+        # ever gets that far.
+        raise RuntimeError(inkdrop_qbittorrent_auth.scrub_diagnostic_text(str(exc), max_len=300)) from exc
 
 
 def sab_slot_text(slot):

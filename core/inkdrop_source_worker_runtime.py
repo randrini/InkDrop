@@ -11,6 +11,7 @@ import re
 import time
 
 from core import inkdrop_candidate_matching
+from core import inkdrop_missing_acquire as missing_acquire
 from core import inkdrop_source_providers as providers
 from core import inkdrop_source_worker_plan as worker_plan
 
@@ -526,7 +527,13 @@ def _quality_rank(attempt):
     return 3
 
 
+def _protocol_rank(attempt):
+    return missing_acquire.protocol_rank((attempt or {}).get("protocol"))
+
+
 def _seed_rank(attempt):
+    if missing_acquire.normalize_protocol_name((attempt or {}).get("protocol")) != "torrent":
+        return 0
     try:
         return -int((attempt or {}).get("seeders") or 0)
     except (TypeError, ValueError):
@@ -537,6 +544,7 @@ def _auto_send_rank(attempt, row, wanted_item, ordinal):
     return (
         _title_issue_distance(attempt, row, wanted_item),
         _match_confidence_rank(attempt),
+        _protocol_rank(attempt),
         _quality_rank(attempt),
         _seed_rank(attempt),
         int(ordinal or 0),

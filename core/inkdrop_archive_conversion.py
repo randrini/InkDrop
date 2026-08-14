@@ -286,6 +286,12 @@ def _extract_rar(source, workdir):
     tools = rar_tooling()
     if not tools["available"]:
         raise ConversionRefused("rar_tooling_missing")
+    # 7z/unrar extract straight to disk with no "refuse unsafe member path"
+    # option of their own, so member names are checked against the same rule
+    # zip extraction enforces per-member before either tool ever touches workdir.
+    for name in list_archive_members(source, "rar"):
+        if _safe_relative_name(name) is None:
+            raise ConversionRefused("source_member_path_unsafe", name)
     attempts = []
     if tools["sevenzip"]:
         attempts.append(("7z", [tools["sevenzip"], "x", "-y", f"-o{workdir}", str(source)]))

@@ -61,13 +61,22 @@ RUN apt-get update \
         curl \
         p7zip-full \
         unrar-free \
+        util-linux \
     && rm -rf /var/lib/apt/lists/*
+
+# Default runtime account for optional PUID/PGID support. The entrypoint
+# remaps this account's UID/GID at container start (see
+# inkdrop-docker-entrypoint.sh); it stays root here only so that remap can
+# happen at all -- Dockerfile USER is deliberately not set.
+RUN groupadd --gid 1000 inkdrop \
+    && useradd --uid 1000 --gid inkdrop --create-home --shell /usr/sbin/nologin inkdrop
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY inkdrop-logo-mark.png ./
 COPY web/static/css/inkdrop.css ./web/static/css/inkdrop.css
+COPY web/static/css/mobile.css ./web/static/css/mobile.css
 COPY web/static/img/inkdrop-auth-backdrop.webp ./web/static/img/inkdrop-auth-backdrop.webp
 COPY web/static/js/ ./web/static/js/
 COPY --from=frontend-builder /app/web/static/dist ./web/static/dist
@@ -77,6 +86,7 @@ COPY tools/inkdrop_install_support_summary.py ./tools/inkdrop_install_support_su
 COPY \
     scripts/inkdrop-completion-identity-audit-diff-alert.sh \
     scripts/inkdrop-completion-identity-audit-diff-check.sh \
+    inkdrop-docker-entrypoint.sh \
     scripts/inkdrop-import-ready-worker.sh \
     scripts/inkdrop-series-autopilot-cron.sh \
     scripts/inkdrop-source-worker-mangadex-cron.sh \
@@ -93,4 +103,5 @@ EXPOSE 8796
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -B core/inkdrop_container_healthcheck.py --timeout 5
 
+ENTRYPOINT ["/app/inkdrop-docker-entrypoint.sh"]
 CMD ["python", "-B", "core/inkdrop_container_start.py"]

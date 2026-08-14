@@ -1,0 +1,226 @@
+/* Reliability island (web/frontend/src/sections/ReliabilityView.tsx): the
+   rollup bucket cards, per-item cards, the horizontal lifecycle stepper, and
+   the pager. Tone colors reuse the existing --good/--warn/--bad tokens the
+   rest of the app already uses -- nothing here introduces a new palette. */
+
+.reliability-info-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent) 8%);
+  color: var(--muted);
+  font-size: var(--font-sm, 12px);
+}
+
+.reliability-rollup-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+/* The sitewide `button { height: 38px }` rule clips a two-line button --
+   these cards stack a count and a label, so height/white-space are
+   explicitly overridden rather than inherited. */
+.reliability-rollup-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  height: auto;
+  min-height: 64px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.reliability-rollup-card:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.reliability-rollup-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--panel) 85%, var(--accent) 15%);
+}
+.reliability-rollup-card .reliability-rollup-count {
+  font-size: var(--font-lg, 20px);
+  font-weight: var(--weight-bold, 800);
+}
+.reliability-rollup-card .reliability-rollup-label {
+  font-size: var(--font-xs, 11px);
+  color: var(--muted);
+}
+.reliability-rollup-card.tone-good .reliability-rollup-count { color: var(--good); }
+.reliability-rollup-card.tone-warn .reliability-rollup-count { color: var(--warn); }
+.reliability-rollup-card.tone-bad .reliability-rollup-count { color: var(--bad); }
+
+.reliability-item-list {
+  display: grid;
+  gap: 10px;
+}
+
+.reliability-item-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--panel);
+}
+.reliability-item-card.tone-bad { border-left-color: var(--bad); }
+.reliability-item-card.tone-warn { border-left-color: var(--warn); }
+.reliability-item-card.tone-good { border-left-color: var(--good); }
+.reliability-item-card.tone-neutral { border-left-color: var(--line-soft); }
+
+.reliability-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.reliability-item-title-block {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.reliability-item-title {
+  overflow-wrap: break-word;
+}
+.reliability-bucket-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.reliability-stage-tracker {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+}
+.reliability-stage-step {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  gap: 6px;
+  min-width: 0;
+}
+.reliability-stage-step:not(:last-child)::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 2px;
+  margin: 0 4px;
+  background: var(--line-soft);
+}
+.reliability-stage-step.done:not(:last-child)::after {
+  background: var(--good);
+}
+.reliability-stage-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid var(--line-soft);
+  background: var(--panel);
+}
+.reliability-stage-step.done .reliability-stage-dot {
+  border-color: var(--good);
+  background: var(--good);
+}
+.reliability-stage-step.current .reliability-stage-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.reliability-stage-label {
+  font-size: var(--font-xs, 11px);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reliability-stage-step.current .reliability-stage-label {
+  color: var(--text);
+  font-weight: var(--weight-semibold, 700);
+}
+
+.reliability-item-reason {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-sm, 13px);
+}
+
+.reliability-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--font-xs, 11px);
+}
+
+.reliability-item-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.reliability-item-block-btn {
+  color: var(--bad, #e26464);
+  border-color: var(--bad, #e26464);
+}
+
+.reliability-empty-state {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line-soft);
+  border-radius: 8px;
+}
+
+.reliability-pager {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.reliability-pager-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.reliability-pager-pages button {
+  min-width: 32px;
+  min-height: 32px;
+  height: 32px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--font-sm, 12px);
+}
+.reliability-pager-pages button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #0b1720;
+  font-weight: var(--weight-semibold, 700);
+}
+.reliability-pager-gap {
+  padding: 0 4px;
+  color: var(--muted);
+}
+
+/* Narrow viewports: let the stepper's text labels wrap under their dots
+   instead of forcing the card wider than its container. */
+@media (max-width: 640px) {
+  .reliability-stage-tracker {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .reliability-stage-step:not(:last-child)::after {
+    display: none;
+  }
+}

@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -6394,8 +6395,42 @@ def smoke_completed_import_trusted_tpb_lookup_survives_same_target_match():
 
 
 def smoke_direct_import_unit_gate_uses_trusted_tpb_source_evidence():
-    with tempfile.TemporaryDirectory(prefix="inkdrop-tpb-direct-", ignore_cleanup_errors=True) as tmp:
-        root = Path(tmp)
+    # Pin the fixture path instead of letting tempfile name it.
+    # direct_import_destination_unit_gate() scores every component of the
+    # source path -- not just the filename, and with no depth limit -- while
+    # mkdtemp's 8-char suffix is drawn from [a-z0-9_]. When that suffix
+    # happens to spell a bare chapter token, r"(?:^|[\s._-])c[\s._-]*0*
+    # (\d+(?:\.\d+)?)(?![0-9a-z])" matches the temp dir itself: the observed
+    # "inkdrop-tpb-direct-c3_ge1hl" read as chapter 3, contradicted the
+    # trusted TPB issue "1", and quarantined. It needs c/ch + digits closed
+    # by a non-[0-9a-z] character, so roughly 0.1% of runs -- rare enough to
+    # look green for months and still fail a release candidate, which it did
+    # on 2026-08-14 minutes after the same commit passed.
+    #
+    # Same class as the "-chapter-" prefix fix in the one-word-manga-unit
+    # smoke above, but not the same fix: there the literal token lived in the
+    # prefix and sanitizing the prefix was enough. Here the random suffix
+    # supplies the whole token, so there is no prefix to clean -- the path
+    # has to stop being random. The pid keeps concurrent runs of this suite
+    # on one machine from sharing the directory.
+    #
+    # This only hides the test's exposure to it. The gate genuinely judges
+    # unit identity across ancestor directories that have nothing to do with
+    # the release, so a real download under e.g. /downloads/c3_tmp/ would be
+    # wrongly quarantined -- tracked separately; do not treat this pin as
+    # that fix.
+    root = Path(tempfile.gettempdir()) / f"inkdrop-tpb-direct-fixture-{os.getpid()}"
+    # Check each component on its own. The gate's own patterns anchor on
+    # "^" or [\s._-], and a path separator is neither, so testing the joined
+    # string would let a hostile ancestor (a temp root under "/c3_tmp") walk
+    # straight past this guard while still tripping the gate.
+    marker = re.compile(r"(?:^|[\s._-])(?:chapter|ch|c)[\s._-]*0*\d+(?:\.\d+)?(?![0-9a-z])", re.I)
+    poisoned = [part for part in root.parts if marker.search(part)]
+    if poisoned:
+        fail(f"fixture path component parses as a chapter marker, so this smoke cannot prove anything: {poisoned} in {root}")
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True)
+    try:
         source_dir = root / "Goodbye, Eri (2023) (Digital) (1r0n)"
         source_dir.mkdir(parents=True, exist_ok=True)
         source = source_dir / "Goodbye, Eri (2023) (Digital) (1r0n).cbz"
@@ -6448,6 +6483,8 @@ def smoke_direct_import_unit_gate_uses_trusted_tpb_source_evidence():
             non_tpb_gate = inkdrop_state.direct_import_destination_unit_gate(con, queue, dest, raw)
             if not non_tpb_gate or non_tpb_gate.get("reason") != "trusted_issue_missing_source_number":
                 fail(f"non-TPB missing-number source should remain gated: {non_tpb_gate}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def smoke_ready_import_records_threads_issue_title():

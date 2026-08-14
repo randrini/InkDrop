@@ -15,6 +15,14 @@ def require(value, message):
 def main():
     require(registry.validate_value("automation.queue_watchdog_enabled", True) is True, "boolean validates")
     require(registry.validate_value("automation.queue_watchdog_slskd_stale_minutes", "45") == 45, "number coerces")
+    require(registry.validate_value("media_management.minimum_free_space_gb", "0") == 0, "finite zero remains valid")
+    for unsafe in (float("nan"), float("inf"), float("-inf"), "NaN", "Infinity", "-Infinity"):
+        try:
+            registry.validate_value("media_management.minimum_free_space_gb", unsafe)
+        except ValueError as exc:
+            require("finite number" in str(exc), f"non-finite value returned an unclear error: {unsafe!r}")
+        else:
+            raise AssertionError(f"non-finite number should be rejected: {unsafe!r}")
     stall_schema = registry.field_schema("automation.queue_watchdog_slskd_stale_minutes")
     require(
         stall_schema.get("units") == "minutes"
@@ -64,6 +72,14 @@ def main():
                     "description": "test",
                     "source": "runtime",
                 },
+                {
+                    "key": "media_management.minimum_free_space_gb",
+                    "scope": "media_management",
+                    "label": "Minimum Free Space GB",
+                    "value": 10,
+                    "description": "test",
+                    "source": "runtime",
+                },
             ],
         )
         snapshot_rows = {row["key"]: row for row in inkdrop_state.settings_snapshot(db)["settings"]}
@@ -87,6 +103,21 @@ def main():
             policy = inkdrop_state.queue_watchdog_policy(con)
         require(policy["enabled"] is False, "watchdog reads SQLite setting")
         require(policy["slskd_stale_seconds"] == 60 * 60, "watchdog did not consume saved SLSKD threshold")
+        try:
+            inkdrop_state.update_app_setting(db, "media_management.minimum_free_space_gb", "NaN")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("non-finite free-space guard should not be stored")
+        require(
+            inkdrop_state.app_setting(db, "media_management.minimum_free_space_gb")["value"] == 10,
+            "rejected non-finite value changed the stored free-space guard",
+        )
+        inkdrop_state.update_app_setting(db, "media_management.minimum_free_space_gb", "0")
+        require(
+            inkdrop_state.app_setting(db, "media_management.minimum_free_space_gb")["value"] == 0,
+            "explicit finite zero no longer follows the existing free-space contract",
+        )
         try:
             inkdrop_state.update_app_setting(db, "automation.queue_watchdog_enabled", "false")
         except ValueError:

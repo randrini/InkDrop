@@ -625,27 +625,3 @@ def source_worker_plan_from_registry(rows, *, include_blocked=False):
             continue
         plans.append(plan)
     return sorted(plans, key=lambda plan: (plan.get("priority", 100), str(plan.get("display_name") or "").lower(), plan.get("provider_id") or ""))
-
-
-def source_worker_plan_from_settings_snapshot(snapshot, *, include_blocked=False):
-    rows = registry.registry_from_settings_snapshot(snapshot, include_disabled=True)
-    return source_worker_plan_from_registry(rows, include_blocked=include_blocked)
-
-
-def worker_plan_summary(plans):
-    plans = list(plans or [])
-    by_state = {}
-    by_adapter = {}
-    for plan in plans:
-        state = str((plan or {}).get("schedule_state") or "unknown")
-        adapter = str((plan or {}).get("adapter_family") or "unknown")
-        by_state[state] = by_state.get(state, 0) + 1
-        by_adapter[adapter] = by_adapter.get(adapter, 0) + 1
-    return {
-        "total": len(plans),
-        "by_state": dict(sorted(by_state.items())),
-        "by_adapter": dict(sorted(by_adapter.items())),
-        "auto_download": sum(1 for plan in plans if plan.get("emits_download_task")),
-        "manual_or_assist": sum(1 for plan in plans if plan.get("requires_operator")),
-        "evidence_only": sum(1 for plan in plans if plan.get("evidence_only")),
-    }

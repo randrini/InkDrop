@@ -209,11 +209,15 @@ def retire_duplicate_owner_task_preserves_row_and_history():
 def notification_wording_matches_queue_terminality():
     sent = []
 
+    # notify_result() is the seam the typed wrappers dispatch through -- it
+    # reports whether the outcome was durably recorded, not just which
+    # channels were reached. Patching plain notify() here would silently
+    # intercept nothing.
     def fake_notify(db_path, event_type, *, subject, message, **kwargs):
         sent.append({"subject": subject, "message": message})
-        return ["discord"]
+        return {"sent": ["discord"], "settled": True, "recorded": 1, "channels": 1, "reason": None}
 
-    with mock.patch.object(inkdrop_notifications, "notify", side_effect=fake_notify):
+    with mock.patch.object(inkdrop_notifications, "notify_result", side_effect=fake_notify):
         inkdrop_notifications.notify_download_failed(
             "db", series="House of X", issue_label="#2", reason="staged_file_mismatch", terminal=False,
         )

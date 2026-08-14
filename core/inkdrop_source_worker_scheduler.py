@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import time
+import uuid
 
 from core import inkdrop_source_registry
 from core import inkdrop_source_worker_coordinator as coordinator
@@ -92,22 +94,36 @@ PROVIDER_TIMEOUT_RECOVERY_STATES = {
     "running",
 }
 
-TIMEOUT_SIGNAL_TEXT = (
+TIMEOUT_JSON_FLAG_KEYS = {
     "command_timed_out",
-    "command timeout",
-    "connect timeout",
-    "connection timed out",
+    "timed_out",
+    "command_timeout",
     "failed_retry_command_timeout",
     "prowlarr_command_timeout",
     "prowlarr_search_timeout",
-    "read timed out",
-    "search budget exhausted",
+    "search_budget_exhausted",
     "source_started_timeout",
-    "source started but did not report",
-    "timed out",
-    "timed_out",
     "timeoutexpired",
-)
+}
+
+TIMEOUT_JSON_TEXT_KEYS = {
+    "detail",
+    "display_phase",
+    "error",
+    "errors",
+    "exception",
+    "exceptions",
+    "failure_reason",
+    "message",
+    "messages",
+    "outcome",
+    "partial_errors",
+    "reason",
+    "status",
+}
+
+FALSE_JSON_FLAG_TEXT = {"", "0", "false", "no", "none", "null", "off", "ok"}
+TRUE_JSON_FLAG_TEXT = {"1", "on", "true", "yes"}
 
 FETCH_FAILURE_CIRCUIT_REASONS = {
     "external_tool_failed",
@@ -1480,11 +1496,132 @@ def _job_fetch_failure_recovery_health_keys(job):
 
 def _timeout_signal_from_row(row):
     row = _dict(row)
-    combined = " ".join(
-        str(row.get(key) or "").lower()
-        for key in ("status", "display_phase", "failure_reason", "raw_json")
+    if any(
+        _timeout_signal_from_text(row.get(key))
+        for key in ("status", "display_phase", "failure_reason")
+    ):
+        return True
+
+    raw = row.get("raw_json")
+    if isinstance(raw, (dict, list)):
+        return _timeout_signal_from_json_value(raw)
+    raw_text = str(raw or "").strip()
+    if not raw_text:
+        return False
+    try:
+        payload = json.loads(raw_text)
+    except (TypeError, ValueError):
+        # Old source-attempt writers sometimes stored a plain error token or
+        # message instead of JSON.  Preserve those exact legacy signals, but
+        # do not guess at the value of a malformed JSON flag: the text
+        # ``"command_timed_out": false`` was the production false positive
+        # that opened provider circuits.
+        if raw_text.startswith(("{", "[")):
+            return False
+        return _timeout_signal_from_text(raw_text)
+    return _timeout_signal_from_json_value(payload, allow_text=isinstance(payload, str))
+
+
+def _timeout_signal_from_text(value):
+    raw_text = str(value or "").strip().lower()[:4096]
+    if not raw_text:
+        return False
+    # These legacy phrases carry timeout meaning across a conjunction, so
+    # recognize them before bounded clause splitting.
+    normalized_text = re.sub(r"[^a-z0-9]+", " ", raw_text).strip()
+    if (
+        "search budget exhausted" in normalized_text
+        or "source started but did not report" in normalized_text
+    ):
+        return True
+    clauses = re.split(
+        r"(?:[\r\n,;:|.!?]+|\b(?:and(?: then)?|but|then|however|yet|although|though|whereas)\b)",
+        raw_text,
+        maxsplit=32,
     )
-    return any(signal in combined for signal in TIMEOUT_SIGNAL_TEXT)
+    return any(_timeout_signal_from_clause(clause) for clause in clauses)
+
+
+def _timeout_signal_from_clause(value):
+    text = re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
+    if not text:
+        return False
+    # Timeout-looking success/recovery labels and explicit negations are not
+    # failures.  Keep the checks token-aware so words from adjacent fields do
+    # not accidentally form a signal.
+    if re.search(
+        r"\b(?:not|no|never|without)\b(?:\s+[a-z0-9]+){0,4}"
+        r"\s+(?:timeout|time out|timed out)\b",
+        text,
+    ):
+        return False
+    if re.search(
+        r"\b(?:did|does|do|is|are|was|were|has|have|had)\s+not\b"
+        r"(?:\s+[a-z0-9]+){0,4}\s+(?:timeout|time out|timed out)\b",
+        text,
+    ):
+        return False
+    if re.search(
+        r"\b(?:timeout (?:was )?(?:recovered|resolved|cleared)|"
+        r"(?:recovered|resolved|cleared)(?: from)? timeout)\b",
+        text,
+    ):
+        return False
+    tokens = text.split()
+    if "timeout" in tokens or "timeouterror" in tokens or "timeoutexpired" in tokens:
+        return True
+    return any(
+        tokens[index : index + 2] in (["time", "out"], ["timed", "out"])
+        for index in range(max(0, len(tokens) - 1))
+    )
+
+
+def _timeout_json_text_key(key):
+    normalized_key = str(key or "").strip().lower().replace("-", "_")
+    return normalized_key in TIMEOUT_JSON_TEXT_KEYS or normalized_key.endswith(
+        ("_error", "_errors", "_exception", "_message", "_reason", "_status")
+    )
+
+
+def _timeout_signal_from_json_value(value, *, key="", allow_text=False):
+    normalized_key = str(key or "").strip().lower().replace("-", "_")
+    if normalized_key in TIMEOUT_JSON_FLAG_KEYS:
+        if value is True:
+            return True
+        if value is False or value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return False
+        if isinstance(value, str):
+            flag_text = value.strip().lower()
+            if flag_text in FALSE_JSON_FLAG_TEXT:
+                return False
+            if flag_text in TRUE_JSON_FLAG_TEXT:
+                return True
+            return _timeout_signal_from_text(flag_text)
+        return False
+
+    if isinstance(value, dict):
+        return any(
+            _timeout_signal_from_json_value(
+                child,
+                key=child_key,
+                allow_text=allow_text or _timeout_json_text_key(child_key),
+            )
+            for child_key, child in value.items()
+        )
+    if isinstance(value, list):
+        return any(
+            _timeout_signal_from_json_value(child, allow_text=allow_text)
+            for child in value
+        )
+    if isinstance(value, str) and allow_text:
+        return _timeout_signal_from_text(value)
+    return False
+
+
+def _timeout_sql_function_name():
+    return f"inkdrop_source_timeout_signal_{uuid.uuid4().hex}"
 
 
 def provider_timeout_circuit_breakers(
@@ -1525,40 +1662,58 @@ def provider_timeout_circuit_breakers(
             lower(coalesce(status, '')) like '%timeout%'
             or lower(coalesce(display_phase, '')) like '%timeout%'
             or lower(coalesce(failure_reason, '')) like '%timeout%'
-            or lower(coalesce(raw_json, '')) like '%command_timed_out%'
+            or lower(coalesce(raw_json, '')) like '%timeout%'
             or lower(coalesce(raw_json, '')) like '%timed_out%'
-            or lower(coalesce(raw_json, '')) like '%timeoutexpired%'
-            or lower(coalesce(raw_json, '')) like '%command_timeout%'
-            or lower(coalesce(raw_json, '')) like '%prowlarr_search_timeout%'
+            or lower(coalesce(raw_json, '')) like '%timed out%'
+            or lower(coalesce(raw_json, '')) like '%search_budget_exhausted%'
             or lower(coalesce(raw_json, '')) like '%search budget exhausted%'
-            or lower(coalesce(raw_json, '')) like '%source_started_timeout%'
             or lower(coalesce(raw_json, '')) like '%source started but did not report%'
-            or lower(coalesce(raw_json, '')) like '%read timed out%'
-            or lower(coalesce(raw_json, '')) like '%connect timeout%'
         )
     """
     with _borrowed_or_read_con(db_path, con) as attempts_con:
         if not inkdrop_state.table_exists(attempts_con, "source_attempts"):
             return {}
-        rows = [
-            dict(row)
-            for row in attempts_con.execute(
-                f"""
-                select lower(coalesce(nullif(provider_id, ''), nullif(source, ''), nullif(provider, ''), 'unknown')) as provider_key,
-                       coalesce(status, '') as status,
-                       coalesce(display_phase, '') as display_phase,
-                       coalesce(failure_reason, '') as failure_reason,
-                       coalesce(completed_at, started_at, 0) as activity_at,
-                       coalesce(raw_json, '') as raw_json
-                from source_attempts
-                where coalesce(completed_at, started_at, 0) >= ?
-                  and {timeout_sql}
-                order by coalesce(completed_at, started_at, 0) desc, id desc
-                limit ?
-                """,
-                (since, _bounded_limit(limit, default=1000, maximum=5000)),
-            ).fetchall()
-        ]
+        timeout_function_name = _timeout_sql_function_name()
+        attempts_con.create_function(
+            timeout_function_name,
+            4,
+            lambda status, display_phase, failure_reason, raw_json: int(
+                _timeout_signal_from_row(
+                    {
+                        "status": status,
+                        "display_phase": display_phase,
+                        "failure_reason": failure_reason,
+                        "raw_json": raw_json,
+                    }
+                )
+            ),
+            deterministic=True,
+        )
+        try:
+            rows = [
+                dict(row)
+                for row in attempts_con.execute(
+                    f"""
+                    select lower(coalesce(nullif(provider_id, ''), nullif(source, ''), nullif(provider, ''), 'unknown')) as provider_key,
+                           coalesce(status, '') as status,
+                           coalesce(display_phase, '') as display_phase,
+                           coalesce(failure_reason, '') as failure_reason,
+                           coalesce(completed_at, started_at, 0) as activity_at,
+                           coalesce(raw_json, '') as raw_json
+                    from source_attempts
+                    where coalesce(completed_at, started_at, 0) >= ?
+                      and {timeout_sql}
+                      and {timeout_function_name}(
+                            status, display_phase, failure_reason, raw_json
+                          ) = 1
+                    order by coalesce(completed_at, started_at, 0) desc, id desc
+                    limit ?
+                    """,
+                    (since, _bounded_limit(limit, default=1000, maximum=5000)),
+                ).fetchall()
+            ]
+        finally:
+            attempts_con.create_function(timeout_function_name, 4, None)
     buckets = {}
     for row in rows:
         if not _timeout_signal_from_row(row):

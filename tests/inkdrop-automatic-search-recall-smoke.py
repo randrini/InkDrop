@@ -928,10 +928,48 @@ with mock.patch.object(slskd, "now", lambda: frozen_now):
         # Manual search opts out entirely.
         require(slskd.reusable_slskd_search("Vagabond manga", 0) is None,
                 "cooldown 0 must disable reuse")
+
+        # A zero/thin answer is only reused when a caller explicitly opts into
+        # the (separate, shorter) zero-result window -- the 2-arg call above
+        # must keep behaving exactly as before.
+        require(slskd.reusable_slskd_search("Obscure Title", day, 0) is None,
+                "zero-result reuse must stay off unless a window is given")
+        require(slskd.reusable_slskd_search("Obscure Title", day, 3600)["id"] == "old-empty",
+                "an empty prior result should be reused inside its own window")
+        require(slskd.reusable_slskd_search("Injustice Gods Among Us comic", day, 3600)["id"] == "one-peer",
+                "a single-peer prior result should be reused inside its own window")
+        # A rich answer still wins over a zero/thin one even when both windows are open.
+        picked_with_zero_window = slskd.reusable_slskd_search("Love and Rockets", day, day)
+        require(picked_with_zero_window is not None and picked_with_zero_window["id"] == "rich",
+                "a rich answer must never be displaced by opting into the zero-result window")
+        # The zero-result window is its own clock, independent of the rich-result window.
+        require(slskd.reusable_slskd_search("Obscure Title", day, 60) is None,
+                "zero-result reuse must respect its own cooldown window")
     # A history lookup that fails must fall through to a live search, not block.
     with mock.patch.object(slskd, "slskd_get", side_effect=RuntimeError("slskd down")):
         require(slskd.reusable_slskd_search("Vagabond manga", 24 * 3600) is None,
                 "reuse must fail open when history is unavailable")
+
+    # End to end: a zero-result reuse must skip the live search entirely --
+    # no pacing check, no POST /searches -- and hand back an empty result,
+    # not fall through just because the reused response list is empty.
+    with (
+        mock.patch.object(slskd, "slskd_get", side_effect=[
+            [{"id": "old-empty", "searchText": "Obscure Title", "isComplete": True,
+              "fileCount": 0, "responseCount": 0, "startedAt": "2026-08-01T02:54:22Z"}],
+            [],
+        ]),
+        mock.patch.object(slskd, "require_slskd_ready_for_search"),
+        mock.patch.object(slskd, "enforce_slskd_search_pacing") as pacing,
+        mock.patch.object(slskd, "slskd_post") as post,
+    ):
+        result = slskd.slskd_search(
+            "Obscure Title", wait_seconds=1, deadline=frozen_now + 5,
+            reuse_recent_seconds=day, zero_result_reuse_recent_seconds=3600,
+        )
+    require(result == [], f"a reused zero-result answer must come back as an empty list: {result}")
+    require(pacing.call_count == 0, "a reused zero-result answer must never reach the pace limiter")
+    require(post.call_count == 0, "a reused zero-result answer must never fire a live POST /searches")
 
 # Inline provider writes must either hold the scheduled worker lock or defer
 # cleanly. They must never race SQLite and collapse into a zero-attempt failure.

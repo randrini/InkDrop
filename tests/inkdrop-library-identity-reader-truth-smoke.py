@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import tempfile
 import threading
 from pathlib import Path
@@ -218,6 +219,188 @@ with tempfile.TemporaryDirectory(prefix="inkdrop-library-identity-") as tmp:
         db, "series:other", "tmnt journeys", library_type="COMICS", now=3.6
     )
     require(not sequential_collision["ok"] and sequential_collision["reason"] == "canonical_series_folder_collision", sequential_collision)
+
+    # Regression for the folder-identity-drift bug: a series whose earlier issues
+    # already landed under one folder (imported before any canonical_library_identities
+    # row existed for it -- e.g. before a comic's year was known) must not have its
+    # very first lock silently adopt a differently-computed folder while those files
+    # stay behind. The reader (Kavita) tracks by filesystem path, so a folder split
+    # like this makes every relocated issue read as removed-then-added.
+    with inkdrop_state.connect(db) as con:
+        con.execute(
+            "insert into series(id,title,sort_title,media_type,library_root,library_path,created_at,updated_at,raw_json) "
+            "values(?,?,?,?,?,?,?,?,?)",
+            (
+                "series:established-drift", "Established Drift", "established drift", "comic",
+                str(comic_root), str(comic_root / "Established Drift"), 1, 1, "{}",
+            ),
+        )
+        for issue_number in (1, 2, 3):
+            con.execute(
+                "insert into media_files(id,path,normalized_path,media_type,series_id,status,active,first_seen_at,last_seen_at,raw_json) "
+                "values(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    f"media:established-drift:{issue_number}",
+                    str(comic_root / "Established Drift" / f"Established Drift #{issue_number:03d}.cbz"),
+                    str(comic_root / "Established Drift" / f"Established Drift #{issue_number:03d}.cbz"),
+                    "comic", "series:established-drift", "present", 1, 1, 1, "{}",
+                ),
+            )
+        con.commit()
+    established_first = inkdrop_state.persist_series_folder_identity(
+        db, "series:established-drift", "Established Drift (2025)", library_type="comics", now=3.61
+    )
+    require(
+        established_first["ok"] and established_first["series_folder"] == "Established Drift",
+        ("first lock must match where the series' files already are, not the fresh computation", established_first),
+    )
+    with inkdrop_state.connect_read(db) as con:
+        established_row = con.execute(
+            "select review_reason from canonical_library_identities where work_id=?", ("series:established-drift",)
+        ).fetchone()
+    require(
+        established_row["review_reason"] == "locked_to_established_folder_over_fresh_computation",
+        dict(established_row),
+    )
+    established_second = inkdrop_state.persist_series_folder_identity(
+        db, "series:established-drift", "Established Drift (2025)", library_type="comics", now=3.62
+    )
+    require(
+        not established_second["ok"] and established_second["series_folder"] == "Established Drift",
+        ("subsequent imports must keep targeting the established folder, not re-drift", established_second),
+    )
+
+    # A series whose files sit in two equally populated folders gives no evidence
+    # for either one. Reading media_files in whatever order SQLite hands them back
+    # and taking max(count) used to break that tie by row order, and the winner was
+    # written straight to series.library_path -- durable folder authority decided by
+    # a coin flip. Both orders must now reach the same "needs review" answer, and
+    # neither may leave a folder claim behind.
+    # library_path is seeded to a folder that is deliberately not one of the
+    # candidates, so a regression that quietly syncs it to a tied folder shows up
+    # as a changed value rather than hiding behind an accidental match.
+    split_seed_path = comic_root / "Unclaimed Split Path"
+
+    def seed_split_series(work_id, folders, root):
+        with inkdrop_state.connect(db) as con:
+            con.execute(
+                "insert into series(id,title,sort_title,media_type,library_root,library_path,created_at,updated_at,raw_json) "
+                "values(?,?,?,?,?,?,?,?,?)",
+                (work_id, "Split Candidate", "split candidate", "comic", str(root), str(split_seed_path), 1, 1, "{}"),
+            )
+            for index, folder in enumerate(folders):
+                path = f"{Path(root).as_posix()}/{folder}/Split Candidate #{index + 1:03d}.cbz"
+                con.execute(
+                    "insert into media_files(id,path,normalized_path,media_type,series_id,status,active,first_seen_at,last_seen_at,raw_json) "
+                    "values(?,?,?,?,?,?,?,?,?,?)",
+                    (f"media:{work_id}:{index}", path, path, "comic", work_id, "present", 1, 1, 1, "{}"),
+                )
+            con.commit()
+
+    def split_verdict(work_id, root):
+        with inkdrop_state.connect_read(db) as con:
+            return inkdrop_state.established_series_folder_from_media_files(con, work_id, str(root))
+
+    seed_split_series("series:split-forward", ["Split Candidate", "Split Candidate (2025)"], comic_root)
+    seed_split_series("series:split-reverse", ["Split Candidate (2025)", "Split Candidate"], comic_root)
+    forward_verdict = split_verdict("series:split-forward", comic_root)
+    reverse_verdict = split_verdict("series:split-reverse", comic_root)
+    require(
+        forward_verdict == reverse_verdict and forward_verdict["ambiguous"] and not forward_verdict["series_folder"],
+        ("tied folders must produce one order-independent ambiguity verdict", forward_verdict, reverse_verdict),
+    )
+    require(
+        [folder for folder, _count in forward_verdict["candidates"]] == ["Split Candidate", "Split Candidate (2025)"],
+        forward_verdict,
+    )
+    split_claim = inkdrop_state.persist_series_folder_identity(
+        db, "series:split-forward", "Split Candidate (2025)", library_type="comics", now=3.63
+    )
+    reverse_claim = inkdrop_state.persist_series_folder_identity(
+        db, "series:split-reverse", "Split Candidate (2025)", library_type="comics", now=3.63
+    )
+    require(
+        not split_claim["ok"] and split_claim["reason"] == "established_folder_split_requires_review"
+        and split_claim["candidate_folders"] == ["Split Candidate", "Split Candidate (2025)"],
+        split_claim,
+    )
+    require(
+        reverse_claim["reason"] == split_claim["reason"]
+        and reverse_claim["candidate_folders"] == split_claim["candidate_folders"],
+        ("reversed insertion order must not change the verdict", split_claim, reverse_claim),
+    )
+    for work_id in ("series:split-forward", "series:split-reverse"):
+        with inkdrop_state.connect_read(db) as con:
+            split_row = con.execute(
+                "select library_path, library_path_source, raw_json from series where id=?", (work_id,)
+            ).fetchone()
+            claimed = con.execute(
+                "select series_folder from canonical_library_identities where work_id=?", (work_id,)
+            ).fetchone()
+        require(claimed is None, ("an ambiguous split must not claim a canonical folder", work_id, dict(claimed or {})))
+        require(
+            split_row["library_path"] == str(split_seed_path) and not split_row["library_path_source"],
+            ("library_path must survive an ambiguous split untouched", work_id, dict(split_row)),
+        )
+        split_envelope = json.loads(split_row["raw_json"]).get("canonical_library_identity_v1") or {}
+        require(
+            split_envelope.get("split_folder_review_required") is True
+            and "series_folder" not in split_envelope
+            and [entry["series_folder"] for entry in split_envelope["split_folder_candidates"]]
+            == ["Split Candidate", "Split Candidate (2025)"],
+            (work_id, split_envelope),
+        )
+        require(
+            not inkdrop_state.persisted_series_folder_identity(db, work_id),
+            ("no folder may be readable as established after an ambiguous split", work_id),
+        )
+
+    # Candidates are canonicalized before they are counted. Two spellings of one
+    # folder used to count as two folders, which turned a clear majority into a
+    # phantom tie; a '..' hop used to invent a third folder; and a path that walks
+    # back out of the library root used to pass containment on a plain startswith().
+    seed_split_series(
+        "series:split-canonical",
+        ["Canon Folder", "Canon Folder/", "canon folder", "Other/../Canon Folder", "Runner Up", "../outside-root"],
+        comic_root,
+    )
+    canonical_verdict = split_verdict("series:split-canonical", comic_root)
+    require(
+        canonical_verdict["series_folder"] == "Canon Folder" and not canonical_verdict["ambiguous"],
+        ("spelling variants of one folder must not defeat a real majority", canonical_verdict),
+    )
+    require(
+        canonical_verdict["candidates"] == [("Canon Folder", 4), ("Runner Up", 1)],
+        ("paths outside the library root must be excluded, not counted", canonical_verdict),
+    )
+    seed_split_series("series:split-nested", ["Nested/Volume 01", "Nested/Volume 01"], comic_root)
+    require(split_verdict("series:split-nested", comic_root)["series_folder"] == "Nested/Volume 01", "nested folder flattened")
+
+    # A folder reached through a symlink and the folder it points at are one place
+    # on disk, so they must not read as a two-way split. Windows needs elevation to
+    # create a directory symlink, so this control only runs where one can be made.
+    symlink_target = comic_root / "Symlink Target"
+    symlink_target.mkdir()
+    symlink_alias = comic_root / "Symlink Alias"
+    try:
+        symlink_alias.symlink_to(symlink_target, target_is_directory=True)
+        symlink_supported = symlink_alias.is_dir()
+    except (OSError, NotImplementedError):
+        symlink_supported = False
+    if symlink_supported:
+        for folder in ("Symlink Target", "Symlink Alias"):
+            os.makedirs(str(comic_root / folder), exist_ok=True)
+        seed_split_series("series:split-symlink", ["Symlink Target", "Symlink Alias"], comic_root)
+        symlink_verdict = split_verdict("series:split-symlink", comic_root)
+        require(
+            symlink_verdict["series_folder"] == "Symlink Target" and not symlink_verdict["ambiguous"],
+            ("a symlink and its target are one folder, not a split", symlink_verdict),
+        )
+        seed_split_series("series:split-symlink-reverse", ["Symlink Alias", "Symlink Target"], comic_root)
+        require(
+            split_verdict("series:split-symlink-reverse", comic_root) == symlink_verdict,
+            ("symlink collapsing must not depend on row order", symlink_verdict),
+        )
 
     with inkdrop_state.connect(db) as con:
         con.execute(

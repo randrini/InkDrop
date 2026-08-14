@@ -37,6 +37,7 @@ PUBLIC_REPO_EXTRA_PATHS = (
     "deploy/compose.release-gate.network-none.yml",
     "deploy/compose.network.example.yml",
     "docker-compose.yml",
+    "inkdrop-docker-entrypoint.sh",
     "docs/inkdrop/arr-stack-deployment-plan.md",
     "docs/inkdrop/docker-first-install.md",
     "docs/inkdrop/releases/current.json",
@@ -46,6 +47,7 @@ PUBLIC_REPO_EXTRA_PATHS = (
     "inkdrop-slskd-companion-duplicate-identity-smoke.py",
     "inkdrop-slskd-no-kapowarr-identity-smoke.py",
     "inkdrop-import-cache-truthfulness-smoke.py",
+    "inkdrop-manga-companion-removal-authority-smoke.py",
     "inkdrop-manga-volume-satisfies-wanted-chapter-smoke.py",
     "inkdrop-mangadex-content-rating-smoke.py",
     "inkdrop-qbit-auth-smoke.py",
@@ -65,6 +67,7 @@ PUBLIC_REPO_EXTRA_PATHS = (
     "inkdrop-auth-state-preservation-smoke.py",
     "inkdrop-auth-ui-smoke.py",
     "inkdrop-comicvine-optional-scheduler-smoke.py",
+    "inkdrop-cover-proxy-redirect-safety-smoke.py",
     "inkdrop-deferred-sync-smoke.py",
     "inkdrop-diagnostic-artifacts-smoke.py",
     "inkdrop-download-client-routing-smoke.py",
@@ -76,6 +79,7 @@ PUBLIC_REPO_EXTRA_PATHS = (
     "inkdrop-library-adoption-smoke.py",
     "inkdrop-manual-search-prowlarr-repair-smoke.py",
     "inkdrop-manual-search-ui-smoke.py",
+    "inkdrop-notification-delivery-skip-status-smoke.py",
     "inkdrop-notifications-wiring-smoke.py",
     "inkdrop-operational-ui-static-smoke.py",
     "inkdrop-operator-contracts-smoke.py",
@@ -83,6 +87,7 @@ PUBLIC_REPO_EXTRA_PATHS = (
     "inkdrop-provider-queue-filter-evidence-smoke.py",
     "inkdrop-prowlarr-health-smoke.py",
     "inkdrop-prowlarr-durable-credential-redaction-smoke.py",
+    "inkdrop-prowlarr-api-url-normalization-smoke.py",
     "inkdrop-qa-candidate-manifest-smoke.py",
     "inkdrop-series-activity-ui-smoke.py",
     "inkdrop-series-autopilot-cron-lock-smoke.py",
@@ -133,6 +138,9 @@ PUBLIC_REPO_EXTRA_PATHS = (
     "inkdrop-automatic-search-recall-smoke.py",
     "inkdrop-acquisition-funnel-evidence-smoke.py",
     "inkdrop-backup-restore-smoke.py",
+    "inkdrop-backup-archive-import-restore-smoke.py",
+    "inkdrop-backup-restore-decompression-bomb-smoke.py",
+    "inkdrop-backup-archive-resource-exhaustion-smoke.py",
     "inkdrop-settings-backup-restore-smoke.py",
     "inkdrop-settings-backup-browser-smoke.py",
     "inkdrop-manual-review-load-browser-smoke.py",
@@ -210,6 +218,7 @@ PUBLIC_REPO_EXTRA_PATHS = (
     "web/tests/manual-review-load-browser-smoke.js",
     "web/tests/fixtures/download-clients-settings.html",
     "web/tests/download-clients-settings-browser-smoke.js",
+    "tools/inkdrop_build_css.py",
     "tools/inkdrop_compose_deployment_plan.py",
     "tools/inkdrop_config_surface_audit.py",
     "tools/inkdrop_docker_context_manifest.py",
@@ -228,6 +237,13 @@ PUBLIC_REPO_EXTRA_PATHS = (
 
 CURRENT_RELEASE_CONTRACT = "docs/inkdrop/releases/current.json"
 RELEASE_NOTES_ROOT = Path("docs/inkdrop/releases")
+
+# The authored CSS modules that compile into web/static/css/inkdrop.css.
+# Enumerated at export time rather than listed in PUBLIC_REPO_EXTRA_PATHS by
+# name: this directory gains a module whenever a page does (18-pull-list.css
+# and 19-reliability-view.css since 0.1.09), and a by-name list would silently
+# stop shipping the newest one -- which is the exact failure this restores.
+CSS_SOURCE_ROOT = Path("web/static/css/src")
 
 # The README and Compose file that ship publicly are the owner-approved
 # text, not the working tree's own README.md / docker-compose.yml (which
@@ -630,9 +646,27 @@ def is_superseded_release_note(relative, current_note):
     return current_note is None or relative != current_note
 
 
+def css_source_paths():
+    """Authored CSS modules, which the image does not need but the public does.
+
+    815add1a dropped web/static/css/src/ from .dockerignore -- correct on its
+    own terms, the runtime stage only ever reads the compiled bundle. But this
+    export derives from that same Docker context, so the sources silently
+    stopped being published along with it, and the next release would have
+    deleted all seventeen already-public modules. InkDrop ships under GPL-3.0
+    and a generated bundle is not the preferred form for making modifications,
+    so these belong in the export whether or not the image wants them.
+    """
+    root = ROOT / CSS_SOURCE_ROOT
+    if not root.is_dir():
+        return []
+    return [CSS_SOURCE_ROOT / item.name for item in sorted(root.glob("*.css"))]
+
+
 def public_repo_paths():
     paths = set(docker_context_paths())
     paths.update(PUBLIC_REPO_EXTRA_PATHS)
+    paths.update(item.as_posix() for item in css_source_paths())
     dynamic_missing = []
     dynamic_forbidden = []
     current_note = None

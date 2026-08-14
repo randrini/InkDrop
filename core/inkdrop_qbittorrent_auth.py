@@ -51,6 +51,35 @@ _BAN_MARKER = "banned"
 _OK_BODY = "ok."
 _FAIL_BODY = "fails."
 
+_URL_USERINFO_RE = re.compile(r"(://)[^/@\s]+@")
+_URL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s\"'<>]+")
+_LONG_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_\-]{20,}\b")
+
+
+def scrub_diagnostic_text(text, *, max_len=200):
+    """Strip credential-shaped content from text sourced from a download client.
+
+    A qBittorrent (or any other client) endpoint is not a trusted input: its
+    redirect Location header and response bodies can be shaped by whatever is
+    listening at the configured address, deliberately or through
+    misconfiguration (a proxy, a DNS/network-position spoof). Diagnostic text
+    built from that content gets cached and shown back through the API and
+    UI, so it must not be able to carry a real credential or session token
+    along for the ride. Strips URL userinfo (user:pass@), cuts URLs off at
+    their query string/fragment, and redacts any opaque 20+ character token
+    (API keys, session ids, hashes -- never meaningful diagnostic prose).
+    """
+    value = _URL_USERINFO_RE.sub(r"\1", str(text or ""))
+
+    def _cut_url(match):
+        url = match.group(0)
+        cut_points = [i for i in (url.find("?"), url.find("#")) if i != -1]
+        return url[: min(cut_points)] if cut_points else url
+
+    value = _URL_RE.sub(_cut_url, value)
+    value = _LONG_TOKEN_RE.sub("<redacted>", value)
+    return value[:max_len]
+
 
 class QbitAuthError(PermissionError):
     """A qBittorrent auth failure that still knows which failure it was.
@@ -115,8 +144,7 @@ def classify_login_response(status_code, body):
             )
         return (
             "forbidden",
-            "qBittorrent refused the login with 403 Forbidden. "
-            f"It said: {text or 'no explanation'}",
+            "qBittorrent refused the login with 403 Forbidden.",
         )
 
     if status == 401:
@@ -139,7 +167,7 @@ def classify_login_response(status_code, body):
                 "bypass the password for local addresses, so a login that works in a browser on "
                 "the same machine can still fail from InkDrop.",
             )
-        snippet = repr(text[:120]) if text else "an empty body"
+        snippet = repr(scrub_diagnostic_text(text, max_len=80)) if text else "an empty body"
         return (
             "unexpected",
             "qBittorrent's login endpoint answered with something other than a login result "
@@ -149,7 +177,7 @@ def classify_login_response(status_code, body):
 
     return (
         "unexpected",
-        f"qBittorrent's login endpoint answered with HTTP {status}: {text[:120] or 'no body'}",
+        f"qBittorrent's login endpoint answered with HTTP {status}.",
     )
 
 
@@ -212,7 +240,7 @@ def authenticate(
             reason,
             kind=kind,
             status=getattr(response, "status_code", None),
-            body=str(getattr(response, "text", "") or "")[:200],
+            body=scrub_diagnostic_text(getattr(response, "text", ""), max_len=200),
         )
     return {"method": "password", "base_url": base, "logged_in": True}
 

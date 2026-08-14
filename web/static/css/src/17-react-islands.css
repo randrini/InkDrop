@@ -520,9 +520,6 @@
   text-transform: uppercase;
   background: var(--panel-2);
 }
-.history-row {
-  cursor: pointer;
-}
 .history-col-time {
   white-space: nowrap;
   color: var(--muted);
@@ -542,14 +539,30 @@
   width: 28px;
   text-align: right;
 }
+.history-chevron-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  cursor: pointer;
+}
 .history-chevron {
   display: inline-block;
   color: var(--muted);
   font-size: 16px;
   transition: transform .12s ease;
 }
+.history-chevron-btn:hover .history-chevron,
+.history-chevron-btn:focus-visible .history-chevron {
+  color: var(--text);
+}
 .history-chevron.open {
   transform: rotate(90deg);
+}
+.section-workbench-note {
+  grid-column: 1 / -1;
+  margin: 2px 2px 0;
+  color: var(--muted);
 }
 .history-detail-row td {
   padding: 10px 14px 14px;
@@ -727,8 +740,10 @@
     text-transform: uppercase;
   }
   /* History card specifics: the day header row is a section divider, not a
-     card; the chevron column is pointless when the whole card is tappable;
-     the expanded detail row reads as part of its parent card. */
+     card; the expanded detail row reads as part of its parent card. The
+     chevron is the only disclosure control (rows themselves aren't
+     clickable, desktop or mobile), so it must stay visible and tappable
+     here -- keep it right-aligned as its own line rather than hiding it. */
   .history-day-row {
     margin: 0 0 8px;
     padding: 0 2px 4px;
@@ -740,7 +755,8 @@
     content: none;
   }
   .history-col-chevron {
-    display: none !important;
+    width: 100%;
+    text-align: right;
   }
   .history-col-details {
     max-width: none;
@@ -831,6 +847,18 @@
 .mr-row.selected-detail-row {
   background: rgba(114, 210, 255, .07);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.mr-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mr-row-block-btn {
+  color: var(--bad, #e26464);
+  border-color: var(--bad, #e26464);
 }
 
 /* Slimmed download-client-manager empty state: one muted line where a
@@ -1086,6 +1114,7 @@
 .queue-row-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
 }
@@ -1094,6 +1123,12 @@
   color: var(--bad, #e26464);
   font-weight: 700;
   line-height: 1;
+}
+
+.queue-row-block-btn {
+  margin-top: 10px;
+  color: var(--bad, #e26464);
+  border-color: var(--bad, #e26464);
 }
 
 .queue-row-detail {

@@ -525,6 +525,72 @@ def _attempt_send(
     return _finish("failed", error_detail=_redact(result.detail))
 
 
+def notify_result(
+    db_path,
+    event_type,
+    *,
+    subject,
+    message,
+    series_id=None,
+    issue_id=None,
+    occurrence_key=None,
+    urgent=False,
+):
+    """Route one event through every enabled+subscribed channel and report
+    what durably happened. Never raises.
+
+    The returned dict's `settled` flag is the part callers acting on behalf
+    of a source row must respect. It is True only when every enabled channel
+    reached a resolution this call can point at afterwards: a delivery-history
+    row (sent / queued / failed / deduped / filtered / disabled), or the
+    explicit decision that no channel subscribes to this event. It is False
+    when the outcome was never recorded anywhere -- settings/connectors
+    wouldn't load, or a channel's dispatch raised before writing its row.
+
+    That distinction exists because "we tried and nothing was stored" used to
+    be indistinguishable from "nothing needed storing": the caller marked its
+    source row handled either way, so a store-write failure meant a
+    notification with no delivery record and no retryable row behind it --
+    lost, silently, with nothing left to recover from.
+
+    `sent` lists the channel ids the message reached immediately; queued and
+    retried sends aren't counted there since the caller can't know that
+    outcome synchronously.
+    """
+    if db_path is None or event_type not in EVENT_TYPES:
+        # Permanent, not transient: no amount of retrying makes an unknown
+        # event type dispatchable, and blocking a caller's scan cursor on it
+        # forever is worse than refusing it loudly here.
+        logger.error("refusing to dispatch unsupported notification event %r", event_type)
+        return {"sent": [], "settled": True, "recorded": 0, "channels": 0, "reason": "not_dispatchable"}
+    occurrence_key = occurrence_key or _occurrence_key(event_type, series_id, issue_id, subject)
+    try:
+        settings = store.get_settings(db_path)
+        channels = _load_connectors(db_path)
+    except Exception:
+        logger.exception("failed to load notification settings/channels")
+        return {"sent": [], "settled": False, "recorded": 0, "channels": 0, "reason": "settings_unavailable"}
+    sent = []
+    recorded = 0
+    settled = True
+    reason = None
+    for channel in channels:
+        try:
+            delivery = _dispatch_to_channel(
+                db_path, channel, settings, event_type=event_type, subject=subject, message=message,
+                series_id=series_id, issue_id=issue_id, occurrence_key=occurrence_key, urgent=urgent,
+            )
+            if delivery:
+                recorded += 1
+                if delivery.get("status") == "sent":
+                    sent.append(channel["id"])
+        except Exception:
+            logger.exception("notification dispatch to channel %s raised", channel["id"])
+            settled = False
+            reason = "channel_error"
+    return {"sent": sent, "settled": settled, "recorded": recorded, "channels": len(channels), "reason": reason}
+
+
 def notify(
     db_path,
     event_type,
@@ -536,32 +602,12 @@ def notify(
     occurrence_key=None,
     urgent=False,
 ):
-    """Route one event through every enabled+subscribed channel. Never
-    raises -- each channel's outcome is recorded to delivery history
-    regardless of what happens. Returns the list of channel ids the message
-    was actually sent to (immediately; queued/retried sends aren't counted
-    here since the caller can't know that outcome synchronously)."""
-    if db_path is None or event_type not in EVENT_TYPES:
-        return []
-    occurrence_key = occurrence_key or _occurrence_key(event_type, series_id, issue_id, subject)
-    try:
-        settings = store.get_settings(db_path)
-        channels = _load_connectors(db_path)
-    except Exception:
-        logger.exception("failed to load notification settings/channels")
-        return []
-    sent = []
-    for channel in channels:
-        try:
-            delivery = _dispatch_to_channel(
-                db_path, channel, settings, event_type=event_type, subject=subject, message=message,
-                series_id=series_id, issue_id=issue_id, occurrence_key=occurrence_key, urgent=urgent,
-            )
-            if delivery and delivery.get("status") == "sent":
-                sent.append(channel["id"])
-        except Exception:
-            logger.exception("notification dispatch to channel %s raised", channel["id"])
-    return sent
+    """notify_result() for call sites that only care which channels the
+    message reached immediately. Returns that list of channel ids."""
+    return notify_result(
+        db_path, event_type, subject=subject, message=message, series_id=series_id,
+        issue_id=issue_id, occurrence_key=occurrence_key, urgent=urgent,
+    )["sent"]
 
 
 def process_due_retries(db_path, *, now=None, limit=100):
@@ -690,7 +736,7 @@ def notify_wanted_cleared(
     subject = issue_title or (f"#{issue_number}" if issue_number else "")
     headline = " ".join(part for part in (series, subject) if part) or "An item"
     message = f"{headline} has been verified and imported."
-    return notify(
+    return notify_result(
         db_path, "import_verified", subject="InkDrop: Wanted item imported", message=message,
         series_id=series_id, issue_id=issue_id,
         occurrence_key=_occurrence_key("import_verified", series_id or series, issue_id or issue_title or issue_number),
@@ -714,7 +760,7 @@ def notify_manual_review(db_path, *, reason, series=None, source=None, detail=No
         lines.append(_redact(note, 200))
     elif detail:
         lines.append(_redact(detail, 200))
-    return notify(
+    return notify_result(
         db_path, "manual_action_required", subject="InkDrop: Manual review needed", message="\n".join(lines),
         series_id=series_id, issue_id=issue_id,
         occurrence_key=_occurrence_key("manual_action_required", series_id or series, reason, source),
@@ -724,7 +770,7 @@ def notify_manual_review(db_path, *, reason, series=None, source=None, detail=No
 def notify_grabbed(db_path, *, series, issue_label=None, series_id=None, issue_id=None, task_id=None):
     headline = " ".join(part for part in (series, issue_label) if part) or "An item"
     message = f"{headline} was found and grabbed. InkDrop is downloading it now."
-    return notify(
+    return notify_result(
         db_path, "grabbed", subject="InkDrop: Grabbed", message=message,
         series_id=series_id, issue_id=issue_id,
         occurrence_key=_occurrence_key("grabbed", task_id or series_id or series, issue_id or issue_label),
@@ -750,7 +796,7 @@ def notify_download_failed(
         lines = [f"This download attempt for {headline} did not complete. InkDrop will continue with the remaining automatic sources."]
     if reason:
         lines.append(_redact(reason, 200))
-    return notify(
+    return notify_result(
         db_path, "download_failed", subject="InkDrop: Download failed" if terminal else "InkDrop: Download attempt failed",
         message="\n".join(lines),
         series_id=series_id, issue_id=issue_id,
@@ -762,7 +808,7 @@ def notify_health_issue(db_path, *, provider_label, detail=None):
     lines = [f"{provider_label} is having trouble right now."]
     if detail:
         lines.append(_redact(detail, 200))
-    return notify(
+    return notify_result(
         db_path, "health_issue", subject=f"InkDrop: {provider_label} health issue", message="\n".join(lines),
         occurrence_key=_occurrence_key("health_issue", provider_label), urgent=True,
     )
@@ -770,7 +816,7 @@ def notify_health_issue(db_path, *, provider_label, detail=None):
 
 def notify_health_restored(db_path, *, provider_label):
     message = f"{provider_label} is healthy again."
-    return notify(
+    return notify_result(
         db_path, "health_restored", subject=f"InkDrop: {provider_label} restored", message=message,
         occurrence_key=_occurrence_key("health_restored", provider_label),
     )
@@ -780,7 +826,7 @@ def notify_application_update(db_path, *, state, headline, detail=None):
     lines = [headline]
     if detail:
         lines.append(_redact(detail, 300))
-    return notify(
+    return notify_result(
         db_path, "application_update", subject="InkDrop: Update available", message="\n".join(lines),
         occurrence_key=_occurrence_key("application_update", state),
     )

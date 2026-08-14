@@ -13,7 +13,29 @@ import argparse
 import json
 
 
-JOB_NAMES = ("comicvine-scan", "manual-review-noop-resolve", "notification-dispatch")
+JOB_NAMES = (
+    "comicvine-scan",
+    "full-state-sync",
+    "manual-review-noop-resolve",
+    "notification-dispatch",
+)
+
+
+def run_full_state_sync() -> dict:
+    """Run the whole-database sync: source ingest, backfills, cleanup sweeps.
+
+    This used to ride along on the end of comicvine-scan, where it was neither
+    named nor budgeted -- the scan's 300s timeout was killing a 430s pass that
+    had nothing to do with ComicVine. Given here as its own job, its cost is
+    attributed to it and its timeout describes the work it actually does.
+    """
+
+    from core import inkdrop_runtime_config
+    from core import inkdrop_state
+
+    state_dir = inkdrop_runtime_config.state_dir()
+    db_path = inkdrop_runtime_config.state_db_path()
+    return inkdrop_state.sync_state(state_dir, db_path)
 
 
 def run_notification_dispatch() -> dict:
@@ -81,6 +103,10 @@ def run_job(name: str) -> tuple[int, dict]:
     if name == "notification-dispatch":
         result = run_notification_dispatch()
         return 0, result
+
+    if name == "full-state-sync":
+        result = run_full_state_sync()
+        return (0 if result.get("ok") else 1), result
 
     from core import inkdrop_web
 

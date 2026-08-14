@@ -62,6 +62,7 @@ create table if not exists download_client_instances (
     path_mappings_json text not null default '[]',
     settings_json text not null default '{}',
     secret_refs_json text not null default '{}',
+    auth_method text not null default '',
     revision integer not null default 1,
     source text not null default 'user',
     created_at real not null,
@@ -98,6 +99,15 @@ create table if not exists download_client_instance_migrations (
 
 def ensure_schema(con):
     con.executescript(SCHEMA_SQL)
+    # "create table if not exists" above only covers a fresh database --
+    # an install from before auth_method existed needs the column added to
+    # its already-created table. Existing rows default to '' (unknown),
+    # which the exclusivity enforcement below deliberately leaves alone
+    # rather than guessing which of an already-dual-credential row's secrets
+    # to delete; see PASS32-CONFIG-P2-01.
+    columns = {row[1] for row in con.execute("pragma table_info(download_client_instances)")}
+    if "auth_method" not in columns:
+        con.execute("alter table download_client_instances add column auth_method text not null default ''")
     return True
 
 
@@ -149,6 +159,26 @@ def _schema_for(client_type, schema_resolver=None):
         if resolved is not None:
             return dict(resolved)
     return dict(DEFAULT_TYPE_SCHEMAS.get(client_type) or {})
+
+
+def _exclusive_secret_group(schema):
+    """Secret fields that are alternatives, not a set (password vs api_key).
+
+    required_secret_fields_any already means "at least one of these" -- when
+    there's more than one field in that group, at most one of them may ever
+    be configured at a time too, or auth silently picks whichever one a
+    consumer's code happens to check first (PASS32-CONFIG-P2-01).
+    """
+    group = list((schema or {}).get("required_secret_fields_any") or [])
+    return group if len(group) > 1 else []
+
+
+def exclusive_secret_group_for_type(client_type, schema_resolver=None):
+    """Public wrapper for callers outside this module (routing's own secret
+    resolution path materialize_instance_settings() must apply the same
+    auth_method filtering adapter_settings() does, not just the Test-button
+    path -- see PASS32-CONFIG-P2-01)."""
+    return _exclusive_secret_group(_schema_for(client_type, schema_resolver=schema_resolver))
 
 
 def _validate_url(value):
@@ -334,8 +364,14 @@ def _normalize_candidate(payload, current=None, *, schema_resolver=None, path_va
         "path_mappings": normalize_path_mappings(payload.get("path_mappings", current.get("path_mappings")), path_validator=path_validator),
         "settings": _nonsecret_settings(payload.get("settings", current.get("settings"))),
         "source": _clean_scalar(current.get("source") or payload.get("source") or "user", maximum=32),
+        "auth_method": _clean_scalar(payload.get("auth_method", current.get("auth_method")), maximum=32).lower(),
         "schema": schema,
     }
+    group = _exclusive_secret_group(schema)
+    if candidate["auth_method"] and group and candidate["auth_method"] not in group:
+        raise ValueError(f"auth_method must be one of {', '.join(group)}")
+    if candidate["auth_method"] and not group:
+        raise ValueError(f"{client_type} does not support choosing an auth_method")
     return candidate
 
 
@@ -382,6 +418,35 @@ def _secret_plan(payload, existing_refs, schema):
     if unknown:
         raise ValueError(f"unsupported secret fields: {', '.join(sorted(unknown))}")
     return existing, supplied, clear
+
+
+def _enforce_exclusive_secret_group(candidate, new_refs, supplied, old_refs_to_gc):
+    """Retire the other credential the moment one in the group is chosen.
+
+    Supplying a new value for one field of an exclusive group (password vs
+    api_key) picks that field as auth_method and, in the SAME transaction,
+    clears any other group field's ref -- so a rotation always takes effect
+    instead of leaving both stored and letting whichever consumer code
+    happens to check first decide, silently (PASS32-CONFIG-P2-01). A row
+    that already had auth_method set (from a prior save) keeps it when
+    neither field is being touched now. A pre-existing row where neither
+    ever happened (auth_method still '') is left exactly as it was --
+    nothing here deletes a stored secret nobody asked to replace.
+    """
+    group = _exclusive_secret_group(candidate["schema"])
+    if not group:
+        return
+    supplied_in_group = [field for field in group if str(supplied.get(field) or "").strip()]
+    if len(supplied_in_group) > 1:
+        raise ValueError(f"only one of {', '.join(group)} can be configured at a time")
+    effective_method = supplied_in_group[0] if supplied_in_group else candidate["auth_method"]
+    if not effective_method:
+        return
+    for field in group:
+        if field != effective_method and new_refs.get(field):
+            old_refs_to_gc.append(new_refs[field])
+            new_refs.pop(field, None)
+    candidate["auth_method"] = effective_method
 
 
 def _row_private(row):
@@ -440,6 +505,7 @@ def _public(item, mappings=None, secret_root=None):
         "download_paths": dict(item.get("download_paths") or {}),
         "path_mappings": list(item.get("path_mappings") or []),
         "settings": dict(item.get("settings") or {}),
+        "auth_method": item.get("auth_method") or "",
         "secret_fields": {
             key: _secret_field_status(reference, secret_root=secret_root)
             for key, reference in sorted(secret_refs.items())
@@ -512,6 +578,7 @@ def create_instance(
         raise ValueError("cannot clear an unset secret while creating a client")
     new_refs = dict(existing_refs)
     created_refs = []
+    old_refs_to_gc = []
     try:
         for field, value in supplied.items():
             if str(value or "").strip() == "":
@@ -519,6 +586,7 @@ def create_instance(
             result = inkdrop_secret_store.write_secret(value, root=secret_root)
             new_refs[field] = result["reference"]
             created_refs.append(result["reference"])
+        _enforce_exclusive_secret_group(candidate, new_refs, supplied, old_refs_to_gc)
         _validate_ready(candidate, {field: bool(value) for field, value in new_refs.items()})
         protocols = candidate["schema"].get("protocols") or []
         mappings = _normalize_provider_mappings(payload.get("provider_mappings"), protocols)
@@ -530,13 +598,14 @@ def create_instance(
                 """insert into download_client_instances(
                     id,name,name_key,client_type,enabled,priority,base_url,username,category,download_path,
                     categories_json,download_paths_json,path_mappings_json,settings_json,secret_refs_json,
-                    revision,source,created_at,updated_at,deleted_at
-                ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,null)""",
+                    auth_method,revision,source,created_at,updated_at,deleted_at
+                ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,null)""",
                 (
                     candidate["id"], candidate["name"], candidate["name_key"], candidate["client_type"], int(candidate["enabled"]),
                     candidate["priority"], candidate["base_url"] or None, candidate["username"] or None, candidate["category"] or None,
                     candidate["download_path"] or None, _dump(candidate["categories"]), _dump(candidate["download_paths"]),
-                    _dump(candidate["path_mappings"]), _dump(candidate["settings"]), _dump(new_refs), 1, candidate["source"], now, now,
+                    _dump(candidate["path_mappings"]), _dump(candidate["settings"]), _dump(new_refs), candidate["auth_method"],
+                    1, candidate["source"], now, now,
                 ),
             )
             _write_mappings(con, candidate["id"], mappings, now)
@@ -613,6 +682,7 @@ def update_instance(
             if new_refs.get(field):
                 old_refs_to_gc.append(new_refs[field])
             new_refs.pop(field, None)
+        _enforce_exclusive_secret_group(candidate, new_refs, supplied, old_refs_to_gc)
         _validate_ready(candidate, {field: bool(value) for field, value in new_refs.items()})
         protocols = candidate["schema"].get("protocols") or []
         mappings = _normalize_provider_mappings(payload.get("provider_mappings", current_mappings), protocols)
@@ -628,12 +698,12 @@ def update_instance(
                 """update download_client_instances set
                     name=?,name_key=?,client_type=?,enabled=?,priority=?,base_url=?,username=?,category=?,download_path=?,
                     categories_json=?,download_paths_json=?,path_mappings_json=?,settings_json=?,secret_refs_json=?,
-                    revision=?,source='user',updated_at=? where id=? and revision=? and deleted_at is null""",
+                    auth_method=?,revision=?,source='user',updated_at=? where id=? and revision=? and deleted_at is null""",
                 (
                     candidate["name"], candidate["name_key"], candidate["client_type"], int(candidate["enabled"]), candidate["priority"],
                     candidate["base_url"] or None, candidate["username"] or None, candidate["category"] or None, candidate["download_path"] or None,
                     _dump(candidate["categories"]), _dump(candidate["download_paths"]), _dump(candidate["path_mappings"]),
-                    _dump(candidate["settings"]), _dump(new_refs), next_revision, now, instance_id, int(expected_revision),
+                    _dump(candidate["settings"]), _dump(new_refs), candidate["auth_method"], next_revision, now, instance_id, int(expected_revision),
                 ),
             )
             if con.total_changes < 1:
@@ -720,8 +790,21 @@ def adapter_settings(db_path, instance_id, *, secret_root=None):
         "category": item.get("category") or "", "download_path": item.get("download_path") or "",
         "path_mappings": list(item.get("path_mappings") or []), **dict(item.get("settings") or {}),
     }
-    for field, reference in dict(item.get("secret_refs") or {}).items():
+    secret_refs = dict(item.get("secret_refs") or {})
+    auth_method = str(item.get("auth_method") or "").strip()
+    if auth_method:
+        # A row saved before this fix (or otherwise never explicitly given
+        # an auth_method) still gets every stored secret resolved below,
+        # unchanged -- but once a method is chosen, the OTHER credential
+        # must never even reach the adapter, or password-vs-api_key
+        # precedence is right back to being an implicit per-caller guess
+        # (PASS32-CONFIG-P2-01).
+        group = _exclusive_secret_group(_schema_for(item["client_type"]))
+        if auth_method in group:
+            secret_refs = {field: ref for field, ref in secret_refs.items() if field not in group or field == auth_method}
+    for field, reference in secret_refs.items():
         resolved[field] = inkdrop_secret_store.read_secret(reference, root=secret_root)
+    resolved["auth_method"] = auth_method
     return resolved
 
 

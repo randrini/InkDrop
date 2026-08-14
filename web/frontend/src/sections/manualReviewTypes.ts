@@ -7,6 +7,7 @@
 export type ManualReviewRow = {
   id: string;
   review_id?: string;
+  revision?: number;
   series?: string;
   issue_number?: string;
   state?: string;
@@ -18,11 +19,24 @@ export type ManualReviewRow = {
   activity_summary?: string;
   current_source?: string;
   source?: string;
+  // Present only on review_exceptions-origin rows (queue_rows()-origin rows
+  // never set it) -- the one reliable signal that `id` is a review_exceptions
+  // id, not a queue_items id. See queueIdFor() in ManualReview.tsx: RECOVERY-
+  // P1-02 was exactly this -- an action button assuming `id` was always a
+  // queue id and silently 404ing for rows sourced from review_exceptions.
+  origin?: string;
   reason?: string;
   review_reason?: string;
   manual_source_stage?: string;
   manual_review_actionable?: boolean;
   manual_review_parked?: boolean;
+  linked_entities?: {
+    queue_id?: string;
+    wanted_id?: string;
+    series_id?: string;
+    issue_id?: string;
+    review_id?: string;
+  };
 };
 
 export type StateViewFilter = {

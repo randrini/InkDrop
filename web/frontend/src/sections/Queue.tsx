@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { request, InkDropApiError } from "../api";
 import { useRowActions } from "../rowActions";
-import type { QueueRow, QueueRowDetail, QueueTransfer, QueueViewPayload, QueueRunResult, StateViewFilter } from "./queueTypes";
+import type { QueueRow, QueueRowDetail, QueueTransfer, QueueViewPayload, QueueRunResult, QueueBlockResult, StateViewFilter } from "./queueTypes";
 
 const PAGE_SIZE = 80;
 
@@ -88,7 +88,15 @@ function formatDuration(seconds: number): string {
 // A bar renders ONLY when the downloader reported a real percentage
 // (progress_kind "determinate"). Stages with no meaningful percent -- peer
 // waits, source ladder waits -- keep their status text and no bar.
-function transferBar(transfer: QueueTransfer | undefined) {
+//
+// `labelId` points at the row's own visible title element. Without it every
+// bar on the page exposed the same empty accessible name and nothing but
+// 0/100/N: with several transfers running at once, assistive technology
+// announced a series of anonymous, indistinguishable progress bars. The
+// percent, byte counts, rate, ETA and stalled marker were rendered as
+// unassociated sibling text, so none of it reached the bar either -- hence
+// aria-valuetext carrying the same facts the sighted user reads.
+function transferBar(transfer: QueueTransfer | undefined, labelId: string) {
   if (!transfer || transfer.progress_kind !== "determinate") return null;
   const percent = Number(transfer.percent_complete);
   if (!Number.isFinite(percent)) return null;
@@ -107,9 +115,27 @@ function transferBar(transfer: QueueTransfer | undefined) {
   }
   if (!done && Number.isFinite(rate) && rate > 0) bits.push(`${formatBytes(rate)}/s`);
   if (!done && Number.isFinite(eta) && eta > 0) bits.push(`${formatDuration(eta)} left`);
+  // Same facts as the visible meta line, minus the check glyph and with
+  // comma separation so a screen reader reads it as a sentence rather than
+  // as punctuation.
+  const valueText = [
+    done ? "Transfer complete" : `${Math.round(percent)}%`,
+    ...bits,
+    transfer.stalled && !done ? "stalled" : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
   return (
     <div className={`queue-progress ${done ? "done" : ""} ${transfer.stalled ? "stalled" : ""}`.trim()}>
-      <div className="queue-progress-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100}>
+      <div
+        className="queue-progress-track"
+        role="progressbar"
+        aria-labelledby={labelId}
+        aria-valuenow={Math.round(percent)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuetext={valueText}
+      >
         <div className="queue-progress-fill" style={{ width: `${Math.max(0, Math.min(100, percent))}%` }} />
       </div>
       <span className="queue-progress-meta">
@@ -179,6 +205,7 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<QueueRowDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const { pendingIds, doneIds, actionError, clearActionError, runRowAction } = useRowActions(() => loadPage(offset, queueFilter, { quiet: true }));
   const refreshTimer = useRef<number>(0);
 
@@ -251,6 +278,15 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
   // import records the thin table shape deliberately omits.
   async function toggleDetail(row: QueueRow) {
     if (detailId === row.id) {
+      // A second click while the first click's fetch is still in flight used
+      // to collapse the row immediately -- setDetailId(row.id) commits (and
+      // re-renders) well before the request resolves, so a normal-speed
+      // double-click reliably lands here before the user ever sees the
+      // loading state or the data, and the eventual setDetail(full) below is
+      // silently discarded by the detailId===row.id render guard. Ignore the
+      // toggle-closed while its own fetch hasn't finished yet; once it has
+      // (success or error), a click here still closes it as expected.
+      if (detailLoading) return;
       setDetailId(null);
       setDetail(null);
       setDetailError(null);
@@ -259,6 +295,7 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
     setDetailId(row.id);
     setDetail(null);
     setDetailError(null);
+    setDetailLoading(true);
     try {
       const data = await request<{ ok: boolean; view: { rows?: QueueRowDetail[] } }>(
         `/api/inkdrop-state/queue?queue_id=${encodeURIComponent(row.id)}&summary=compact&limit=1`,
@@ -268,6 +305,8 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
       setDetail(full);
     } catch (cause) {
       setDetailError(cause instanceof InkDropApiError ? cause.message : "Could not load details.");
+    } finally {
+      setDetailLoading(false);
     }
   }
 
@@ -292,6 +331,60 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
         body: { id: row.id, revision: row.revision },
       });
       if (!data.ok) throw new InkDropApiError("Could not retry this queue row.", { status: 200, code: "queue_run_failed" });
+    });
+  }
+
+  // Excludes whichever source(s) most recently failed for this exact item --
+  // server-computed from source_attempts, not user-picked -- so this stays a
+  // one-click action like Retry/Remove instead of asking the user to diagnose
+  // which provider is at fault.
+  function runRetryNewSource(row: QueueRow) {
+    void runRowAction(row.id, rowTitle(row), "Queued", async () => {
+      const data = await request<QueueRunResult>("/api/inkdrop-state/queue/retry-new-source", {
+        method: "POST",
+        body: { id: row.id, revision: row.revision },
+      });
+      if (!data.ok) {
+        const reason = data.result?.reason;
+        throw new InkDropApiError(
+          reason === "no_alternate_source_available"
+            ? "No alternate source is configured for this item -- every source already failed."
+            : "Could not retry with another source.",
+          { status: 200, code: "queue_retry_new_source_failed" },
+        );
+      }
+    });
+  }
+
+  // Idempotent by design (reopen_stuck_import checks proof before touching
+  // anything), so it's safe to expose broadly on importing/verified rows
+  // without risking a redundant re-download of a file that's already fine.
+  function runReopenImport(row: QueueRow) {
+    void runRowAction(row.id, rowTitle(row), "Reopened", async () => {
+      const data = await request<QueueRunResult>("/api/inkdrop-state/queue/reopen-import", {
+        method: "POST",
+        body: { id: row.id, revision: row.revision },
+      });
+      if (!data.ok) throw new InkDropApiError("Could not reopen this import.", { status: 200, code: "queue_reopen_import_failed" });
+    });
+  }
+
+  function blockCandidate(row: QueueRow, sourceAttemptId: string | undefined) {
+    if (!window.confirm(`Permanently block this release for ${rowTitle(row)}? InkDrop will never offer it again for this issue.`)) return;
+    void runRowAction(row.id, rowTitle(row), "Blocked", async () => {
+      const data = await request<QueueBlockResult>("/api/inkdrop-state/source-memory/block", {
+        method: "POST",
+        body: { id: row.id, revision: row.revision, source_attempt_id: sourceAttemptId, retry: true },
+      });
+      if (!data.ok) {
+        const reason = data.result?.reason;
+        throw new InkDropApiError(
+          reason === "no_candidate_to_block" ? "No recent candidate is on record for this row to block." : "Could not block this release.",
+          { status: 200, code: "queue_block_candidate_failed" },
+        );
+      }
+      setDetailId(null);
+      setDetail(null);
     });
   }
 
@@ -359,12 +452,19 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
           </button>
           {!collapsed.has(group.key) && (
             <ul className="queue-row-list">
-              {group.rows.map((row) => {
+              {group.rows.map((row, rowIndex) => {
                 const canAct = Boolean(row.id);
                 const actionLabel = row.state === "downloading" || row.state === "importing" ? "Refresh" : "Retry";
+                const canRetryNewSource = canAct && group.key === "attention";
+                const canReopenImport = canAct && (group.key === "importing" || group.key === "attention");
                 const source = sourceLabel(row);
                 const next = nextActionText(row);
-                const bar = transferBar(row.transfer);
+                // The row's visible title is what names its progress bar.
+                // row.id is normally the queue id, but a row without one
+                // still has to get a document-unique id here or two bars
+                // would collide on the same label.
+                const titleId = `queue-row-title-${row.id || `${group.key}-${rowIndex}`}`;
+                const bar = transferBar(row.transfer, titleId);
                 return (
                   <li key={row.id} className="queue-row">
                     {row.image ? (
@@ -374,7 +474,7 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
                     )}
                     <div className="queue-row-main">
                       <div className="queue-row-title-line">
-                        <strong>{rowTitle(row)}</strong>
+                        <strong id={titleId}>{rowTitle(row)}</strong>
                         {row.media_type && <span className="queue-row-format">{String(row.media_type).toUpperCase()}</span>}
                       </div>
                       <div className="queue-row-status-line">
@@ -398,14 +498,35 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
                           {pendingIds.has(row.id) ? "Working…" : doneIds.get(row.id) || actionLabel}
                         </button>
                       )}
+                      {canRetryNewSource && (
+                        <button
+                          type="button"
+                          disabled={pendingIds.has(row.id) || doneIds.has(row.id)}
+                          onClick={() => runRetryNewSource(row)}
+                          title="Retry, skipping whichever source(s) most recently failed for this item"
+                        >
+                          {pendingIds.has(row.id) ? "Working…" : doneIds.get(row.id) || "Try another source"}
+                        </button>
+                      )}
+                      {canReopenImport && (
+                        <button
+                          type="button"
+                          disabled={pendingIds.has(row.id) || doneIds.has(row.id)}
+                          onClick={() => runReopenImport(row)}
+                          title="Re-check this import; only changes anything if it's genuinely stuck"
+                        >
+                          {pendingIds.has(row.id) ? "Working…" : doneIds.get(row.id) || "Reopen import"}
+                        </button>
+                      )}
                       {canAct && (
                         <button
                           type="button"
                           aria-expanded={detailId === row.id}
+                          disabled={detailId === row.id && detailLoading}
                           onClick={() => void toggleDetail(row)}
                           title="Show what InkDrop tracks for this row"
                         >
-                          Details
+                          {detailId === row.id && detailLoading ? "Loading…" : "Details"}
                         </button>
                       )}
                       {canAct && (
@@ -435,6 +556,17 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
                             ))}
                             {detailFields(detail).length === 0 && <p className="queue-row-detail-loading">Nothing extra is tracked for this row yet.</p>}
                           </dl>
+                        )}
+                        {detail && detail.last_attempt?.source_attempt_id && (
+                          <button
+                            type="button"
+                            className="queue-row-block-btn"
+                            disabled={pendingIds.has(row.id) || doneIds.has(row.id)}
+                            onClick={() => blockCandidate(row, detail.last_attempt?.source_attempt_id)}
+                            title="Permanently reject this release so InkDrop stops offering it for this issue"
+                          >
+                            Block this release
+                          </button>
                         )}
                       </div>
                     )}

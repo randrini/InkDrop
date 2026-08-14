@@ -1,20 +1,20 @@
 {
-  "file_count": 345,
+  "file_count": 363,
   "files": [
     {
       "path": ".dockerignore",
-      "sha256": "9027efd4b9c68027420a9e23400c87f49d91f5c37bb18fea53af4e3b57b28fd1",
-      "size_bytes": 6668
+      "sha256": "2a78d706771200356cdf0fb73b375365b73bb5f6cbcf2c58b442bed71586f4ba",
+      "size_bytes": 7127
     },
     {
       "path": ".env.example",
-      "sha256": "25d450c8890e46689354418a57bc3ad92578ec28f0ff1733805c798c6a19f18d",
-      "size_bytes": 8766
+      "sha256": "5f997bbd947cb5ffc5e51b8d32ff059a437e830ea1fe6917684b7ddd2c2532fe",
+      "size_bytes": 9255
     },
     {
       "path": ".github/workflows/inkdrop-public-release.yml",
-      "sha256": "17c5aef4b50a9902ecd55a5b6279624354c6ae151e542a48f694d06f14326c6c",
-      "size_bytes": 35305
+      "sha256": "0cdc271428400f1ae3cb7ab29e13e099ec80be7572ed7dc1f847bb4110cde426",
+      "size_bytes": 35862
     },
     {
       "path": ".gitignore",
@@ -23,8 +23,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "1819f2723aeb8c260d70d36fa2af1ef9a8f2a5069a72428fc3fe4e939fba5b91",
-      "size_bytes": 3807
+      "sha256": "a4100d35717287b267dde2c62c94c4b0a6fc25e62419aaa6ef46f065b3f80703",
+      "size_bytes": 4358
     },
     {
       "path": "LICENSE",
@@ -43,533 +43,548 @@
     },
     {
       "path": "core/inkdrop_acquire.py",
-      "sha256": "90b9b46a863320f62604928c6cc5c1ae7bde162e8aee7a5d7ec6f2d0bf6f1824",
-      "size_bytes": 108577
+      "sha256": "be91f1411081b81c34738a644eb68d84c8e9a53edf5001d4f328abc796943cbd",
+      "size_bytes": 107873
     },
     {
       "path": "core/inkdrop_acquire_adapter.py",
-      "sha256": "63ca0eb88ebd60443cd6f4546560634bc7e3ddd799a8fd34538cf817f08cfddc",
-      "size_bytes": 1914
+      "sha256": "d05552b02de1768c361097d471eb54eec82c2027f2c8089be69c1787b50d65f1",
+      "size_bytes": 1849
     },
     {
       "path": "core/inkdrop_acquisition_funnel.py",
-      "sha256": "171a83c997d983558838aeccd7a141cc8874cd88e56b0f1804ff9ab0c0dc6730",
-      "size_bytes": 67053
+      "sha256": "5254aca388feca1f9800a75cbf34cef1c89907b1bd8ea372232a1bcf2a52f24a",
+      "size_bytes": 65916
     },
     {
       "path": "core/inkdrop_activity.py",
-      "sha256": "4b49707b493320ff3e88aa4ca4b13aa73ec4dca8c72048b1d87f6cb5e4ae985e",
-      "size_bytes": 31791
+      "sha256": "5ecec67454d4dc108486d4423027dbbbb95f48673e8b0cea81c587e8922b1afa",
+      "size_bytes": 31124
     },
     {
       "path": "core/inkdrop_archive_conversion.py",
-      "sha256": "151d54444da2afd1c323431c0a6057da84316d876017c4fe1d2c676c502bedb1",
-      "size_bytes": 41553
+      "sha256": "d66603c40f64ac33de410da1bf6ac7cd8e267d96cc7109d9c63ea3994e7ac250",
+      "size_bytes": 40938
     },
     {
       "path": "core/inkdrop_artifact_acceptance.py",
-      "sha256": "ccff10d8245c7574011aa59c937b7793ffb6b2e7c05d3360d5650306d60972bf",
-      "size_bytes": 67976
+      "sha256": "1446171e6b7fdfe2ac27c05816f9293eb34f6e36d365b2d35e89d3e4b91ba1c4",
+      "size_bytes": 66387
     },
     {
       "path": "core/inkdrop_auth.py",
-      "sha256": "a8bd99aa3b6532bdd5a795d417faeff27564966440cda233405a1809e446864c",
-      "size_bytes": 70153
+      "sha256": "e0522c3531beb25492c32d6f1a3a65c94422383110b2da86ace72f48f89d0a5f",
+      "size_bytes": 68693
     },
     {
       "path": "core/inkdrop_auth_cli.py",
-      "sha256": "07bf769e5a242916b484332310a0110b651928a604870fe7928488729da1003b",
-      "size_bytes": 2006
+      "sha256": "371621acac6d8e034d8a4e334876f2f898e093a4899c361890ea9c78af704110",
+      "size_bytes": 1958
     },
     {
       "path": "core/inkdrop_auth_contracts.py",
-      "sha256": "0f17f8414541a88b12dc7c1d9c0d259f8dfe9657f3b487cf2021eeb0b5129241",
-      "size_bytes": 11335
+      "sha256": "f53c5340a2e0878ab6f28445ac5ec98626e52161f472c6a7926f2e2715a796b8",
+      "size_bytes": 12215
     },
     {
       "path": "core/inkdrop_backup_restore.py",
-      "sha256": "ee1e377dd13f6804f4d1755e949c4ce5dd7fd1cdfb2cf01b7a1338f42236bc29",
-      "size_bytes": 64273
+      "sha256": "c8c378181a6b099c25b0de5a60f8a8bea54868044386346b0144d5d0ed8cfcfb",
+      "size_bytes": 113641
     },
     {
       "path": "core/inkdrop_bencode.py",
-      "sha256": "35316f52534cb6fd80a6553a10312cec51bdb2d976c9dde61a17e739756748a2",
-      "size_bytes": 2945
+      "sha256": "00124ef46b32596c2a21b2f44d77bad9d3ac9323045475c4d189ef5c5dc61222",
+      "size_bytes": 2860
     },
     {
       "path": "core/inkdrop_candidate_matching.py",
-      "sha256": "980f77fef0fde6074c157ec41c935a11c4e043bbf5577c7b37222ca5c592209b",
-      "size_bytes": 71545
+      "sha256": "0b462788741727a39c62eeae4db0d74444bf55b8dcdc42530f226decce777242",
+      "size_bytes": 74625
     },
     {
       "path": "core/inkdrop_client_status.py",
-      "sha256": "48bc03eaa9340cc0d74d329526a58ae36dc38fabc4b6308a65f8b53b7f8efcae",
-      "size_bytes": 8089
+      "sha256": "fa82fa35d7c5af9d36d213db3e8328edfcdb8d0cfe69d1b387d19602dbd13036",
+      "size_bytes": 7917
+    },
+    {
+      "path": "core/inkdrop_cloudflare_bypass_proxy.py",
+      "sha256": "1353d8579f56836fde26110cb1a551f12c0ddf5b16b01d2be4239f45578328f0",
+      "size_bytes": 14060
     },
     {
       "path": "core/inkdrop_comicinfo_publisher_backfill.py",
-      "sha256": "aa1edf2514a3da16cb49d3db094a27af9347fe5d8f87b6e911223b5e4c27d3bb",
-      "size_bytes": 10584
+      "sha256": "fd55b20f33c1c6b9d959959c086a8f041bce30c1c6067966d218375dbc880c87",
+      "size_bytes": 10330
     },
     {
       "path": "core/inkdrop_comicscodes_discovery.py",
-      "sha256": "eb84e0019935bd335f20539e91e1a010893f8ada7975ee480561e79890545c19",
-      "size_bytes": 32254
+      "sha256": "d9bddd1824cd61c3fde44691b7720529314d65fac42e2a489fc6f4cf5f44b103",
+      "size_bytes": 33097
     },
     {
       "path": "core/inkdrop_completed_import.py",
-      "sha256": "1cf7f50ea54f6bf6b806ec8c9f7a0071a1832f46aa70fcd91260096a63e3ce2c",
-      "size_bytes": 440109
+      "sha256": "be7f80bed044fd5f3cd69a42226ec617949f4b9a56f84f82277977b253140665",
+      "size_bytes": 445717
     },
     {
       "path": "core/inkdrop_container_healthcheck.py",
-      "sha256": "863025c631a5c6108cbe22860ff0653bfc39838d8a807aae1a79003382232dde",
-      "size_bytes": 11990
+      "sha256": "b0a2ece6cf84556d96f5b0e2ea9088bb9abf25663ba2f238b89b25fffee1dcb6",
+      "size_bytes": 11684
     },
     {
       "path": "core/inkdrop_container_scheduler.py",
-      "sha256": "b673e0724f075d28d60d3237db58432cdb0e7a0a34804bfa0d4efbdd431114ec",
-      "size_bytes": 37158
+      "sha256": "8f8a6888eeb8e769d746ab8e58e40314bb9bf1e3b4e57ff9d8d0fa217588d857",
+      "size_bytes": 40952
     },
     {
       "path": "core/inkdrop_container_start.py",
-      "sha256": "8d14f8f89b07c6962b05f59bfb8ea97494b8119cca5a58fdf0a0fd8db714d132",
-      "size_bytes": 5141
+      "sha256": "d12df160b35ac76412cf6f5e6f698e5a379f46a608b680006126450087c93ae8",
+      "size_bytes": 4998
     },
     {
       "path": "core/inkdrop_credential_evidence_cleanup.py",
-      "sha256": "37417fc79cdc87637dec0cedfb229a232d37520da24e6678a2f42aa34e3c90d6",
-      "size_bytes": 10946
+      "sha256": "8ce014c8d87a4d6b9a381e69fd9ca3dde9f0653a4a32e01f5520cce00a801d7a",
+      "size_bytes": 10716
     },
     {
       "path": "core/inkdrop_db.py",
-      "sha256": "3591b8ee5e3e9d3bcb7e53d3808e80886047f7522ce78484154eb7818230e40a",
-      "size_bytes": 6013
+      "sha256": "37c86606eab708cc1fcb7153a3ef2160de789cc816ff430804f58c416dbd0758",
+      "size_bytes": 7479
+    },
+    {
+      "path": "core/inkdrop_db_maintenance.py",
+      "sha256": "c6a2851728c07f603b33eee19eea79053059ec46cf61f76f3d29896a2689bc7e",
+      "size_bytes": 24307
     },
     {
       "path": "core/inkdrop_deferred_sync.py",
-      "sha256": "5c90bbfada05519d33261cf5b15044199811b819ec72a72d37ff7e1e5bcf7a2b",
-      "size_bytes": 7696
+      "sha256": "fcb17720c77d3b909b778caf8117eb9bf0d29c7367667e656d72fdadb231e23f",
+      "size_bytes": 7555
     },
     {
       "path": "core/inkdrop_diagnostic_artifacts.py",
-      "sha256": "60e99b5304ba31ecc43913a3482867e66fda1cfa62dbae94d31df8b9d6d932a8",
-      "size_bytes": 37451
+      "sha256": "1f99913523f2257f7f10e792ae82d4a80737d96f594c6099d32fa94393c8effa",
+      "size_bytes": 36750
     },
     {
       "path": "core/inkdrop_direct_downloader.py",
-      "sha256": "a95b64ee28186944faeb456ed896407b3f401ce6d8150a59539167680404c6c6",
-      "size_bytes": 32989
+      "sha256": "e13fda1238572b4cd3feba84e6097d176adba482b563bf4e3b27ee408a55e384",
+      "size_bytes": 32155
     },
     {
       "path": "core/inkdrop_download_client_api.py",
-      "sha256": "b753b0bbe26ed1ef71e619150535d27d4b6f2ce608f2c4ae2d5734d738d1f446",
-      "size_bytes": 20313
+      "sha256": "0781c6b2921669e609ef36fbcb569c6a22acb06350512ac5c258becac08184d0",
+      "size_bytes": 21035
     },
     {
       "path": "core/inkdrop_download_client_config.py",
-      "sha256": "206d89a3b8c38df2aaa46b629ac68d40502ddc61a2952eb589cd45ee200818b1",
-      "size_bytes": 38210
+      "sha256": "3f0d4aba1f1ebac41937ff09e18cd281f127c785a27f44adc487f5cb3650d844",
+      "size_bytes": 42166
     },
     {
       "path": "core/inkdrop_download_client_routing.py",
-      "sha256": "a6c8d6f1652ac979c4cdcfc8578f3d6d3c0f7ad22e74fee25fe762ddb0cd01d7",
-      "size_bytes": 13117
+      "sha256": "3b13162f5affa17c910eb90866e03d66677ae4c9b221c3c73c50501c4427263a",
+      "size_bytes": 13462
     },
     {
       "path": "core/inkdrop_download_clients.py",
-      "sha256": "a8821528640d62c3c63166061459b84f96e68eb26867630ec40c5d891f675d49",
-      "size_bytes": 62536
+      "sha256": "60d087c7eeab3feb30316ce84d4f9f781ea56d98f7d604cfea406ede27621241",
+      "size_bytes": 61117
     },
     {
       "path": "core/inkdrop_effective_config.py",
-      "sha256": "dc320a1258b723f8c37acb995b7903c046e9835bf94e0a8311801128413df196",
-      "size_bytes": 20261
+      "sha256": "fc63d79b76b9efc98d7107a1c4068585683c98a7fab316e9425dd8edcb5ad76f",
+      "size_bytes": 20016
     },
     {
       "path": "core/inkdrop_folder_cleanup.py",
-      "sha256": "2b63a0b8497da956fedc71c6e73bcfcadc8915e7b53fc961acfcd2828ca99e1b",
-      "size_bytes": 3024
+      "sha256": "724788d468f6da709fc2b0dbe6a1e7048f4832ba0c342fc3e229ced53fe8f90d",
+      "size_bytes": 3218
     },
     {
       "path": "core/inkdrop_image_folder_to_cbz.py",
-      "sha256": "8493c0710d7f30ce532adede030b8504105315f41982909e54109be856722ba6",
-      "size_bytes": 22550
+      "sha256": "13027e56c1e16d95ad8e1c9f135ecb47e4c32d8b2fe89001be5433cf19dab317",
+      "size_bytes": 21944
     },
     {
       "path": "core/inkdrop_incident_recovery.py",
-      "sha256": "1a6f0be7a8cef8925f1a3bd9969a164edf5cfcde0ee168df806ad005232a5182",
-      "size_bytes": 11104
+      "sha256": "4415da581bd7ad69aa9a8c005e9af4e968bdff5bf14e1054bef8f9124cb4aa6f",
+      "size_bytes": 10841
     },
     {
       "path": "core/inkdrop_internal_jobs.py",
-      "sha256": "5e7603c90719ce374ad0b5070dac2dde3572edfbb2cd42bacd8065bc4cae93f4",
-      "size_bytes": 3961
+      "sha256": "4cd4c8bf765bdd0e8c69959fffddff6830fd26d552a311e16f47dd377224bb09",
+      "size_bytes": 4692
     },
     {
       "path": "core/inkdrop_issue_identity.py",
-      "sha256": "294ea4de0accfe6e3da49e7666c14185379ccb320858ffe4ce0cc9edef685c0d",
-      "size_bytes": 10132
+      "sha256": "dffe45fb8c4fa27d4a0f8ea5a64c6b6f72178979363a52231c0873058d0705dc",
+      "size_bytes": 9939
     },
     {
       "path": "core/inkdrop_language.py",
-      "sha256": "d2e7cc8fb0c2027ecc00b4c4690996b2d86bdc5f029735e93bd628e43d211a61",
-      "size_bytes": 7496
+      "sha256": "6e6c621c9edd84322bf4351d7a314446fc32e5b11e37a5ff70fca3cc45758be2",
+      "size_bytes": 7245
     },
     {
       "path": "core/inkdrop_library_adoption.py",
-      "sha256": "a67ea8c0cc0940ad3ff30863fdae90944851f564818f2a050b19dc475daf1e2a",
-      "size_bytes": 24121
+      "sha256": "0600fb4ad13ca5dfbb953a5494515f66fc10a7e0adbb49341bd8c17f377abdd5",
+      "size_bytes": 23589
     },
     {
       "path": "core/inkdrop_library_frontends.py",
-      "sha256": "bbbac2e845d8c2ef656f3d4e437c7b5305122761d83b4670eb80e88da363ef04",
-      "size_bytes": 40828
+      "sha256": "8aeb3f46bda2e4189aff5742e40a480335ac4433799aeee284a6fa3ac301909b",
+      "size_bytes": 48749
     },
     {
       "path": "core/inkdrop_library_identity.py",
-      "sha256": "6b7b9f2de30534495f88b2f3884b1acc9a1dc2f1b0143ef1b1184393d807291d",
-      "size_bytes": 7290
+      "sha256": "5ec5bf70d33dfe85e68ebeef42891b637a9b65f7aefad3bf9b727057d5223d68",
+      "size_bytes": 7134
+    },
+    {
+      "path": "core/inkdrop_library_paths.py",
+      "sha256": "c3758383bad12099d60dee68459cd043e8ee0225aaccc4416c6db07db88b3feb",
+      "size_bytes": 2957
     },
     {
       "path": "core/inkdrop_log_export.py",
-      "sha256": "69a92755a6077abae640759b84de355d2a7a2844609ea112ebc7f39ac68ea26b",
-      "size_bytes": 5539
+      "sha256": "6f5b424b2352efb4c3547c300858ab1864cb7f6871d5e42eb41ca95264d1900f",
+      "size_bytes": 5389
     },
     {
       "path": "core/inkdrop_log_retention.py",
-      "sha256": "afb9248607a9e91c14a9264087ca3af42099b6a6a628ae3b15bd36d0a2fde06a",
-      "size_bytes": 15444
+      "sha256": "515597be59096d18ee6fb3bdec3822e2a06059a58dcd6f0651a00088984eef26",
+      "size_bytes": 15013
     },
     {
       "path": "core/inkdrop_manga_companion.py",
-      "sha256": "9e4dbe22b792aa6faf53ff09f5236e20add13ed2547379a6fe93bcd73f06dd30",
-      "size_bytes": 5780
+      "sha256": "1a3b8dad3277f983b771f70823d228ef0cdf219285b578930caa30f2b0e33284",
+      "size_bytes": 5647
     },
     {
       "path": "core/inkdrop_manga_metadata_guard.py",
-      "sha256": "46c9664d4ad5d4a654d45674cf8dfafaee4c0710b95a04ce8a931c7c5172a84e",
-      "size_bytes": 24216
+      "sha256": "43a4841947210b17e056bda35b1295e04f3d1c2480faa365604ea9a038d75755",
+      "size_bytes": 24596
     },
     {
       "path": "core/inkdrop_manga_unit_policy.py",
-      "sha256": "e454b5c124485274efbd9f5e5da81c674e9928496e6d87d994c2dd364fb0a580",
-      "size_bytes": 3507
+      "sha256": "dbe1f1c8fbf07984b83ce4e06864e9c328fed8530fd34c2f0be20bff18225bbb",
+      "size_bytes": 3410
     },
     {
       "path": "core/inkdrop_mangadex_direct.py",
-      "sha256": "bf2f342f53613e33b83270d94c7f30775a002b36bcf306d76330a391097929b5",
-      "size_bytes": 20929
+      "sha256": "f0b09a748e9fe1e29ef6bc44f1a8dd8d27ac470f14c9401bcc8f1e4f1ec467d4",
+      "size_bytes": 21916
     },
     {
       "path": "core/inkdrop_manual_search.py",
-      "sha256": "bd6ee7099b844a7f17c7ec83912e2299c3a4167b8e5e1bb7914270357e354277",
-      "size_bytes": 60933
+      "sha256": "6ce756d1a788056eb8c23b8eb2896417dd379489f2a2fd8a5f349c55480d0a73",
+      "size_bytes": 61097
     },
     {
       "path": "core/inkdrop_manual_search_core.py",
-      "sha256": "e47ccdd4bba969aba58bcbbfcab170dc99e71d4f9a1d8cb65e7945cfb6a8029b",
-      "size_bytes": 116870
+      "sha256": "5d7d22e7cc281f2bc3fb22a61c8592b89fca3b106704211b45afb1487b41bc18",
+      "size_bytes": 114703
     },
     {
       "path": "core/inkdrop_manual_search_executor.py",
-      "sha256": "322e6b884fedaebb4a902e634566af1792dbda47bf82771d1ac30b3ca8d31be8",
-      "size_bytes": 37023
+      "sha256": "ad01792d793b2d6cee6acd908940467f6de3537ce13c614035f14c6e69a4798d",
+      "size_bytes": 36345
     },
     {
       "path": "core/inkdrop_manual_search_worker.py",
-      "sha256": "f4b146b9e2cfe5bfe5f460fe27a16fc8b50e0cf356d024f26b49c33485ab6cbe",
-      "size_bytes": 1407
+      "sha256": "e215df0e819e7ddacfd079196aa84c394bd787a797d0960b9fb4ea51d2a76a30",
+      "size_bytes": 1364
     },
     {
       "path": "core/inkdrop_manual_source_autoresolve.py",
-      "sha256": "318c84429bd1dc72f4871aa66dc73f670de37c563495594d9e1876e0329f850b",
-      "size_bytes": 283235
+      "sha256": "97e0030ce71bacac5980a321bd08fc1ef6cfaae7d07fc0ccdb060997f857e9c7",
+      "size_bytes": 280449
     },
     {
       "path": "core/inkdrop_missing_acquire.py",
-      "sha256": "ee343652de457577a9ed5d124209dbc6759f7082e8bb750cf14c3ef4b137be23",
-      "size_bytes": 303779
+      "sha256": "fc73f0791897b2020b7b890ee7ecc7c5195a697872fcb9a9e99e6e6bc3fbc902",
+      "size_bytes": 302790
     },
     {
       "path": "core/inkdrop_missing_recovery_policy.py",
-      "sha256": "c01416aa088673364a6998de0ba2b07562403b721a663e4e40909c2247493f63",
-      "size_bytes": 11048
+      "sha256": "7f665be05a1e4c7e4c00296282d3611868599db31834ddcccb00f62f49ff3425",
+      "size_bytes": 10788
     },
     {
       "path": "core/inkdrop_nfo_parser.py",
-      "sha256": "c06ffe817b9b954877a2de7f8fc8f67735871c677ad9aea2f4c4697a2e5da27b",
-      "size_bytes": 19994
+      "sha256": "e963b61c969e92094bbc1b261d0ac7ccd1cc7c2477d9e8b3ff2a1dab65f817c7",
+      "size_bytes": 19456
     },
     {
       "path": "core/inkdrop_notification_events.py",
-      "sha256": "8709f1bb54bf6bda8db114c7046ce87e28ca75e6f92f5636d10f0e9c0c953ab5",
-      "size_bytes": 12925
+      "sha256": "9e9f40596be25f1f3fe3442654707fcbc39b10dea48d3586b09067237b33ef77",
+      "size_bytes": 19242
     },
     {
       "path": "core/inkdrop_notification_store.py",
-      "sha256": "006422956095b0436ee79cb25a766d2e41262d4a1cd9f6752546b2dd790d972e",
-      "size_bytes": 40063
+      "sha256": "7ce69fc077ad8a6529c4084e054c9c21106820ef0e0ad722d502cce9df4fb960",
+      "size_bytes": 43423
     },
     {
       "path": "core/inkdrop_notifications.py",
-      "sha256": "3f6a347f3c2ad225a3aa60eb22cbcd83adbc5a621b810c9f3a73b5e1871a3af4",
-      "size_bytes": 34556
+      "sha256": "ed1137862bf180a7f18262ad4c7f7153b2570d47580bf02ccd7c08f2ab737b07",
+      "size_bytes": 35895
     },
     {
       "path": "core/inkdrop_opds.py",
-      "sha256": "f9f21d6c8c36ff1a2f53e541d6d544ce3c17928d2459fc2e6236e9b2f5a74364",
-      "size_bytes": 13153
+      "sha256": "791e25bef5c9e615ece580907e2c0a89ae83965bfa751f580531d6cb0555fe4a",
+      "size_bytes": 12803
     },
     {
       "path": "core/inkdrop_operator_contracts.py",
-      "sha256": "8c18eda52c76519a6492aa958b25eef7f8fba78854880e6e509c37a7759d4332",
-      "size_bytes": 23038
+      "sha256": "17dfd711002216733a5b004c9d0adf7cd0f759545e2eb14ee590143ec6752dd6",
+      "size_bytes": 22441
     },
     {
       "path": "core/inkdrop_pack_import.py",
-      "sha256": "a298c7477d3bff7e2bc69da220d1620fd8de3571e8f7e7e6159a14e51236b97d",
-      "size_bytes": 181584
+      "sha256": "77c5c4e6441a31b131cb0bc65c1fd0bed83da0f5c39486a83b4198ff252ea4a1",
+      "size_bytes": 179732
     },
     {
       "path": "core/inkdrop_page_pack_downloader.py",
-      "sha256": "74c9af8ab11cd3c829fbb2ae4a0c6cdf18f4891ecd64de1fcf3734ec31ed3032",
-      "size_bytes": 37887
+      "sha256": "35f67f4371bfeecdf5940d424bf332dcb515d6b85bc2b4f087f31f932f713ff8",
+      "size_bytes": 37056
     },
     {
       "path": "core/inkdrop_portability_export.py",
-      "sha256": "76e6b918653f303fe622f2599370f3001f45d74d39409a8ee4b5598ed1036d74",
-      "size_bytes": 10998
+      "sha256": "b09b742e92ae89af604e95f28c00ba097a0bfbfe6b0829c64a4fb9d7c1b6c6d0",
+      "size_bytes": 10741
     },
     {
       "path": "core/inkdrop_preflight.py",
-      "sha256": "dabe8497ba379ee0fc409dd355496b2455baf9b9644a36d8f643abad86b25dd3",
-      "size_bytes": 37900
+      "sha256": "b836c4fb850aef51e52edfc8d745b1736b6d255b18fdd57a02ced6320e5b2c4f",
+      "size_bytes": 37054
     },
     {
       "path": "core/inkdrop_process_lifecycle.py",
-      "sha256": "2fea80af87c4a79596a9b8f4cc684b247a3df6ec8130a487931ef76da9788118",
-      "size_bytes": 6267
+      "sha256": "15cc58894141115329333b4e3debf55a196ef23c638d058fb2028401d38a90bf",
+      "size_bytes": 6070
     },
     {
       "path": "core/inkdrop_public_contracts.py",
-      "sha256": "7380fc724713730156cddb410129f80c384b6fc6b706d7ba0efe10b6f745ca43",
-      "size_bytes": 207
+      "sha256": "304c5e5d270c99ff2b795edd8e12887c5ceb7021caa929679c35f54615d0447b",
+      "size_bytes": 201
     },
     {
       "path": "core/inkdrop_qbittorrent_auth.py",
-      "sha256": "ae66affd3498a47d2c2b29a5f8bd4512d97838f377f918819bcbd6b357bf4d14",
-      "size_bytes": 9409
+      "sha256": "47230c02d88b2b75a1711edfe218d164d6d6f47d8ea913c21a1bdff339bb18ec",
+      "size_bytes": 10497
     },
     {
       "path": "core/inkdrop_reconcile_imports.py",
-      "sha256": "ebea32f699cb9705e3aeae7a82112e4ab156beaee1de5d122dac365569d5d5e1",
-      "size_bytes": 407693
+      "sha256": "dbe2f8db13062df6bcbf94be32a8a04e69c12f96a679d2a27d556ea1c95fe8c1",
+      "size_bytes": 398840
     },
     {
       "path": "core/inkdrop_release_calendar.py",
-      "sha256": "05964ecf9869af4b5876bdc2e1fe2f9da57325aa4d902981e09c5a4a00f66819",
-      "size_bytes": 19829
+      "sha256": "b437b7c3f8a0a4f688ab53fa9624619a22cec91ca0ef68e7f1ac147e31405354",
+      "size_bytes": 19335
     },
     {
       "path": "core/inkdrop_rss_discovery.py",
-      "sha256": "9d3a29ce57734b5fd2baccf614e03dbcf0689a9f059aff88dcc110467fee2871",
-      "size_bytes": 48232
+      "sha256": "a42b899ffc7dd1e8975a319d726213c376dcffb7e61396d822855565892da83e",
+      "size_bytes": 48956
     },
     {
       "path": "core/inkdrop_runtime_config.py",
-      "sha256": "dcd566f69508b63fd20b3e516f365251915ad910e84edcadcafd1813b24dc84f",
-      "size_bytes": 11568
+      "sha256": "ddb8884c33df8789af6843576e40664ac1f55d1dc8cca5ff49e741f1b47fa769",
+      "size_bytes": 12662
     },
     {
       "path": "core/inkdrop_sab_failed_cleanup.py",
-      "sha256": "ffe1f834c5931ae7663713412ffc0e1a7a143d93adc5c91730e03c36c6f5cb63",
-      "size_bytes": 34784
+      "sha256": "e749813fec74fe741a232d49e00bf5f1b69b99d55e28e96b8f7907f56acca8e7",
+      "size_bytes": 33935
     },
     {
       "path": "core/inkdrop_secret_store.py",
-      "sha256": "a14c628e8e6718d107dd25473380095205d735e4531563c151c6d7a3cf464b0c",
-      "size_bytes": 7195
+      "sha256": "338d7d29daaa971f2e0288bb50091d86becea0bb361aa7ecc5e03932bcb78857",
+      "size_bytes": 6988
     },
     {
       "path": "core/inkdrop_series_autopilot.py",
-      "sha256": "dae31ca47c499833768c941331c0dac605dac69131f9249b41b537bc3dcf8a78",
-      "size_bytes": 695574
+      "sha256": "effcb77d7512dcbfcbb1d84e44976bd96c45844f539c97bf0985c0081d467e3e",
+      "size_bytes": 688557
     },
     {
       "path": "core/inkdrop_service_inventory.py",
-      "sha256": "a329f73a2e1a586e17b9218ae0589ef195ee49b65c667b23de09fc7ec0ce1774",
-      "size_bytes": 15157
+      "sha256": "a78f65e693d0dd6c1e84494b78513e99c444461d298f8345a4ec168eb231bb4f",
+      "size_bytes": 14793
     },
     {
       "path": "core/inkdrop_settings_registry.py",
-      "sha256": "d0d51abdb6ba6602f0cdeb2e8e812385db5fd9205792991815404ba960752dd7",
-      "size_bytes": 8693
+      "sha256": "75f5e53d14aa9cede4da838fceec831672e00feb0eb2a45bfe4fe88f6ee22c2d",
+      "size_bytes": 10007
     },
     {
       "path": "core/inkdrop_slskd_root_health.py",
-      "sha256": "fe26b4744463a13cf45e46ca865f27570bb085a8bb1fdabe6fbcddb33e0c2754",
-      "size_bytes": 9619
+      "sha256": "cc8e79389680ca548da40b0112878e0aa504d8a4b7fa7ffc809688bf048b90e2",
+      "size_bytes": 9361
     },
     {
       "path": "core/inkdrop_slskd_search_cleanup.py",
-      "sha256": "a995279d3abf54064766bb14dc6ba00d8a4c4fbe75f11c240f1fc78e054c245d",
-      "size_bytes": 10264
+      "sha256": "4ad0dec7b052e7861cb5b5d3b490151ac18baf8ca72bb6279bb5b34aa4144b8a",
+      "size_bytes": 9965
     },
     {
       "path": "core/inkdrop_slskd_source_probe.py",
-      "sha256": "7cca9ff7ce438d93b4b0f26a3f89daf1ed37f9de5691e1f420b0af5b8413bb17",
-      "size_bytes": 622835
+      "sha256": "236118a5ebc8df20c1e62df970503cc54e4727baebb4eac51ce038f204d906e4",
+      "size_bytes": 615568
     },
     {
       "path": "core/inkdrop_slskd_staging_sweep.py",
-      "sha256": "6fadf59f4a8c20716a1d652495d293070bbd3f2297b4a79a15e5a3f8a713b012",
-      "size_bytes": 28703
+      "sha256": "73610d75644d660f8470795857138f8e7bf2cb8d8682a8dece477cf4638b2342",
+      "size_bytes": 28078
     },
     {
       "path": "core/inkdrop_source_catalog.py",
-      "sha256": "ded818899b4adf73905782426e00130ba9dde8bd927daa8a22cfa776a75772fe",
-      "size_bytes": 35458
+      "sha256": "72de06697b7b5b7aceaffb4ffd2cf356a3768ebf3d7c752828d496552da956d3",
+      "size_bytes": 33216
     },
     {
       "path": "core/inkdrop_source_providers.py",
-      "sha256": "7fe2647a8724498d7005412934102bc48269f756c5c4f3f660743b9eda147495",
-      "size_bytes": 416183
+      "sha256": "9fcf72ae1973d67ef59ad0ec45a9e4e151cc8477e933775c9c3111d3fee7f2db",
+      "size_bytes": 405542
     },
     {
       "path": "core/inkdrop_source_registry.py",
-      "sha256": "8987887e2c4e6b4a8254145caecb24510c868a2157802e60ca1e87f894e329a7",
-      "size_bytes": 29002
+      "sha256": "62bab42a18bf09605fbefce7ac905a12b7d5ea938d519eaa87ca269fcdb37e3e",
+      "size_bytes": 30068
     },
     {
       "path": "core/inkdrop_source_suppression.py",
-      "sha256": "5ae40b6452b901fa9ff485fdc5a0977acdcc5dafd65d5541c38359dc1ccce53c",
-      "size_bytes": 32981
+      "sha256": "65448cba7ffd81c58f53d08bf299f515792f53d9f76b39b615e511d644116219",
+      "size_bytes": 32862
     },
     {
       "path": "core/inkdrop_source_worker_adapters.py",
-      "sha256": "accd782810e5f3bc78900284b817c71bfb92062d935547e496156de9e8d29be0",
-      "size_bytes": 287619
+      "sha256": "972e1f5a9f22991a1d0fce622537498aa8d8b999a8e4bc950d31236803f9951e",
+      "size_bytes": 293844
     },
     {
       "path": "core/inkdrop_source_worker_batch.py",
-      "sha256": "590b8f4a70d0a571167ac838a3f5cfa802b192cdda6351d273c359e648ad54b7",
-      "size_bytes": 140195
+      "sha256": "ceb5fa53a130a81f707cd33b6bbfbf7d5a4a72a33dd1182ebb6eddf7e739aa4a",
+      "size_bytes": 143639
     },
     {
       "path": "core/inkdrop_source_worker_cli.py",
-      "sha256": "8204ef6538057c2327ea8a8e99d1dc5698e124e1cddcc2adcc741db13fa29492",
-      "size_bytes": 42419
+      "sha256": "2761a27d9f86119ec3f53c3bca56a1ae9b76b96b2bba1710935d6911fc44c8ad",
+      "size_bytes": 43815
     },
     {
       "path": "core/inkdrop_source_worker_coordinator.py",
-      "sha256": "1d7d60d683d6fb1718081ecb36acd6ecccf5495b13385336ca5fd866afd024e4",
-      "size_bytes": 119463
+      "sha256": "0926898d381aaeaa5af9216a0f59925ea7d50e3b8a7b05e9a59606d2a5a416ce",
+      "size_bytes": 117195
     },
     {
       "path": "core/inkdrop_source_worker_http.py",
-      "sha256": "bd4d99ddf3e14360f6a2e0bb859bf4b0860112ec35394eff0ea732adf37a2732",
-      "size_bytes": 25027
+      "sha256": "d81743f3be319d6367f1ef7a65a9d79f6e3d14c8a321f33072d21964045607ad",
+      "size_bytes": 33564
     },
     {
       "path": "core/inkdrop_source_worker_jobs.py",
-      "sha256": "34bbcc7a7c4a2567a5a2f33bbcbf8a14d56d8ee94e62421bd888ca589a87c64a",
-      "size_bytes": 108815
+      "sha256": "847c5932ef9b38a69565456c9039c4424a1339b0519055a1fe1454dc24dbadb9",
+      "size_bytes": 107258
     },
     {
       "path": "core/inkdrop_source_worker_plan.py",
-      "sha256": "42bab907975171d9a401ef53a1668b4c6a865f1cf4e1291b51c91fc5719d9e66",
-      "size_bytes": 30142
+      "sha256": "d2dd75df38913769ef1e29d4b769a7428cd9d0b784c5de93aa05481f7d3d79d6",
+      "size_bytes": 28450
     },
     {
       "path": "core/inkdrop_source_worker_recorder.py",
-      "sha256": "06d57fd4c861cd0082151fa3bf42bd0a7108e86771d9ba5a44b87b72fdfd5fa8",
-      "size_bytes": 60815
+      "sha256": "84c831ec6ed72d3cf479f6b281130423ce7b02921bdb15474b4efaf7b9a9ba5d",
+      "size_bytes": 59327
     },
     {
       "path": "core/inkdrop_source_worker_runtime.py",
-      "sha256": "0c171aa443211439c0c30e1a31f5a9e476c4906b8d8c6747463f0cb46037269b",
-      "size_bytes": 49966
+      "sha256": "2cd2f6dfde8b8d4507014e11f92b50036e40176c3ed56f33fa617d02b5011233",
+      "size_bytes": 49127
     },
     {
       "path": "core/inkdrop_source_worker_scheduler.py",
-      "sha256": "e6d76726fedeceebd0083ad0ec4b60128a48e9742f781b31c016043701733dd8",
-      "size_bytes": 96400
+      "sha256": "91aa1f9563243aee7458dfc07db357b6cc58c0362d2707fcbf30c966560b2881",
+      "size_bytes": 99290
     },
     {
       "path": "core/inkdrop_source_worker_service.py",
-      "sha256": "0e4cf19e97003242c1d146cca1c365b545ddc32de9233425bb73eeb927431cde",
-      "size_bytes": 26035
+      "sha256": "30740fc936589ee62239676885581f24d242674261c300b30e8903c3bb1d923b",
+      "size_bytes": 25439
     },
     {
       "path": "core/inkdrop_sources.py",
-      "sha256": "0b5fb0c72842d8330d4ee73675b9ea40f94742cecf083014ce71e0c828a0f04f",
-      "size_bytes": 30012
+      "sha256": "e0cfaf6311348594c6c90e879b625748966a5bb0c33bf354d0374f8945eea871",
+      "size_bytes": 29301
     },
     {
       "path": "core/inkdrop_staged_projection.py",
-      "sha256": "27ef333301462e2e8104f01c6a477f8565a23d6877b47689dc6e8f1315ae1856",
-      "size_bytes": 5743
+      "sha256": "f578d8a06ff66ed661e580dfd20cfc8166936c33bf8c0af6efe4a73b647c0a97",
+      "size_bytes": 5580
     },
     {
       "path": "core/inkdrop_state.py",
-      "sha256": "d01b696633b6b3e3a70948a747eda80bb61427e1e1bd0a991d0a56f5335aeef7",
-      "size_bytes": 3232881
+      "sha256": "8ba22be1e7ef1dae593e1c3bff3f0be7015dcb57693699e033d263414e2d463f",
+      "size_bytes": 3337217
     },
     {
       "path": "core/inkdrop_state_maintenance.py",
-      "sha256": "59d9830975a3facaed7da19efbff65583b6d6e41bdad69f3a6c7ba5a8d489902",
-      "size_bytes": 14441
+      "sha256": "898fa3604f5709fad98d8c7161c7d4e77e3ea86a6620255fd820e63bc835a40a",
+      "size_bytes": 14948
     },
     {
       "path": "core/inkdrop_support_bundle.py",
-      "sha256": "1fc1b2f184de4d697ab4f665eb53c57a3704e6b163921adf71c2a7480766d6c4",
-      "size_bytes": 49062
+      "sha256": "a3215cbc1365d7ab528ac2e5964b8b0854f14f6a2b95bac4274396df2b6d98ae",
+      "size_bytes": 47973
     },
     {
       "path": "core/inkdrop_suwayomi_managed_folder.py",
-      "sha256": "000f4e96705d765763f4720345043bb05cf29f85a5befe47b8c218c0c428f23b",
-      "size_bytes": 31296
+      "sha256": "0621dac31c42dfb69e3ce3ea67d3151cc67de5077fcea2f674a62ac3c4be74e3",
+      "size_bytes": 30517
     },
     {
       "path": "core/inkdrop_transfer.py",
-      "sha256": "202fdaf44de71aa3692807167445be26c0f87048d27c4977f232a48197827990",
-      "size_bytes": 11902
+      "sha256": "bfc709a226b5f2ce76e53fdaf66968b69e2c0f03eff5545c00c5000127e5e411",
+      "size_bytes": 11647
     },
     {
       "path": "core/inkdrop_version.py",
-      "sha256": "3b857a4d29a938b73e0f7aabd72da226c08f064b42bc581aa347c07d6fcfd96b",
-      "size_bytes": 35432
+      "sha256": "9c3b7365dab1315f2d1e4f29c783dc0eb6893086dcc2bb7ed3fa872dfe025767",
+      "size_bytes": 34772
     },
     {
       "path": "core/inkdrop_web.py",
-      "sha256": "7921870df903baa02d7e64debdc5b803fef3cef690813008d78d58d75da98441",
-      "size_bytes": 3167004
+      "sha256": "cafcc20fb494fdb10dcf020fe2406ae912457aaaef2569644a36a609046b5f58",
+      "size_bytes": 3249483
     },
     {
       "path": "core/inkdrop_web_config.py",
-      "sha256": "9cdd6a01bd26bbf2e9e9ad2a3441f888ebdac5466bc1be105918c1a45a654272",
-      "size_bytes": 39635
+      "sha256": "721817399a17c3ee49b4824f609bb3d28e083ec87e63e4a01ada0cdbcc15fa9a",
+      "size_bytes": 40581
     },
     {
       "path": "core/inkdrop_web_state_views.py",
-      "sha256": "8ed1a88858b9a073e2ebd142a6f22c8dcd5de24c66e557223e451ce3d666ee29",
-      "size_bytes": 10264
+      "sha256": "e8c136f2908bbba2c90ac78c014f7cbb8c5241b2634d652d71eeb2b027d2c5a3",
+      "size_bytes": 10027
     },
     {
       "path": "core/sab_rescue_server.py",
-      "sha256": "ce7fe946d5bcb2996d81e6954a9884377befd32474648f3b9719e3171f9e879c",
-      "size_bytes": 35155
+      "sha256": "622b7401ff465ebd288723372164140ecf3c90e04d71895c437bfdcceb970ab6",
+      "size_bytes": 34257
     },
     {
       "path": "deploy/compose.network.example.yml",
-      "sha256": "288e23138b34cb6e0145a89f369aae27879ac070754a55e974199b0cdb25641e",
-      "size_bytes": 222
+      "sha256": "e91b07c198f3e24490b96308ef39515a293c42fa6b74bfdb767aceb7a5ea67d1",
+      "size_bytes": 213
     },
     {
       "path": "deploy/compose.release-gate.network-none.yml",
-      "sha256": "a30c94e5bb1f62dd98fa22390aeac1cce522ecd1ca3262e965cbb3eb1a2b5944",
-      "size_bytes": 335
+      "sha256": "ede23dad7332e47878295c550d3ce90b51d7b7dfdb49548d30857ec18080842e",
+      "size_bytes": 326
     },
     {
       "path": "docker-compose.yml",
@@ -578,143 +593,158 @@
     },
     {
       "path": "docs/inkdrop-source-candidate-catalog-20260702.json",
-      "sha256": "bf9ce0c889af350697c2fcb69f47025f76885a506bbc58066adefe44c667a3da",
-      "size_bytes": 101442
+      "sha256": "d126af3a6f1ce7e9ceb118b7369e38f7695c743e794bb2248a8735c8a005e787",
+      "size_bytes": 99516
     },
     {
       "path": "docs/inkdrop/arr-stack-deployment-plan.md",
-      "sha256": "8a160baf81a619f2b3664fead3c2e4d208d0ee00f39421ad26d1935b9d51e08d",
-      "size_bytes": 8270
+      "sha256": "9b554563d3b0ff693407c7b8557587dcebac07ee55bc1b8880bf2c34acd897a4",
+      "size_bytes": 8082
     },
     {
       "path": "docs/inkdrop/docker-first-install.md",
-      "sha256": "22a25905f977df90d8cdecbdc71971d5ee73708ce672fcb091a68d00110845a6",
-      "size_bytes": 63446
+      "sha256": "9bde6bd8c759f6542c98916a4370988d153be148063237ce2be7ea1d59a27b0d",
+      "size_bytes": 68412
     },
     {
       "path": "docs/inkdrop/fixtures/manual-search-provider-results.json",
-      "sha256": "d3d19f9268e7c26243ce1b39e3f4718e3f35cc9a00552c2d64bd0ac9ad098e6a",
-      "size_bytes": 6926
+      "sha256": "c03c1adec04ffcfd4261575869c7557be839aad72dafd75e382f27b53148be1c",
+      "size_bytes": 6747
     },
     {
       "path": "docs/inkdrop/releases/current.json",
-      "sha256": "949001b3836de076d1485ab08e858508941e117931749943a4457c1b0b27a56f",
-      "size_bytes": 237
+      "sha256": "606d7d1a282bf9b80343e7dc8412bba3389916a153ec808612561b8cfa46950b",
+      "size_bytes": 228
     },
     {
-      "path": "docs/inkdrop/releases/v0.1.09.md",
-      "sha256": "1e5ac16128daa14a1079d237b9cf6b4c3deaf4c7f7ec85544f71b739516182ab",
-      "size_bytes": 2222
+      "path": "docs/inkdrop/releases/v0.1.10.md",
+      "sha256": "2278612ffa141a5f64746ed43607cdc8c9173acdb849ef8a7c5377f3596faa64",
+      "size_bytes": 6192
     },
     {
       "path": "tests/inkdrop-acquisition-funnel-evidence-smoke.py",
-      "sha256": "9bb1b84f124f2c4c23e26bc302555c492f57800453c6235338a683abec0709e9",
-      "size_bytes": 12474
+      "sha256": "dedca291a9df6df08e1bed0a437f18c5ca9ea595af3903049fcd8da4945c3001",
+      "size_bytes": 12201
     },
     {
       "path": "tests/inkdrop-activity-truth-smoke.py",
-      "sha256": "a64c1359fc25a9ebf1dd16b078e62597449f697bf96dce5fd55da90a7e376bd1",
-      "size_bytes": 8561
+      "sha256": "b7190ce6ebbd2035177a4a391f275c06bead9c8509c89221f3eeefaf3e4ada2d",
+      "size_bytes": 8449
     },
     {
       "path": "tests/inkdrop-archive-conversion-smoke.py",
-      "sha256": "494942dde7ec8013b6b1655b9ce975f1f83f749f25a89119c902d6f681e7a083",
-      "size_bytes": 29929
+      "sha256": "aa94f513dcd4a4191508cc172f15b8e8f2b09a420d6e0c2d25b2322ae0639ef2",
+      "size_bytes": 29336
     },
     {
       "path": "tests/inkdrop-archive-conversion-wiring-smoke.py",
-      "sha256": "8656a439a078870c76384388ab456bedf52d349a9dd698f461438e9bd2667644",
-      "size_bytes": 10308
+      "sha256": "c0120609a8a20757d092605d7f2ae765a40542d7c4aa263bd85a6149f0547f5d",
+      "size_bytes": 10118
     },
     {
       "path": "tests/inkdrop-auth-add-series-http-smoke.py",
-      "sha256": "33fcd17610fcfe4140a3af4a08f2e6891ed60ddc83521aeadf9046d128c945b4",
-      "size_bytes": 8925
+      "sha256": "655ea22ae4346c0de05f7ea7e98c2d4dd1b22c37a91b9e055695a74a095b5718",
+      "size_bytes": 8759
     },
     {
       "path": "tests/inkdrop-auth-api-key-smoke.py",
-      "sha256": "7746d2668500abc9ddfeb071cf5e6e7dc76754d841f6cdb7bd11c06e9e84b415",
-      "size_bytes": 3267
+      "sha256": "c6d285bb0ee03c4389efa5967c5543dfc0f84e9a1a891fedbfaa22f226a6e3f5",
+      "size_bytes": 3202
     },
     {
       "path": "tests/inkdrop-auth-enforcement-smoke.py",
-      "sha256": "89c0b8bda03d610ef4b497b99bf33080fea3257e50e5cce59f153fc618e0dbdb",
-      "size_bytes": 6749
+      "sha256": "5d815b9e0b54b476c9bb2b97b40dd41ddd0b2d078b0da09a12cee8db0206929c",
+      "size_bytes": 6594
     },
     {
       "path": "tests/inkdrop-auth-http-smoke.py",
-      "sha256": "abe89f343950b17a441d372c76ef43f4716b513a1166e2062b2c2c833f3c7657",
-      "size_bytes": 19753
+      "sha256": "67d299e313a790ca45f5cb27405f30a200f33033a2f7b67a2d75a39c273f8566",
+      "size_bytes": 19474
     },
     {
       "path": "tests/inkdrop-auth-password-policy-smoke.py",
-      "sha256": "101ec60bbcd0a5eaecd7997dd7721585106daded0badadb567c7a4087142a2ad",
-      "size_bytes": 5998
+      "sha256": "6e07c2d2b8c0b5e8774f545eb2001087c3dd078b59656626e3ec26c9f9ff7977",
+      "size_bytes": 5894
     },
     {
       "path": "tests/inkdrop-auth-route-inventory-smoke.py",
-      "sha256": "11fe9866710270075ec996c8dee86813044b40b7a8a9f72f4f08e8a1e6b9e66c",
-      "size_bytes": 3546
+      "sha256": "4ed8a8331f9ea4e48282f334671adce1165d7a33121ad826a13b690fd1760146",
+      "size_bytes": 3468
     },
     {
       "path": "tests/inkdrop-auth-security-closure-smoke.py",
-      "sha256": "f6ae1536885992675322736e94f3e0106d638023a2adc5f1208f27d682b24b19",
-      "size_bytes": 10313
+      "sha256": "f181e68844623cfe5196507faf1bf74b6577b3b55ef6724ad3bd091c43ad0c7a",
+      "size_bytes": 10147
     },
     {
       "path": "tests/inkdrop-auth-security-smoke.py",
-      "sha256": "588aa0533bc2dfc0872a11cad3e569d6cecd7260466e4bab73ce35ff5b111645",
-      "size_bytes": 25185
+      "sha256": "871eefb25fe4d9262e645a86f6e54c40ff3fee3e8927c14485736fd92e41c585",
+      "size_bytes": 24805
     },
     {
       "path": "tests/inkdrop-auth-state-preservation-smoke.py",
-      "sha256": "090b214e9d77abcb0f9a2864be4d05e604abce7bcbc2868244d650573a21dff0",
-      "size_bytes": 4067
+      "sha256": "0f89103af1b42bb582ff937a44e8324d86cde82890c7b23aa290ba86d509bc16",
+      "size_bytes": 3989
     },
     {
       "path": "tests/inkdrop-auth-ui-smoke.py",
-      "sha256": "cdd9b9a9b76fe432f13eef95b2b71ab189137138beddc11dd8a5f055ae960c88",
-      "size_bytes": 4645
+      "sha256": "78c8c6a62bbc094272e4792d6167205858a7073c5e8c2764872aa0caed1bb546",
+      "size_bytes": 4572
     },
     {
       "path": "tests/inkdrop-automatic-search-recall-smoke.py",
-      "sha256": "c4d5863cedacc85758da7840d59c117cb72762379a3556b514f924957d4569fe",
-      "size_bytes": 43402
+      "sha256": "42d9b80eb28fa6c09f81f8825bd3c13c1a1506e86617b47c864678037e816e23",
+      "size_bytes": 44983
     },
     {
       "path": "tests/inkdrop-automatic-search-state-smoke.py",
-      "sha256": "5eae5eda03c7c9737d8347f1e3ac107f1900dc52c633a08683732e8b1904b6b6",
-      "size_bytes": 7014
+      "sha256": "4041ed26a4079767b8b4370649868b8ac81b0163ca8a1fd1ccccd1c48c003a75",
+      "size_bytes": 6874
     },
     {
       "path": "tests/inkdrop-autopilot-fairness-smoke.py",
-      "sha256": "620b98ea145f499d09674219f7562918283bf462b7912f20d6e6457fe247b708",
-      "size_bytes": 51867
+      "sha256": "1a1f1fe02d91e08dcbf6367d07d12b269bda79adbf01093833b6ef0a1757e341",
+      "size_bytes": 50705
     },
     {
       "path": "tests/inkdrop-autopilot-provider-budget-smoke.py",
-      "sha256": "200f459a21d860aedf86fb9db9af547250b71d073536d1a94b84438c0e84bcdf",
-      "size_bytes": 52892
+      "sha256": "92d85e466f1bc814e9a228296a5664c537f88f252c46dca04f18adaf30a138bb",
+      "size_bytes": 51695
+    },
+    {
+      "path": "tests/inkdrop-backup-archive-import-restore-smoke.py",
+      "sha256": "ea475c3513439078ba63444b2de9522a1de4746b5023f2e316b5cd0210940a3d",
+      "size_bytes": 11648
+    },
+    {
+      "path": "tests/inkdrop-backup-archive-resource-exhaustion-smoke.py",
+      "sha256": "1f512f0f74b9a2c8555db495c7a618a1b34e7c084fcba180c274f38b59721055",
+      "size_bytes": 19635
+    },
+    {
+      "path": "tests/inkdrop-backup-restore-decompression-bomb-smoke.py",
+      "sha256": "db7134c4bb3c5030c7dba11844f327f714a9341af85042bacf9d13c5a773a8da",
+      "size_bytes": 4869
     },
     {
       "path": "tests/inkdrop-backup-restore-smoke.py",
-      "sha256": "a90bee8b1caa5a33d984eb107424d2fd2b1d67fe95b8fe4b0adb92d1dead4dd6",
-      "size_bytes": 17097
+      "sha256": "a1b0f2799a0d41fccda531e509b8314df79b22f7cfa9f22ede24c6346b6a7bb9",
+      "size_bytes": 20767
     },
     {
       "path": "tests/inkdrop-closed-alpha-e2e-fixture.py",
-      "sha256": "1c6e438890962e28e3cc6968440e8b3338990085f76229022a4e7a325b10aa3c",
-      "size_bytes": 16283
+      "sha256": "63d6ed83c275a3055d00eed739c7450e603016f965ffed03e55efac2733b29f0",
+      "size_bytes": 15920
     },
     {
       "path": "tests/inkdrop-closed-alpha-packet-smoke.py",
-      "sha256": "bf068e6536d6f50446125691c0d5bb2b057eefb5e5f310b9cccc442f8c52b393",
-      "size_bytes": 7019
+      "sha256": "ce92b7b90c593a16ebc8665f9d09be067f8641c4983c03d798b0d4309846fdd8",
+      "size_bytes": 6892
     },
     {
       "path": "tests/inkdrop-comicvine-optional-scheduler-smoke.py",
-      "sha256": "a433157fc792204329758724a05632dac78a8bc7253bbf793e8419618d29bc79",
-      "size_bytes": 5192
+      "sha256": "a0f599bffe3cf84c05d91e6b52b2a23f1ef078e66c477c9924e0dafabffa806f",
+      "size_bytes": 5078
     },
     {
       "path": "scripts/inkdrop-completion-identity-audit-diff-alert.sh",
@@ -728,93 +758,103 @@
     },
     {
       "path": "tests/inkdrop-compose-deployment-plan-smoke.py",
-      "sha256": "e777284e4f228a01d7e3a92efb88657b771b841faaf500cf1d2b9a11647ca0cf",
-      "size_bytes": 8590
+      "sha256": "219feb45881389b47e1985003d3245eb54f5952546a47cbcae7df5ca901915eb",
+      "size_bytes": 8436
+    },
+    {
+      "path": "tests/inkdrop-cover-proxy-redirect-safety-smoke.py",
+      "sha256": "3a12262e68fab998aec170d372395aafa2208260186a1ac983ae4cf31fa8e9b4",
+      "size_bytes": 18333
     },
     {
       "path": "tests/inkdrop-db-boundary-smoke.py",
-      "sha256": "e1723cb6cfb7c7070c580f04ec26b95c1674f8527b4a1272d6f6f20d25163241",
-      "size_bytes": 3345
+      "sha256": "f3d14644cee76d7aae6e9baa81364c0b2708f397bc766ec3587b9abe3dd1718a",
+      "size_bytes": 3260
     },
     {
       "path": "tests/inkdrop-deferred-sync-smoke.py",
-      "sha256": "9ac73553c00d8b54ac1972e4fecbf34a843f58e29e75a75d8ba653c4b1564563",
-      "size_bytes": 3532
+      "sha256": "0bffbb8550d93583847aa0b845b4bca1d49cafbb8c72cf4e7f2f6325a1e36aae",
+      "size_bytes": 3472
     },
     {
       "path": "tests/inkdrop-diagnostic-artifacts-smoke.py",
-      "sha256": "964c933d6de9c37e2ef626d68fdc31e468cdc2313df1004e0ae6c399bce6e0cb",
-      "size_bytes": 23336
+      "sha256": "5e67319d7e9ae88d9db896b4d5f1c08a41987c83d68b43b3fc2410c8cdf8457e",
+      "size_bytes": 22918
     },
     {
       "path": "tests/inkdrop-direct-source-certification-smoke.py",
-      "sha256": "3b27415b8fe714a364099b0aca989eabd3ac55f25335263347a7663777b75622",
-      "size_bytes": 34612
+      "sha256": "a90b5863df3f3dc7f38f4e19f430e110302ec2ea7b9af77b337e31646dcf94c4",
+      "size_bytes": 33964
     },
     {
       "path": "tests/inkdrop-dispatch-recovery-closure-smoke.py",
-      "sha256": "f9f5c774dadde793ae654bd50454da2cdb57532b8db3c55890bebe5117ca647f",
-      "size_bytes": 23552
+      "sha256": "3eaf139d12edd1e84bb18ee0ef01ab21f00601a546806ed4655e6cbf4f3cceaa",
+      "size_bytes": 23278
+    },
+    {
+      "path": "inkdrop-docker-entrypoint.sh",
+      "sha256": "ac09cb135b1cbf69432f611ff2efc7c906ff7bdd54dc6e4638e346dd5e50194d",
+      "size_bytes": 7522
     },
     {
       "path": "tests/inkdrop-download-client-instance-api-smoke.py",
-      "sha256": "d96124ffbddd6d2ba30e9db3ec879ed7b056c0e53a2900ff7272cd93e39fcf56",
-      "size_bytes": 13761
+      "sha256": "47a1e2dd7ed71ec7a623b41bcf2cc31c442d2b4dbdaa7311f30a8eb8cbf79546",
+      "size_bytes": 13575
     },
     {
       "path": "tests/inkdrop-download-client-instance-store-smoke.py",
-      "sha256": "30abb89ec5c009f75cc0fcb61fbfbe4660a8d72048578007010ebaa84bc24dac",
-      "size_bytes": 10993
+      "sha256": "9b71d587c7f47f6f8bd1c736d0b95c907fffcd8db990f6d86fbbda886d8191ac",
+      "size_bytes": 10743
     },
     {
       "path": "tests/inkdrop-download-client-routing-smoke.py",
-      "sha256": "04bf4caa26901e74f01815f1348f8d6f8252b84ffc877998ad8017986390ee3d",
-      "size_bytes": 11037
+      "sha256": "c1dc07bda7e3cd6620040a5f5fc18fd68cfde8c60a066dda41d733cbd1f67ffe",
+      "size_bytes": 10892
     },
     {
       "path": "tests/inkdrop-download-client-secret-store-smoke.py",
-      "sha256": "051e9012d56b58ea13e83d88bbb298e7278afd3ab9bc9ed76aafb28b614a379d",
-      "size_bytes": 8940
+      "sha256": "ced059d5aabeedb3fa59f8513126fd42be8cbe18684bee5679514dc0f38ad44d",
+      "size_bytes": 8767
     },
     {
       "path": "tests/inkdrop-download-client-ui-smoke.py",
-      "sha256": "278a43729a8f6ff7afeaa9110c0972823a9b12acb8a850aec5027b474c891c20",
-      "size_bytes": 3268
+      "sha256": "f0bb8bfeab9a41df5d9dc064715fa6148da93f7508f2e0a59539b498050575b3",
+      "size_bytes": 3206
     },
     {
       "path": "tests/inkdrop-download-clients-round2-smoke.py",
-      "sha256": "4d09442e7036d4d44831024f6c8cdc3aaa1bc885f372d67b7f58164b322d7079",
-      "size_bytes": 32428
+      "sha256": "bd52f69c073032a8b395903a3189a6457ad1206a5c3d1ebb117cce5dfaa6d9e3",
+      "size_bytes": 31722
     },
     {
       "path": "tests/inkdrop-duplicate-live-task-audit-smoke.py",
-      "sha256": "62b71285c7805bfe0412f7ddc3729917d9db1118b06537f1543e7e2a77d486b3",
-      "size_bytes": 2799
+      "sha256": "9163b674c136acdd96dc2ceb2f4b48b35a7316c4d7f678ef56fa2241f31ce42f",
+      "size_bytes": 2738
     },
     {
       "path": "tests/inkdrop-first-run-setup-status-smoke.py",
-      "sha256": "11b6497eb36eb8e4b1e4f1e924b487e3041abd8a4b89ca27f832a2910012b791",
-      "size_bytes": 14249
+      "sha256": "a4aa1e12d8e3fd2e36993d80fef94eca98226bb71747bb81f71bafe6d1163025",
+      "size_bytes": 14026
     },
     {
       "path": "tests/inkdrop-github-release-contract-smoke.py",
-      "sha256": "73179f02ec53bfc400135362918bedd2c733d306ba312eec9ea8cf987867bf78",
-      "size_bytes": 18582
+      "sha256": "65ae4e82f296a3f38cbf970b4b36cb72c6237ff88b5e7cc0ae828927b83c94fa",
+      "size_bytes": 18252
     },
     {
       "path": "tests/inkdrop-history-taxonomy-smoke.py",
-      "sha256": "2c5379c06cb90b20b909e6c58d1a52c532c7e4ba23d94549b993faee8fb88552",
-      "size_bytes": 35295
+      "sha256": "b7a1fbe14d787b79d78416451627abd1e1df89da68c146059fd635bdb013e997",
+      "size_bytes": 34705
     },
     {
       "path": "tests/inkdrop-import-cache-truthfulness-smoke.py",
-      "sha256": "af247b6d1aedf506e098f1a3a301f5f1e6ce0e327c6c02420a30817daa7100f1",
-      "size_bytes": 6690
+      "sha256": "9209d5f4b099082b1cdf6ee070c16a8a7d79bc547ca2e495e306868c309bbc47",
+      "size_bytes": 6519
     },
     {
       "path": "tests/inkdrop-import-ready-worker-smoke.py",
-      "sha256": "4d0da1027946146abb6afe98a2d76799c541dc190f582286932e79e6090a6a1d",
-      "size_bytes": 406579
+      "sha256": "26cbdc4a5a4c2efc886e7580cad8122d43c9693b339666672ab63b5d3db82675",
+      "size_bytes": 401054
     },
     {
       "path": "scripts/inkdrop-import-ready-worker.sh",
@@ -823,48 +863,48 @@
     },
     {
       "path": "tests/inkdrop-internal-jobs-auth-smoke.py",
-      "sha256": "cd1e8b2e9f52302b9957edf3b1ead5d52950442504af712afbdc9b0da145f2d8",
-      "size_bytes": 958
+      "sha256": "8214c3d71117b37fd842ca8c635bcb1a968bdae64477077814fd254d250128c2",
+      "size_bytes": 929
     },
     {
       "path": "tests/inkdrop-issue-identity-smoke.py",
-      "sha256": "917efb7ba95fb5d6a4c56d1d023b737717ac811e818842e6d00773c8eeecde32",
-      "size_bytes": 3907
+      "sha256": "707fa88b45cc50cc13cab5df807aa175977fe7c82dda3ca63a37f0703f3f8a9e",
+      "size_bytes": 3849
     },
     {
       "path": "tests/inkdrop-issue-monitor-toggle-smoke.py",
-      "sha256": "92059d2bf82ecfc3bd6f3014a3f2432104f00dfeb3f86f83fb30a696d13bdb8a",
-      "size_bytes": 6240
+      "sha256": "63ff72babbfc5b50acae84830bf9c107086fc746490a2db9f26912f4f1283a6a",
+      "size_bytes": 6128
     },
     {
       "path": "tests/inkdrop-komga-settings-smoke.py",
-      "sha256": "0ba017608e9ee3488f14fdadcccc7ef012a46e48740a5fa89abf8ff62418b8ab",
-      "size_bytes": 8392
+      "sha256": "a733a79cc76dace4b2e1317af805a309a18fbceb23e15970c54df88af99a18ff",
+      "size_bytes": 8267
     },
     {
       "path": "tests/inkdrop-library-adoption-smoke.py",
-      "sha256": "dbc8a3f8425455be8eb46a719f90f3aae1ef730560c04be22e19d2c57ef2b6ca",
-      "size_bytes": 6803
+      "sha256": "d1866c8a305a2279ce5095ea8fd0dc0a0a2770466e3cb5c624ea0930373ce93c",
+      "size_bytes": 6673
     },
     {
       "path": "tests/inkdrop-library-frontends-smoke.py",
-      "sha256": "da0dda871df88d6cea1a0c84fc4442f78eb78b32e5766c38bef3d1100c8858f3",
-      "size_bytes": 23868
+      "sha256": "038ef22de620cbae46ad42dce8f983c4146453cbb3e898940f04f6085e7ed081",
+      "size_bytes": 23390
     },
     {
       "path": "tests/inkdrop-library-identity-reader-truth-smoke.py",
-      "sha256": "e5d26633e02276707e0c1210de5b9fd0199045182d2daba213c52521dedcc7ad",
-      "size_bytes": 25694
+      "sha256": "e094c71a8ee2345d970b44334efdb99ef443a881caafecb39e3d9a98354a0e88",
+      "size_bytes": 35645
     },
     {
       "path": "tests/inkdrop-library-import-plan-smoke.py",
-      "sha256": "bb097a49daafdb8230280604e6ef832c0597300fed9e5355c2f5f12726c1c00a",
-      "size_bytes": 4666
+      "sha256": "a243627af4461fb7dbe3d9995408812d2d50c4802cb1625452a85d3fbb8e1321",
+      "size_bytes": 4556
     },
     {
       "path": "tests/inkdrop-local-folder-only-flow-smoke.py",
-      "sha256": "5b48e00b9bd8cd6d02cf8fc11a3ebefeb1034930dc2f710d61af3d5d8970e659",
-      "size_bytes": 5051
+      "sha256": "c174c2fb7c68b43367e2b2c2afa3cffae66463a890adc312dda281bf2e5e01bb",
+      "size_bytes": 4958
     },
     {
       "path": "inkdrop-logo-mark.png",
@@ -872,219 +912,234 @@
       "size_bytes": 590701
     },
     {
+      "path": "tests/inkdrop-manga-companion-removal-authority-smoke.py",
+      "sha256": "aaef03018e6aaa2bfc5f64e27cdb99090a2c045e4476b6c90067281a5189d35d",
+      "size_bytes": 20648
+    },
+    {
       "path": "tests/inkdrop-manga-volume-satisfies-wanted-chapter-smoke.py",
-      "sha256": "0062a7de7c0dc0c996c08a5b9dd9e17cad6cc2240e372a25ff37300085e638dc",
-      "size_bytes": 4387
+      "sha256": "e0380985037878573c09aeb5fefa2617dffd57a54cbc397f716ba8aa8ceb7cb0",
+      "size_bytes": 4288
     },
     {
       "path": "tests/inkdrop-mangadex-content-rating-smoke.py",
-      "sha256": "452d0c49975fc1b16117996f542004da1286964e7681854b74a8b7c697f4bc8f",
-      "size_bytes": 6896
+      "sha256": "2f09e11a75a91e1c690cac16cb32d5188d753328a8ce4a11ac960d34b5c7a3aa",
+      "size_bytes": 6718
     },
     {
       "path": "tests/inkdrop-manual-review-load-browser-smoke.py",
-      "sha256": "2dc1b7f3686553feb603838d4db486662197f7d6f7318973841fea22249f78c2",
-      "size_bytes": 3740
+      "sha256": "06962da0d04db2e360adb0ad0abde42b509fb8c67df03773fcbe4d11b1ed56a6",
+      "size_bytes": 3644
     },
     {
       "path": "tests/inkdrop-manual-search-core-smoke.py",
-      "sha256": "6926af2467e97ee4dac6b5da582114348015a4f515ed42e739fdb8568a02117b",
-      "size_bytes": 55237
+      "sha256": "f4dff11e90d195ef0445eeadfb4dbcedc22ddd6370df8f1ceb08e7687fad00b9",
+      "size_bytes": 54292
     },
     {
       "path": "tests/inkdrop-manual-search-executor-smoke.py",
-      "sha256": "ab1fe39adc0c874a7cc7c97a68d5da80714af9cb2dd8c75e9053d00a9bfa280c",
-      "size_bytes": 22035
+      "sha256": "34894ddc207f1cd7b0e523639cea0f4f4a0df220c01f91c7340cc3f494aa71f9",
+      "size_bytes": 21596
     },
     {
       "path": "tests/inkdrop-manual-search-known-title-smoke.py",
-      "sha256": "e0e30d4177effc363c5db492efc1ed7e45a0797df0a2af56853f8a2f3fd6eed4",
-      "size_bytes": 4619
+      "sha256": "f90109a39e7c0bd493d10a38e0ea1b9ea0629732f8feec24d8dc0265253e5ac1",
+      "size_bytes": 4547
     },
     {
       "path": "tests/inkdrop-manual-search-migration-smoke.py",
-      "sha256": "a3b0563421fc2f14538d65d44ec35273e612975c3e069e44ff6d57d80f3a31bc",
-      "size_bytes": 10556
+      "sha256": "e789771e060a27d6f6c227cbbdcc2ad19f00813927f9bb07e08e474b69772254",
+      "size_bytes": 10424
     },
     {
       "path": "tests/inkdrop-manual-search-prowlarr-repair-smoke.py",
-      "sha256": "2d7f8200167c0ab03e21c3425f79b1c358f086b71d653551b0509ae0b7d04914",
-      "size_bytes": 13241
+      "sha256": "bbb697fff0cbb36a92c4a56fc822ebf910bb8e8bc704027a83aee7ac9e3f8df3",
+      "size_bytes": 12979
     },
     {
       "path": "tests/inkdrop-manual-search-readiness-smoke.py",
-      "sha256": "87e52b8a3d0db995095a449cf966031e28a96eb58d2c5b17ceadf017892c576c",
-      "size_bytes": 9738
+      "sha256": "97c8ef8b84522773eff0531263c8cc0b848935888bb69cb8e3cb21b5f76dd037",
+      "size_bytes": 9543
     },
     {
       "path": "tests/inkdrop-manual-search-security-smoke.py",
-      "sha256": "12dc402b2e2395cdeab82739528f851f9484992962d3992e04506b553620dd5e",
-      "size_bytes": 15281
+      "sha256": "aec0bbec0d429152c194c8995a6ea6d049a05e5fc68b7bd3171c83306294f2f3",
+      "size_bytes": 15023
     },
     {
       "path": "tests/inkdrop-manual-search-slskd-smoke.py",
-      "sha256": "f230b10568288353b15bf5440cd409f0d67ad93489146259719cec4ab0fe94b6",
-      "size_bytes": 25510
+      "sha256": "32853ca26076e708f3e0b2a8dae767dad90a032a09db49b337478cd25fe5c9c1",
+      "size_bytes": 25085
     },
     {
       "path": "tests/inkdrop-manual-search-target-unit-smoke.py",
-      "sha256": "fec0fd766ad2a6388470658993181f61cd97a18f4c1d6e88939743a87a01ade6",
-      "size_bytes": 9171
+      "sha256": "27e4a704c83351afbef69322c511063daeec545ff920205cf32938074d337aab",
+      "size_bytes": 8966
     },
     {
       "path": "tests/inkdrop-manual-search-ui-smoke.py",
-      "sha256": "73e32f2552bcfe0ebaee55805600a02a8cfbd17466eb8355d59655176c9fced1",
-      "size_bytes": 5284
+      "sha256": "53e1c7a39298789a465bd1a935799d9909a71ea0d831c5d15444da0e7788f288",
+      "size_bytes": 5211
     },
     {
       "path": "tests/inkdrop-manual-source-internal-import-auth-smoke.py",
-      "sha256": "faa792498a1244cb23ec26dbbc9dd119eca22e379bbf5fa5205a5084b2f7a615",
-      "size_bytes": 29940
+      "sha256": "032c4b29493fb8c3b7f067fed7569aeb7a045c4d80eb834841b1cd533041debe",
+      "size_bytes": 29274
     },
     {
       "path": "tests/inkdrop-no-kapowarr-comicvine-key-fallback-smoke.py",
-      "sha256": "aae03db3a114ff4b8135632dc23ed8b477ab980ac4f14692c9072532e209b517",
-      "size_bytes": 1730
+      "sha256": "b2788a106aed88159bf5f09e682e34510ca7216b65bc682577c02cc84019543a",
+      "size_bytes": 1684
+    },
+    {
+      "path": "tests/inkdrop-notification-delivery-skip-status-smoke.py",
+      "sha256": "d86bb0a97bf3345ed77bae2b3fcac0e1715afce497e82b5aaff2d2907032d63b",
+      "size_bytes": 3724
     },
     {
       "path": "tests/inkdrop-notifications-wiring-smoke.py",
-      "sha256": "9aa4899e459cf9c2bb6b880f6285d171dab0d17e857fc39393f4ffdf84f11761",
-      "size_bytes": 17455
+      "sha256": "1c1522bc0ff5853f167a1eeb8646a5fcacc8bac5e57de9b345f8626e66057009",
+      "size_bytes": 18176
     },
     {
       "path": "tests/inkdrop-opds-smoke.py",
-      "sha256": "f1543fd7a4977736d3c7e27cbf3e2f28ba3d687502115294451c102af27de6b1",
-      "size_bytes": 14591
+      "sha256": "6349409885b52718e1260ac1807c98deae7bc0861248b48cfdf493e8bb0f8309",
+      "size_bytes": 14381
     },
     {
       "path": "tests/inkdrop-operational-ui-static-smoke.py",
-      "sha256": "f6450f141b8720905ab68c7a7cc966c36ea533087d0f1da7904f5122fb4109ef",
-      "size_bytes": 17041
+      "sha256": "d9c743a36fa1b2d2595422f2fdcb00c5ce88fec52233d2bc898f2043e14a0eb5",
+      "size_bytes": 16945
     },
     {
       "path": "tests/inkdrop-operator-contracts-smoke.py",
-      "sha256": "a38d97319813dfd5ea7e1461d81446a27f94e742e9d844072e00872ec9737be1",
-      "size_bytes": 8418
+      "sha256": "0e706cec2939a25407eef33c3c25cb6684cbaea93df11e8650aa67af73a85734",
+      "size_bytes": 8237
     },
     {
       "path": "tests/inkdrop-planned-path-inspection-smoke.py",
-      "sha256": "a735b98ff16bd037e916e95ab54415a90b8e46187abac8c4848b4b0afa70fb08",
-      "size_bytes": 4804
+      "sha256": "b3e4e1723a57ce906eb37fb9377b98cddbe2434119d280ccb67bac080e5bb591",
+      "size_bytes": 4697
     },
     {
       "path": "tests/inkdrop-planned-path-live-inspection.py",
-      "sha256": "4d394fe3476734cf39229df00d9d4f0c77d07a62f0e98c84778aa6f9f83b6e7f",
-      "size_bytes": 11277
+      "sha256": "5a67d5e21f24ffd412db1bc861d0b37a00fb7d1de22170b8029030f4f83c6081",
+      "size_bytes": 11035
     },
     {
       "path": "tests/inkdrop-portability-export-smoke.py",
-      "sha256": "e0bf42e392a8deee57389e726345fe1f9720c4ee164076f0749a0ebce4b3a059",
-      "size_bytes": 11188
+      "sha256": "f5d00d4a57d8833975f4bdae55ba5f4f69f5d93fcd147570346da7b234b2fdf6",
+      "size_bytes": 10981
     },
     {
       "path": "tests/inkdrop-provider-queue-filter-evidence-smoke.py",
-      "sha256": "30915cd3c2b3121cbf3acf898edc2295caf97ebdc95c3011e42d2a166c952a3b",
-      "size_bytes": 5697
+      "sha256": "f571c4337c66eae30981f0f40aab02512109c3ae5b8e412261eaf576d36df1ad",
+      "size_bytes": 5549
     },
     {
       "path": "tests/inkdrop-provider-test-contract-smoke.py",
-      "sha256": "b8657109d95963a589a9bee8e21f8f348188a4037356f0f971dc7dbd5cacd83c",
-      "size_bytes": 15175
+      "sha256": "078be48ad773b6dcad7e6acb085f622d3a71a1d22d6b0d9d6018079498a52bd6",
+      "size_bytes": 14908
+    },
+    {
+      "path": "tests/inkdrop-prowlarr-api-url-normalization-smoke.py",
+      "sha256": "6f53dd1de225cdcc70e8fd7892d9dec3426e9f73164d0b2b4ca6e9260a64b73f",
+      "size_bytes": 9031
     },
     {
       "path": "tests/inkdrop-prowlarr-durable-credential-redaction-smoke.py",
-      "sha256": "f8994f18f4968d614c3150c399988df3a2d4f6152d019ebed342971b1aef05dc",
-      "size_bytes": 8211
+      "sha256": "bdc41c074b610e1804372fe90f9df7d1ef799ec2b2274a6fe09901f60edde10e",
+      "size_bytes": 8073
     },
     {
       "path": "tests/inkdrop-prowlarr-health-smoke.py",
-      "sha256": "e6a7c79a2cd30908c0127e55c528c84678e8ee54f8f357230dc54e46d135170c",
-      "size_bytes": 4140
+      "sha256": "b488e6937e9a741175a4ffea5dcf1442ffcfc576c58555633e757a71320996c9",
+      "size_bytes": 4037
     },
     {
       "path": "tests/inkdrop-public-docker-runtime-smoke.py",
-      "sha256": "3dcd792990bece7b2e34d09a16bcbd38c7549006a4bf76be681ae8e6f9c895f3",
-      "size_bytes": 171947
+      "sha256": "5e4f074ed26a98d5536fa4316d9605b32294fd990b818874b427b11a6a9f0478",
+      "size_bytes": 170000
     },
     {
       "path": "tests/inkdrop-public-export-runnable-smoke.py",
-      "sha256": "a131a72aa30aad54104fa5d92307322acd2b86f16565758a6f47aacf69220484",
-      "size_bytes": 4105
+      "sha256": "de352c3fc2ba3f1ba75fdcd2e765da552f9c702e7709cddcdaaa0c41f2694d03",
+      "size_bytes": 3994
     },
     {
       "path": "tests/inkdrop-public-release-safety-audit.py",
-      "sha256": "00b606a0044564735c052d9b945422530decd98491f3ce1a7f908623cd7b095c",
-      "size_bytes": 14907
+      "sha256": "e4cdff9e2516997b69c9eb30ad5eb2938382badab42802c96c694f49dd42da29",
+      "size_bytes": 14512
     },
     {
       "path": "tests/inkdrop-public-repo-export-smoke.py",
-      "sha256": "0b0dd7f4905aa033491ba39ce57f8b8ba33a6589de00b778ceb9dc151523df33",
-      "size_bytes": 25290
+      "sha256": "9ab2d0997cc281c47e8c783de4dbc5f06e8ed4373873e8214bd0f69087680107",
+      "size_bytes": 27869
     },
     {
       "path": "tests/inkdrop-public-security-smoke.py",
-      "sha256": "cb184908123353acad68426acc5384b2dea1e618a594bc7a472029826b556d9b",
-      "size_bytes": 6720
+      "sha256": "afe0568c8773d487ab9c92f397fa743e5a1d0901bf57303c2c93f355bc6bed2c",
+      "size_bytes": 6576
     },
     {
       "path": "tests/inkdrop-qa-candidate-manifest-smoke.py",
-      "sha256": "01b0e51fa2b513271f638c691bda6808a5f97a0e116c93fa573b897a8a403863",
-      "size_bytes": 4773
+      "sha256": "8c119c4ceea0add32f042743000ca5dfd227e8ed82cd07d50c9ef81cdb25eada",
+      "size_bytes": 4655
     },
     {
       "path": "tests/inkdrop-qbit-auth-smoke.py",
-      "sha256": "893ccaaa20faf2ed2a75d1542c544b5813e721f8b203e901bb9d987d1da53d52",
-      "size_bytes": 15718
+      "sha256": "cbd203f802a8ee9bd71bb368ffc0be4842405747381dbcc3c7b640127a5b7441",
+      "size_bytes": 15382
     },
     {
       "path": "tests/inkdrop-queue-claim-smoke.py",
-      "sha256": "27de457129c71459cb6688e1195cdb6ac9ecd0e6062a163d4f66b69ecd4c0967",
-      "size_bytes": 3281
+      "sha256": "f5a2926ac6a251cbad5943fec1d79e0607e759b36bc12263174d72366966004a",
+      "size_bytes": 3202
     },
     {
       "path": "tests/inkdrop-queue-sync-performance-smoke.py",
-      "sha256": "48850636480dde9d63aad8ce6a75741de275ae875a83b6bc0d349a8f08c06865",
-      "size_bytes": 14602
+      "sha256": "400641d944b78b609428e1db2fca75a920b23703c0cb26144671e5e0af2acad3",
+      "size_bytes": 14304
     },
     {
       "path": "tests/inkdrop-readiness-repair-release-year-smoke.py",
-      "sha256": "286c8ed34f3c073054b1417d2cb0362e21da79f4694e12ead5b534ebd1c7ed91",
-      "size_bytes": 2999
+      "sha256": "3fc8dcb3b808a103216aaf0c2ffb9be47e091867e42894536ca5e912f7844573",
+      "size_bytes": 2929
     },
     {
       "path": "tests/inkdrop-reading-order-prefix-import-smoke.py",
-      "sha256": "8217ebc9d73cd5ae8907ddb9cf7520c6112fd3de8246715a1583f23e78800fd2",
-      "size_bytes": 8483
+      "sha256": "048f42885bea0e087c7b1f4bd78411c73009c8aeddc4f38130a2a7efc4ecfcaa",
+      "size_bytes": 8304
     },
     {
       "path": "tests/inkdrop-reconcile-lock-observability-smoke.py",
-      "sha256": "6a1713046c18d823911718d5dd682ba4f6cd928b9f93b877f16daedf9f7cc784",
-      "size_bytes": 13991
+      "sha256": "7bbb97e9ccf0a570d167c7b528ab742096de008109120c9f5893bc21bb3638ca",
+      "size_bytes": 13707
     },
     {
       "path": "tests/inkdrop-release-notes-version-smoke.py",
-      "sha256": "c19bb288e32edaf242c6c6b944301fed7ecbd5cfa3d52c993464c8a9fa708e76",
-      "size_bytes": 4714
+      "sha256": "781fc06b51fbba16da996f9d63fdf192c4bedd342a4083a91caa0c3570bcf867",
+      "size_bytes": 4630
     },
     {
       "path": "tests/inkdrop-runtime-source-settings-smoke.py",
-      "sha256": "c79335e38f9a1f244225cc10d58528abe4b142e250817c9e1d097b629dcae3fa",
-      "size_bytes": 58857
+      "sha256": "e7f505a130c957eeabcd055f50926d38ed45f818fee879e220f9a7cc88f6b0fa",
+      "size_bytes": 57992
     },
     {
       "path": "tests/inkdrop-sab-cleanup-optional-adapter-smoke.py",
-      "sha256": "5067d887d6c9775e780c892bd44778294d8b32b661b75d4b85334e001ef49646",
-      "size_bytes": 1838
+      "sha256": "6b2eb1148c9b2c0235b0c51ae22254e887221ebc141704ae625c77d77b70f00f",
+      "size_bytes": 1781
     },
     {
       "path": "tests/inkdrop-series-activity-ui-smoke.py",
-      "sha256": "dbe5ed32ea1af619150c6a0d1fc7723c10134214bad1692f2f5bdb31c33062bf",
-      "size_bytes": 3068
+      "sha256": "b5eb32840389b64e4b7e08d033920925d13bab1e0b7d9b3787d3040e4cc08aaa",
+      "size_bytes": 3019
     },
     {
       "path": "tests/inkdrop-series-autopilot-cron-lock-smoke.py",
-      "sha256": "95c50fbd29661cdf5ac7e1e61fd26a4107cf75d2b39a28cf58bd15c817030f7a",
-      "size_bytes": 7126
+      "sha256": "63301e0178da298eb3f938d12b0e52bdd6f3d45164ce60dd3c3564e9a1d6764c",
+      "size_bytes": 6933
     },
     {
       "path": "scripts/inkdrop-series-autopilot-cron.sh",
@@ -1093,163 +1148,163 @@
     },
     {
       "path": "tests/inkdrop-series-compact-payload-smoke.py",
-      "sha256": "1511d9f6af5dae71ab8efac00d5f4d452575819f83f25051c11b7d3f66335bb0",
-      "size_bytes": 13385
+      "sha256": "f0dec939d373bf6f16ba4a5b2c12dc41b8a6ae13d6192aee11f36b8c51f7d85e",
+      "size_bytes": 13190
     },
     {
       "path": "tests/inkdrop-series-detail-performance-smoke.py",
-      "sha256": "e13766df7865bc647719bf585534ceb5c44cd0d066c52291b043a7e18e6cb7fa",
-      "size_bytes": 3603
+      "sha256": "27c952c44406f58d544ef826b463ddc61d196b202a9e1a93489ce6e3d0b6f8d4",
+      "size_bytes": 3540
     },
     {
       "path": "tests/inkdrop-series-remove-files-smoke.py",
-      "sha256": "0a865a90cc68d2e751a9d59be9006cd745ec18b50357ed39bcc0a12ab3785abe",
-      "size_bytes": 6418
+      "sha256": "17c415b0e033dc0cf25dd0344b7d7e5cc4b327fcb267b172ec75cb93720d27b2",
+      "size_bytes": 6262
     },
     {
       "path": "tests/inkdrop-settings-backup-browser-smoke.py",
-      "sha256": "bf09f3879cd344cf22f69da6b228e6c81dc2c5eb82f442b875a51a6b016b39f2",
-      "size_bytes": 3019
+      "sha256": "3ea9590f89978cfe48488ef594aa3b7762ba69d833f84908fd323f0ce78b438a",
+      "size_bytes": 2950
     },
     {
       "path": "tests/inkdrop-settings-backup-restore-smoke.py",
-      "sha256": "a4e234f7bc87924a94fa5cac05dc4b0eea12cc9d330d63243948f70ad2f3f5c8",
-      "size_bytes": 18197
+      "sha256": "7d7db4125d812ce8f1de9ddaaeb6d7aeec3571c4e7f8c627cf5d24f4d73b9a73",
+      "size_bytes": 17921
     },
     {
       "path": "inkdrop-settings-cold-open-smoke.js",
-      "sha256": "011e5da79a2e1e0bd1837f8b5363d3379840b6ae815eb33f6918a5fd1e3c7c82",
-      "size_bytes": 6623
+      "sha256": "11cf4c14c48f8211b05366f71f7ff120e50fa4dc831cccbdc4f8a2f70bba2e34",
+      "size_bytes": 6436
     },
     {
       "path": "inkdrop-settings-notifications-group-smoke.js",
-      "sha256": "6d4d3b44e4502db175f096a7573114338bfcfa7f7d41043b7d7e87328de0176d",
-      "size_bytes": 10972
+      "sha256": "b2739dfe629f87e166a389274a47905c45e57835b6ca884e999335a98f816c88",
+      "size_bytes": 10815
     },
     {
       "path": "tests/inkdrop-settings-parity-batch-smoke.py",
-      "sha256": "ed9540e40e3dffc5a6da68fd4628a6bfd0fb4c43835db2ddf3b6f72f43f5d2c2",
-      "size_bytes": 11295
+      "sha256": "7d996fb5ec5df3814c5d6fc4e5007f09264f0736f49b6ac084eaace030acc246",
+      "size_bytes": 12700
     },
     {
       "path": "tests/inkdrop-settings-registry-smoke.py",
-      "sha256": "24c23f19c6446fbcf03bb2fcdd7086cd9b6b431c50c2b5b95c57a7b8999f30f8",
-      "size_bytes": 4750
+      "sha256": "e895c0388660787ac76d6ffb0fef602967cf0587d9a3f37921eff8d1a9046015",
+      "size_bytes": 6293
     },
     {
       "path": "tests/inkdrop-settings-section-contract-smoke.py",
-      "sha256": "feb382c205cc3cfefe09eecc67fafdf53d04266c5b48c6c4e458f3ad71f03ee1",
-      "size_bytes": 11548
+      "sha256": "9f1556fade33e14dddd848adfd0c4d931b995a2332cd85e4dfa3421c808871ca",
+      "size_bytes": 11378
     },
     {
       "path": "tests/inkdrop-singleton-search-coverage-smoke.py",
-      "sha256": "8d1691ae737004bbb7d3e366615ed5df5bad69c70062f8e8ed791006d9bdfccf",
-      "size_bytes": 70180
+      "sha256": "508b70af1a102d08aacd094300edc95908fb359bcbdd80ebfda2adf3e9db3342",
+      "size_bytes": 68695
     },
     {
       "path": "tests/inkdrop-slskd-absolute-edition-gate-smoke.py",
-      "sha256": "85d07f81b10e43ee5e108b044ff090fdeb1da0f6021dc53a2212ebd2c97468f1",
-      "size_bytes": 3246
+      "sha256": "bedc5098503444ccf3a393a0cdb330c0331dc4d1b5a215a79d65e78583418f97",
+      "size_bytes": 3171
     },
     {
       "path": "tests/inkdrop-slskd-clean-filename-english-confidence-smoke.py",
-      "sha256": "64454ca7e8bc7b58e9ff6b08bd2f1f9f57375687252faaa36bd311bca8a28134",
-      "size_bytes": 3710
+      "sha256": "0295af4724c738be8fc464e1e4df82c4fd65e811fcc127dd2cf74e70d9d3195b",
+      "size_bytes": 3631
     },
     {
       "path": "tests/inkdrop-slskd-collected-edition-year-conflict-smoke.py",
-      "sha256": "e41f4a89d04665b6d05e05b578486103216fc2b7e7a46120a0260aafb8d11ea1",
-      "size_bytes": 8392
+      "sha256": "68e18345637c256718b98165c54ceef6fc27030fe2cc65ae10d6f5f47c69e97d",
+      "size_bytes": 8229
     },
     {
       "path": "tests/inkdrop-slskd-companion-duplicate-identity-smoke.py",
-      "sha256": "4d1b22712898f1f94591736cb9ecf82d8ecf537d3c7ebac411293c0d5823217a",
-      "size_bytes": 4038
+      "sha256": "171ac51a3b01642998e64a38cc467384d4ae342207c9cf3fc41c073f496fda99",
+      "size_bytes": 3943
     },
     {
       "path": "tests/inkdrop-slskd-completed-transfer-truth-smoke.py",
-      "sha256": "9e460cf2d580ef3a07c2d2275f84ecb559e669abf6045a4f43507447ba826929",
-      "size_bytes": 13049
+      "sha256": "d2f7037b6a0e0202303f6d9228c10d8fe456bdc86d53ab45a4a6c984b6128f0b",
+      "size_bytes": 13128
     },
     {
       "path": "tests/inkdrop-slskd-coverage-selection-smoke.py",
-      "sha256": "5228180fb70d9cea8d1fce626620c43fd09205bf60598be0183c8848ba1173c2",
-      "size_bytes": 7324
+      "sha256": "7ad0827ff91ad5cfc47dcca6c06c6f3e38b3113097c107adbcfed203ca6f1a73",
+      "size_bytes": 7160
     },
     {
       "path": "tests/inkdrop-slskd-failover-smoke.py",
-      "sha256": "74082ceb03e7e25f097a021ef402f9ec68bc47d524e8f0ac8d12e5f6617c886c",
-      "size_bytes": 242249
+      "sha256": "95b9016e239cbc845237615f7fc3eaa809f149590c9d393e26646c55d0aa7079",
+      "size_bytes": 238281
     },
     {
       "path": "tests/inkdrop-slskd-junk-extension-budget-smoke.py",
-      "sha256": "6edc99573d4586f29023d684663e404d0d2396d837cc59a958cba22d1217a425",
-      "size_bytes": 2668
+      "sha256": "1ff623224366584bfc38c19e955b2a5b5942ba952c264e3674c32092e1c4b698",
+      "size_bytes": 2597
     },
     {
       "path": "tests/inkdrop-slskd-no-kapowarr-identity-smoke.py",
-      "sha256": "b49d26593724254feb92f36998d1cf0a0e1ff1782bdc73f8d5b4d2aa0734a939",
-      "size_bytes": 2658
+      "sha256": "9d0c1a37aac6d9b085afdc53a727fa12d7401015824ce2844cc7d4847e4b9a40",
+      "size_bytes": 2592
     },
     {
       "path": "tests/inkdrop-slskd-query-rotation-smoke.py",
-      "sha256": "f9d902fdf0d26f2101a69df0db84f9ded2a75ab07d61f9a5572e87341bc12af2",
-      "size_bytes": 20759
+      "sha256": "8e39c45f89ec3f8fcd6ae60c321d8224e38aab082546f5b9d25870cad39a58e8",
+      "size_bytes": 20301
     },
     {
       "path": "tests/inkdrop-slskd-queue-priority-starvation-smoke.py",
-      "sha256": "7c4dd2bd84e62cb4a203c6407820e90a0c5d125ffeab5bb975090ec0928dd591",
-      "size_bytes": 2641
+      "sha256": "a2cce6d1911bd8c0e9af0ae89dddc96b51716d8318a6132c65e6e82b878734a6",
+      "size_bytes": 2566
     },
     {
       "path": "tests/inkdrop-slskd-refresh-reason-cooldown-smoke.py",
-      "sha256": "a1da9d414f954b15b7885aeed2bd4207691dba70860768e45bf3447432c20c5a",
-      "size_bytes": 2889
+      "sha256": "a055a65f392408c89c07602a0d9ebc084d1dc94d3292ae82f732ccedfb0cc06f",
+      "size_bytes": 2829
     },
     {
       "path": "tests/inkdrop-slskd-root-health-smoke.py",
-      "sha256": "fbb6f44f632c6f4c349fe63c91b48bf3d82a5f4d6a3302f842e10a723ad39bb7",
-      "size_bytes": 11395
+      "sha256": "495acf161785135d52c3d89ef0d3e759bb8f33b35861ead297af3e1a85be32c9",
+      "size_bytes": 11158
     },
     {
       "path": "tests/inkdrop-slskd-series-generalization-smoke.py",
-      "sha256": "057b267d7add09abff635e47d5d3d0238b8f47031c7641be5f01d38978eddb3c",
-      "size_bytes": 32531
+      "sha256": "41b83edea8f51b4f92fedf5d2450864ff91977b92446d5771f4fea9f43b685b4",
+      "size_bytes": 31809
     },
     {
       "path": "tests/inkdrop-slskd-series-run-handoff-smoke.py",
-      "sha256": "7792ee051e17b44230232a51b69dbb2c3a00507121573fa4af5fdb773e32c828",
-      "size_bytes": 38174
+      "sha256": "930fa1dcd1bdf524da95eed2fe2db0b64746e1cc881367d1ce177c5450d89df8",
+      "size_bytes": 37454
     },
     {
       "path": "tests/inkdrop-slskd-wait-seconds-floor-smoke.py",
-      "sha256": "051a2279495a0f763b011468ed6f403e3c540c1fd434f54c8f8abe142d0975fc",
-      "size_bytes": 4413
+      "sha256": "a86f1697c7ec8ba1bedecf59ba2ea1d33a1edf3db3d4063ad2fb214eb5fff511",
+      "size_bytes": 4321
     },
     {
       "path": "tests/inkdrop-source-query-coverage-smoke.py",
-      "sha256": "066dd8e07bc1f01b5e6fbe00adabc10d26877b817a0d138a758971d8c173af7c",
-      "size_bytes": 8547
+      "sha256": "91d35d5d01d5d83878f88aa99c3601966f82067f9b909b4c70b2a0f3d00e44a1",
+      "size_bytes": 8320
     },
     {
       "path": "tests/inkdrop-source-settings-contract-smoke.py",
-      "sha256": "c5f31cc60afc53969ca5a6cf81d62486b20e7ceb3d64162e0f806b082fa7bdae",
-      "size_bytes": 32052
+      "sha256": "a6c932b7baf8fa638154a8498cb2c9bc906f30977c31246a8ea7c4bb9559408e",
+      "size_bytes": 31510
     },
     {
       "path": "tests/inkdrop-source-worker-execution-evidence-smoke.py",
-      "sha256": "18dc6f50f9f4eed229991659199bed0e5dc6a5355fc582c57975a807d75e5702",
-      "size_bytes": 9102
+      "sha256": "28d1bd7b8e155746b3614683278f48cf5c9dde1d7b57eb300e709c26e1a7d0dd",
+      "size_bytes": 8896
     },
     {
       "path": "tests/inkdrop-source-worker-http-smoke.py",
-      "sha256": "87ce2327f49bbd0c4d860799709d2ace9cf96cb366f6d369b0bbe993a6288563",
-      "size_bytes": 17094
+      "sha256": "6ee71ef6ebc29ead376dd5f2c96957d9d6928f5c3651215b16d0436b4667c511",
+      "size_bytes": 16686
     },
     {
       "path": "tests/inkdrop-source-worker-jobs-smoke.py",
-      "sha256": "0a662f270104015b158f0342824deecf3d39939c9b810aefe0e8a0d069ba46e8",
-      "size_bytes": 196250
+      "sha256": "7aa53354738931eafe016134f3b3a7e6294d7e9b1eed1ed76995c9a07b98502c",
+      "size_bytes": 192546
     },
     {
       "path": "inkdrop-source-worker-lane-lock-smoke.sh",
@@ -1263,8 +1318,8 @@
     },
     {
       "path": "tests/inkdrop-source-worker-scheduler-smoke.py",
-      "sha256": "6129ca4873298af8c6b8a4563fad0071ec42c11e46ec632f9b8a40ad791fb4ac",
-      "size_bytes": 70588
+      "sha256": "1a3d8933702cc71c89a4655e88b6a16c09f22083b42e4f361f5e79eab566b9df",
+      "size_bytes": 77076
     },
     {
       "path": "scripts/inkdrop-source-worker-suwayomi-cron.sh",
@@ -1278,8 +1333,8 @@
     },
     {
       "path": "tests/inkdrop-standalone-entrypoints-smoke.py",
-      "sha256": "b21e0535269bb70ce5b65f5e759bf80e9001fe008a19e21a231c49a641b467c1",
-      "size_bytes": 9196
+      "sha256": "37ea3a96e358b5d05d28eca053c703bf862262fc4d04a22860ca442c630e167b",
+      "size_bytes": 9025
     },
     {
       "path": "scripts/inkdrop-state-path-contract-sync-regression-alert.sh",
@@ -1293,23 +1348,23 @@
     },
     {
       "path": "tests/inkdrop-ui-mutation-client-smoke.py",
-      "sha256": "91e2b603bbc3957f6924454cfcaa662c5b5782b553cb77f6511d141c022c8ac7",
-      "size_bytes": 2943
+      "sha256": "45873ff5efc509aeb6ecb87c7460ce8542481ac02152ae3a697c6fd0090b6aa9",
+      "size_bytes": 2897
     },
     {
       "path": "tests/inkdrop-ui-state-endpoint-contract-smoke.py",
-      "sha256": "5986eb61b55241a4e99a434962b60ba6987350f7281c42fded65e8f155d49819",
-      "size_bytes": 11385
+      "sha256": "9ebd9e396eadebbf11469b26896aa4d7f65abd7c7c76225e55e54f38e776bf05",
+      "size_bytes": 11254
     },
     {
       "path": "tests/inkdrop-update-awareness-smoke.py",
-      "sha256": "61b60b4573471e826cdb0a762cc5d8b2bb153dc020d51b9e70067203964324f2",
-      "size_bytes": 22682
+      "sha256": "c9afab419be275ecc62348218116ebee3bc4312bf0917028315e21d7e529ec31",
+      "size_bytes": 22325
     },
     {
       "path": "tests/inkdrop-utorrent-rtorrent-smoke.py",
-      "sha256": "dc2f4e00a26257519b5ceae5ab7429138486032319cb7d8f8aaadb7e82e8e9e8",
-      "size_bytes": 14239
+      "sha256": "4a3038719236cc3551932dbf0c96760539329f2f2a28de21f79c2922cffff52b",
+      "size_bytes": 13981
     },
     {
       "path": "tests/inkdrop_download_client_ownership_smoke.py",
@@ -1318,13 +1373,18 @@
     },
     {
       "path": "requirements.txt",
-      "sha256": "1fd8550f67130e8d886071365d1c6dac796df6661fe930323a5ac5a918aba45a",
-      "size_bytes": 123
+      "sha256": "d4361dd4726eec7f2b52989b20dafba2cc953c5a55c43cb8787f9d893a3f89ed",
+      "size_bytes": 115
+    },
+    {
+      "path": "tools/inkdrop_build_css.py",
+      "sha256": "9adc56055c4d6fc039fd382a55366d4c4ea620d4fe8812d987aca9dca5cc081e",
+      "size_bytes": 2791
     },
     {
       "path": "tools/inkdrop_closed_alpha_packet.py",
-      "sha256": "930ef5b49f7322c2165697f762e88ac104da5f75d85ae38a337bde4f4a7c78ef",
-      "size_bytes": 20345
+      "sha256": "18294c570d2e36ba3ff4477f6c61f8429835a766b44a204e5aa64fc66af3476e",
+      "size_bytes": 19926
     },
     {
       "path": "tools/inkdrop_closed_alpha_update_rehearsal.sh",
@@ -1333,73 +1393,73 @@
     },
     {
       "path": "tools/inkdrop_compose_deployment_plan.py",
-      "sha256": "5ad1cc146d7a4a53c06e5a7a9b67043d494b518731557594807449e31706aa15",
-      "size_bytes": 11735
+      "sha256": "dc9defcdb8d189b25b0fd2ceb593a8bea3467d388b5edbcc188bbf65fe8ecaca",
+      "size_bytes": 11479
     },
     {
       "path": "tools/inkdrop_config_surface_audit.py",
-      "sha256": "97b968f0a6416f59f5cbf598114dbaceb7c80725afb0986a09d438c937754911",
-      "size_bytes": 2378
+      "sha256": "d25cf28175f89be9a245736c31519847fcc820e86689648a64d5d41c33a6f1cc",
+      "size_bytes": 2301
     },
     {
       "path": "tools/inkdrop_docker_context_manifest.py",
-      "sha256": "219e4d24864f8e5a0757c1af716829054ccf4094cd34399756642eef74e023c5",
-      "size_bytes": 19308
+      "sha256": "cb27eaa856fe15b8848381fcac7c8d82c6c01e69df4ed758690536c35433fba1",
+      "size_bytes": 20491
     },
     {
       "path": "tools/inkdrop_github_release.py",
-      "sha256": "a47255f428180e2d8a857d99aed67d837380817a506c80e4cfa21bd762bb1758",
-      "size_bytes": 25975
+      "sha256": "c4342e65c8fb36e748a966ac65a5e07d5501a64992091df5ebc488070a5fc33e",
+      "size_bytes": 25435
     },
     {
       "path": "tools/inkdrop_install_support_summary.py",
-      "sha256": "51bc7c11b63a48834741f36ac49da5698c4914d9e5be59983e5b50c51fa1fe22",
-      "size_bytes": 16128
+      "sha256": "6654d446c31fc0de9b37e2d5e921c4ce8b3fcb4a9428cd7ccfec6c7791e3622f",
+      "size_bytes": 15767
     },
     {
       "path": "tools/inkdrop_public_http_smoke.py",
-      "sha256": "355e746cfe5c78ffc204d03856e8d5f801b242131692e2840e2f52cc866a8e0f",
-      "size_bytes": 12493
+      "sha256": "c1e78b6f994f7ea24fdf46795c3aef627c000999ba0bdd2667b71f45498618e3",
+      "size_bytes": 12154
     },
     {
       "path": "tools/inkdrop_public_release_check.py",
-      "sha256": "a2a19887aa9aa61e7e820eda56222fa7cb4c2b918895b25e587ce3ba2abd6516",
-      "size_bytes": 51425
+      "sha256": "a3d157d05e66a003cf112813526260a47ad0406ab81dfd5fe94fc6fef91d5c65",
+      "size_bytes": 51491
     },
     {
       "path": "tools/inkdrop_public_repo_export.py",
-      "sha256": "b6df332cf8c80cf5092b730b77c788e7878b38a9c41b611a91a575a86c9229c8",
-      "size_bytes": 32782
+      "sha256": "d3703a089002e597608df8f68d1409460a6f1363144a905a4dbe6bbe05176397",
+      "size_bytes": 33741
     },
     {
       "path": "tools/inkdrop_qa_candidate_manifest.py",
-      "sha256": "cb078f8b87a1f9709400bf891f55cc4d7a605682656a2bf9dac69b14477732b3",
-      "size_bytes": 3156
+      "sha256": "b01a29564e8ae4fd20c28c9b3e260c25778483e1f565fbc8a185e63269404a93",
+      "size_bytes": 3079
     },
     {
       "path": "tools/inkdrop_release_evidence_bundle.py",
-      "sha256": "43f6707645713e42a89dc26fa031fe3fea4dfd43c6da55713a006f7142c059dc",
-      "size_bytes": 13906
+      "sha256": "dd587c8b1b2a49537e21394c5a81d9e0c300a2a8c68dd6ce62c3cbc948c27333",
+      "size_bytes": 13548
     },
     {
       "path": "tools/inkdrop_run_smoke_suite.py",
-      "sha256": "011cb0c47a4794b12dbab4e474c9661b90b0fcf7c54e8bffe275f9a17c130a9b",
-      "size_bytes": 10583
+      "sha256": "c6bf981b534cba4f3a625d0edf4a77db897e05f430b72f86990e9e74844985ec",
+      "size_bytes": 11103
     },
     {
       "path": "tools/inkdrop_settings_api_surface_audit.py",
-      "sha256": "256ad762a870538a11a849715ebe2f7c909df5461df48b3daa3f896ebb906c97",
-      "size_bytes": 13211
+      "sha256": "fddf505ba21faff1f8cfdb0249414ccae78f350ab4acc12da7f9d2383bc6d227",
+      "size_bytes": 12939
     },
     {
       "path": "tools/inkdrop_settings_sync_smoke.py",
-      "sha256": "bed8dac9120c3a50c6af893644fd3ee5e5aa8570c16dc2d133d9de1cec9aecd8",
-      "size_bytes": 10635
+      "sha256": "b8ac3842c62783bfe0303c086e1863e9bb0bd65f13be725c74804b9a830306c3",
+      "size_bytes": 10418
     },
     {
       "path": "tools/inkdrop_state_schema_audit.py",
-      "sha256": "d84478e51bf36ae4de556d8c8d08c12be49a03853e17efbe5e73ed691e830d6b",
-      "size_bytes": 48134
+      "sha256": "4c45929a8d3e1d1545c52b0843becbc26ed89a1b237fb9b2ca2594cd306dbe77",
+      "size_bytes": 47231
     },
     {
       "path": "tools/inkdrop_suwayomi_fresh_volume_rehearsal.sh",
@@ -1408,8 +1468,8 @@
     },
     {
       "path": "tools/inkdrop_web_surface_audit.py",
-      "sha256": "2e79fb791250460f93d167713de19746618cb73053c62da6d0c7239be61913d6",
-      "size_bytes": 8320
+      "sha256": "b60673d1e78a71b3765e469466cbf595a3e8fa3cddad583f4e63d2fb04bbc620",
+      "size_bytes": 8097
     },
     {
       "path": "web/frontend/index.html",
@@ -1443,8 +1503,8 @@
     },
     {
       "path": "web/frontend/src/main.tsx",
-      "sha256": "de6cda07c6f7abb3afcb86fc27cff656732a8eec1df154f4d6a7315ec2d43794",
-      "size_bytes": 3272
+      "sha256": "f1381eadf638568770bd406da2a81a1684eaa5d796f904e8709bf39bd051b052",
+      "size_bytes": 3397
     },
     {
       "path": "web/frontend/src/rowActions.ts",
@@ -1458,18 +1518,23 @@
     },
     {
       "path": "web/frontend/src/sections/History.tsx",
-      "sha256": "e9def92b632ce028580390ab6bc3eb3316aaff07ab3b61d29c4b29be845a9cd4",
-      "size_bytes": 17495
+      "sha256": "14cc8dbad17b19d9c549df66fd8fe0cfe039ec2d4da9e72ce00c3debf8b93f89",
+      "size_bytes": 19215
     },
     {
       "path": "web/frontend/src/sections/ManualReview.tsx",
-      "sha256": "8ac0ac9f94a2c2d6cd4b1c80ab2d087b45e0c2c65b136d3f718840c9d5ba0963",
-      "size_bytes": 14051
+      "sha256": "e4b49936da1d23de9585037f74b7264916a9f31d1a7a00aac06eac32f0bf023e",
+      "size_bytes": 22052
     },
     {
       "path": "web/frontend/src/sections/Queue.tsx",
-      "sha256": "911a86cb23dcf31f10d88f38c8e378f32366072293eba2621661e3f6db178fd8",
-      "size_bytes": 20727
+      "sha256": "27531540aa0d1431f69346c5f49b787e0ed89d70d834bfdb784068c156b71fbb",
+      "size_bytes": 27557
+    },
+    {
+      "path": "web/frontend/src/sections/ReliabilityView.tsx",
+      "sha256": "b2e4a138c071bcb9777933a874bdf0a77fae0f6865ca78b9efdce9db09c2fef0",
+      "size_bytes": 14505
     },
     {
       "path": "web/frontend/src/sections/Series.tsx",
@@ -1478,8 +1543,8 @@
     },
     {
       "path": "web/frontend/src/sections/SeriesDetail.tsx",
-      "sha256": "4d42c9562354ac4d2ff57e3db3c32690216ff777da06bc39e246179e9c4aa2ac",
-      "size_bytes": 23796
+      "sha256": "ac9c2bb77c6b310a0a0dda3af754ad9c1b841d5299e617646bf10c8268ff39da",
+      "size_bytes": 23908
     },
     {
       "path": "web/frontend/src/sections/Wanted.tsx",
@@ -1488,23 +1553,28 @@
     },
     {
       "path": "web/frontend/src/sections/historyTypes.ts",
-      "sha256": "fc69cc4b1401940b592959466793ea8e9ebfada37fb9e67bc8584996180e26a8",
-      "size_bytes": 1245
+      "sha256": "5f45b7d58f1933fada81dc30eb6c3b5b65b279531cfd7f00f84a789e7362e738",
+      "size_bytes": 1267
     },
     {
       "path": "web/frontend/src/sections/manualReviewTypes.ts",
-      "sha256": "e263ca6c8496c22cc4a2950af3a223128d6f49d0b1c6c3a3a8df960c8495f2b4",
-      "size_bytes": 2171
+      "sha256": "543e096c252f52240f2960b6939940d725db4ca91da473a29fed3774f01f6947",
+      "size_bytes": 2741
     },
     {
       "path": "web/frontend/src/sections/queueTypes.ts",
-      "sha256": "b8c17d01ff9b36752bb75cd5b3e4e6a973e21b9ed6b3fc41e8dcf60f8795b0c7",
-      "size_bytes": 3029
+      "sha256": "eddcdcbb5d3e2e97a31edd3eb7bbc157bbcdd1bfa5bd85a261b97c9086a8e688",
+      "size_bytes": 3357
+    },
+    {
+      "path": "web/frontend/src/sections/reliabilityTypes.ts",
+      "sha256": "a82be3654410782db534630e42af9843a8828a4b50a263790c62b3686e36e901",
+      "size_bytes": 2291
     },
     {
       "path": "web/frontend/src/sections/seriesDetailTypes.ts",
-      "sha256": "01ce1740f2efb5d340dc2ab38b30d865790084d9bef66945b8c9b8a5358590f1",
-      "size_bytes": 23690
+      "sha256": "e90c2f8d157c828b7b998135e23d0be8ac5d4a4c57b1576c47052b677aea518e",
+      "size_bytes": 23736
     },
     {
       "path": "web/frontend/src/sections/seriesTypes.ts",
@@ -1533,8 +1603,13 @@
     },
     {
       "path": "web/static/css/inkdrop.css",
-      "sha256": "864f16ffd4f6592e354b9b2cc2a3f7ec79172120cf9fd9cc8e264b9439e3584d",
-      "size_bytes": 770219
+      "sha256": "9a6106fade89911b9f9e72db7a61b18fe4d0199644626b7471ed319204eadeda",
+      "size_bytes": 780786
+    },
+    {
+      "path": "web/static/css/mobile.css",
+      "sha256": "a584dddd1dea4e411a1304bcb4adb941d4345364fc07afd58637086eebcdf15d",
+      "size_bytes": 8390
     },
     {
       "path": "web/static/css/src/01-base-and-navigation.css",
@@ -1568,8 +1643,8 @@
     },
     {
       "path": "web/static/css/src/07-series-detail.css",
-      "sha256": "cc36a0d8a6a970d83abb28809a24eccbeeb737c1b280fe9e51a46b5a449a1e6d",
-      "size_bytes": 58989
+      "sha256": "d3b9d329544701f21ff0ea8d53fca78fa8206694e5bd865ab7868f0e7517d1b3",
+      "size_bytes": 58973
     },
     {
       "path": "web/static/css/src/08-activity-page.css",
@@ -1598,8 +1673,8 @@
     },
     {
       "path": "web/static/css/src/13-download-clients-and-activity.css",
-      "sha256": "1efc3b0a66a5f7a10a6b6d9100e85e372c0ba5a15f0d4629a1f02def3417b348",
-      "size_bytes": 44545
+      "sha256": "2feec463ab7e38006afd9785d66e91fcdaf54fde2b8c8188b1627b8a68bdd360",
+      "size_bytes": 45604
     },
     {
       "path": "web/static/css/src/14-release-calendar.css",
@@ -1618,8 +1693,18 @@
     },
     {
       "path": "web/static/css/src/17-react-islands.css",
-      "sha256": "4a41bc45156126ecc7e13df226a04ee34517ddecedc65477045674ecfcfe9ac2",
-      "size_bytes": 28456
+      "sha256": "aa83234c623c12f9b94777e33e71bbb05d9bbc1a07f53bcabf68e33393379b6b",
+      "size_bytes": 29231
+    },
+    {
+      "path": "web/static/css/src/18-pull-list.css",
+      "sha256": "7cfeb3cab97c90b1c7e221d1dfda5302f47c705672e48eb984995604732abad6",
+      "size_bytes": 3207
+    },
+    {
+      "path": "web/static/css/src/19-reliability-view.css",
+      "sha256": "a813ef2b9e296657425c97b74086bd32be05ca9225b1dc3bd0b7218ac71d00b2",
+      "size_bytes": 5542
     },
     {
       "path": "web/static/img/inkdrop-auth-backdrop.webp",
@@ -1633,8 +1718,8 @@
     },
     {
       "path": "web/static/js/inkdrop-api.js",
-      "sha256": "af0a46f70011a282c8cad51033aa10ec17a68db696c757699e919a1aaee34dda",
-      "size_bytes": 10156
+      "sha256": "b2a1a7c9794f4616957ea52e5be71ee30355533eb4eb034285a19796add8733d",
+      "size_bytes": 10174
     },
     {
       "path": "web/static/js/inkdrop-auth-ui.js",
@@ -1648,13 +1733,18 @@
     },
     {
       "path": "web/static/js/inkdrop-manual-search.js",
-      "sha256": "8287db592e328ddf087479fa9a5b54d7feca408b9d9246eb6d9a5552fcbb90a3",
-      "size_bytes": 38643
+      "sha256": "5a71176f2289893f0deef28adf2c752e92a7622fdd285f99c743335946fb00bf",
+      "size_bytes": 39323
     },
     {
       "path": "web/static/js/inkdrop-missing-recovery.js",
-      "sha256": "f0384edae5efb036203149ac668f5f2927b4eb3a533f86790f5a7a88e4d1115d",
-      "size_bytes": 18898
+      "sha256": "0c075eef2996ac0eeac28453798869d27c126da96339a53fa9d430a770909cd0",
+      "size_bytes": 19358
+    },
+    {
+      "path": "web/static/js/inkdrop-mobile.js",
+      "sha256": "72b9ad16d98a2698fd296e2dfcd051a4d6ce0ad48dc589237036da3b0eedbcf2",
+      "size_bytes": 15209
     },
     {
       "path": "web/static/js/inkdrop-operational-bootstrap.js",
@@ -1688,46 +1778,46 @@
     },
     {
       "path": "web/static/js/inkdrop-version-about.js",
-      "sha256": "8ebe32fba8c81f419c269b6ab079a3297ba314ab0492ee88266ebb2fb2fab48a",
-      "size_bytes": 27165
+      "sha256": "b1892a214cfff52fe99aebcbea7163ef346ca1047584f4ea3add26b36012a998",
+      "size_bytes": 28966
     },
     {
       "path": "web/tests/download-clients-settings-browser-smoke.js",
-      "sha256": "55f4d2a281546f33f2560833f2c724d3c479f172274194489e52f753c992e0f6",
-      "size_bytes": 10090
+      "sha256": "fcf7195f51338374f5abc497c8d2ab0ef45c9ce2e2eccd9af690954811f6770f",
+      "size_bytes": 9948
     },
     {
       "path": "web/tests/fixtures/auth-first-run.html",
-      "sha256": "e236688e18bfeaebfebacc4e6248f3373d6d1a30227bd7abcde3b95da04316e0",
-      "size_bytes": 5176
+      "sha256": "d17165e444b3fcd6d8046c78b837ca63fbf56f0098fd9f7b80f42c13e2ad9eda",
+      "size_bytes": 5077
     },
     {
       "path": "web/tests/fixtures/download-clients-settings.html",
-      "sha256": "ff4651a433df866bd2abdabb6f2fe5830345145352d8fee46f4f53e6a238a041",
-      "size_bytes": 7541
+      "sha256": "410b85e001b0f04a4342e565ee5e698154ece3435667e62e1d2b18e7e5c36e7a",
+      "size_bytes": 7437
     },
     {
       "path": "web/tests/fixtures/history-taxonomy-v2.json",
-      "sha256": "76bf9bf851467c146e287bfa4b95021d823b064813fd755a78e581393b1df4a6",
-      "size_bytes": 3662
+      "sha256": "3d9cae5af735ba63e88c9e7c83b179245884fc636417bc374bfb56718ab59592",
+      "size_bytes": 3642
     },
     {
       "path": "web/tests/fixtures/manual-search.html",
-      "sha256": "28380f1d5255e5ceef88d23cb54356c51ef341f8c2ea1006fa0703dfee61482f",
-      "size_bytes": 8937
+      "sha256": "51aed775a91dde9970565cea1b033c345d8dd292026ed841f27897dac5b52d3b",
+      "size_bytes": 8824
     },
     {
       "path": "web/tests/manual-review-load-browser-smoke.js",
-      "sha256": "cc7058f5c9bf1d1e532e7a860d7be4371145f359776707d980ade8b79da9159c",
-      "size_bytes": 6054
+      "sha256": "fab03a6dd114d63f25c48149e4e328d334674b7fb6644eca3a095943e01bcb4b",
+      "size_bytes": 5921
     },
     {
       "path": "web/tests/settings-backup-restore-browser-smoke.js",
-      "sha256": "aaca6697233dc8e86af9f97ec57270ea50f86d80794218a9729c61cc23883709",
-      "size_bytes": 3790
+      "sha256": "dd79c3ff8e7c774814571d8130db92a0b062b42820b495ab3e1ad7a64c72303e",
+      "size_bytes": 3726
     }
   ],
   "schema": "inkdrop.public_repo_export.v1",
   "schema_version": 1,
-  "total_size_bytes": 18923904
+  "total_size_bytes": 19365510
 }

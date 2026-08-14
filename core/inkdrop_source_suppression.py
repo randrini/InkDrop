@@ -21,6 +21,16 @@ CONTRACT_VERSION = 2
 
 SOURCE_MEMORY_REASON = "known_bad_source_candidate"
 
+# source_memory_decision() only applies a cooldown when a caller passes
+# cooldown_seconds; every real caller threads that value from
+# --source-memory-cooldown-seconds / INKDROP_SOURCE_MEMORY_COOLDOWN_SECONDS,
+# which has no default, so production always passed None and suppression
+# never expired. This is the fallback applied when no explicit value (None
+# or "") reaches source_memory_decision, matching the 7-day TTL convention
+# already used for the analogous artifact_bad_content_memory cache
+# (ARTIFACT_BAD_CONTENT_MEMORY_TTL_SECONDS, inkdrop_completed_import.py).
+DEFAULT_SOURCE_MEMORY_COOLDOWN_SECONDS = 7 * 24 * 3600
+
 LEGACY_DIRECT_DOWNLOAD_INFRASTRUCTURE_REASONS = {
     "download_write_failed",
     "http_request_failed",
@@ -646,13 +656,15 @@ def source_memory_decision(
         return decision
 
     now = time.time() if now is None else float(now)
-    if cooldown_seconds not in (None, ""):
-        retry_after = float(found.get("last_seen_at") or 0) + max(0, float(cooldown_seconds or 0))
-        decision["retry_after"] = retry_after
-        decision["retry_after_iso"] = inkdrop_state.utc_stamp(retry_after) if retry_after else ""
-        if retry_after and now >= retry_after:
-            decision.update({"reason": "cooldown_expired", "suppressed": False})
-            return decision
+    effective_cooldown_seconds = (
+        cooldown_seconds if cooldown_seconds not in (None, "") else DEFAULT_SOURCE_MEMORY_COOLDOWN_SECONDS
+    )
+    retry_after = float(found.get("last_seen_at") or 0) + max(0, float(effective_cooldown_seconds or 0))
+    decision["retry_after"] = retry_after
+    decision["retry_after_iso"] = inkdrop_state.utc_stamp(retry_after) if retry_after else ""
+    if retry_after and now >= retry_after:
+        decision.update({"reason": "cooldown_expired", "suppressed": False})
+        return decision
 
     decision.update({"reason": SOURCE_MEMORY_REASON, "suppressed": True})
     return decision

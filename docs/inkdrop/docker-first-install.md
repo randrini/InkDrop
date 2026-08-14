@@ -34,9 +34,12 @@ packet's identity commands before entering any settings. A healthy container
 does not by itself prove candidate identity or workflow readiness.
 
 Create the mount directories as the account that administers Compose. The
-current image runs as root inside the container and may create root-owned
-descendants; preserve administrator backup/restore access and do not use
-blanket `0777` permissions.
+container runs as root unless you opt in: set `PUID`/`PGID` (a common choice
+is `1000:1000` -- see [Container User (PUID/PGID)](#container-user-puidpgid))
+to have the entrypoint remap its runtime user and fix ownership of the mount
+points at startup instead, so a fresh install's descendants end up owned by
+that UID/GID rather than root. Preserve administrator backup/restore access
+and do not use blanket `0777` permissions.
 
 ## Development source build
 
@@ -285,11 +288,33 @@ job, or a hung critical job makes the worker unhealthy.
 
 ## Backup And Restore
 
+Settings > General > Full backups can create, list, download, delete, and
+**import and restore** a full backup archive directly from the browser --
+including a `.zip` from another InkDrop instance or an older version, chosen
+with a file picker. Restoring previews the archive first (schema/quick-check
+validation, what it contains, path warnings for settings that point at a
+location that does not exist on this host) and requires an explicit
+confirmation before anything is written; the state and auth databases it
+replaces are snapshotted into the backup directory first. InkDrop must be
+restarted afterward for a restore to take effect. The rest of this section
+covers the same operations from the command line, which remains the only way
+to restore into a *different* target directory than the live one (for
+side-by-side inspection before cutting over).
+
 InkDrop includes a small config/state backup helper for public installs:
 
 ```bash
 docker compose exec inkdrop python -B core/inkdrop_backup_restore.py backup
 ```
+
+`docker compose exec` runs as root by default even when the container itself
+starts as a remapped `PUID`/`PGID` -- see
+[Container User (PUID/PGID)](#container-user-puidpgid). A restore run this way
+writes root-owned files, which the running InkDrop process may then be unable
+to write back to if it's running as a non-root user. Add `--user inkdrop` (or
+`--user "$PUID:$PGID"`) to the `exec` commands in this section when you're
+running with a custom PUID/PGID, or `chown` the restored files back to that
+UID/GID before restarting.
 
 The archive includes a SQLite state backup, a redacted config/settings export,
 a secret-reference manifest without secret values, and a restore manifest. It
@@ -713,6 +738,84 @@ The compose file uses neutral container paths:
 - `/staging`: InkDrop-owned staged downloads and pack extraction workspace
 - `/manual-inbox`: user-dropped files for inspection/import
 - `/library`: optional local library root mount
+
+## Container User (PUID/PGID)
+
+The image still starts as root by default, so files InkDrop creates under
+`/config`, `/state`, `/staging`, `/manual-inbox`, and `/library` end up
+root-owned on the host unless you tell it otherwise. This is fully opt-in:
+leaving PUID/PGID unset (the case for every existing install, since they
+were never a thing before this feature shipped) keeps InkDrop running as
+root exactly as before -- upgrading never changes this on its own. Two ways
+to opt in:
+
+**PUID/PGID environment variables** (recommended; matches the convention used
+by LinuxServer.io and other self-hosted `*arr`-style images):
+
+```env
+PUID=1000
+PGID=1000
+```
+
+`docker-compose.yml` passes these through unset unless you set them --
+there is no baked-in default. Once both are set, `inkdrop-docker-entrypoint.sh`
+remaps its built-in `inkdrop` account to that UID/GID at startup, fixes
+ownership of the mount points, and then drops root before
+`python -B core/inkdrop_container_start.py` ever runs. Find your host
+account's IDs with `id -u` / `id -g` if you want files to land as your own
+user. Setting only one of PUID/PGID fills the other in as `1000`.
+
+Ownership is fixed differently depending on what a mount holds:
+
+- `/config` and `/state` are InkDrop's own working data (settings, database,
+  logs, cache, backups) and are `chown -R`'d on every start. These are
+  bounded by log rotation/retention settings, so a recursive chown here stays
+  cheap.
+- `/staging`, `/manual-inbox`, and `/library` can hold an operator's own
+  media or a large number of transient files. Only the mount point itself is
+  `chown`'d (not recursively) -- enough for InkDrop to create new
+  subdirectories with correct ownership as it imports. Pre-existing content
+  under `/library` is left untouched; InkDrop only needs the containing
+  folder to be writable to add new files, and a recursive chown across a
+  large comics/manga library would be slow for no functional benefit. If you
+  are migrating an existing library from a root-owned install and want it
+  fully reowned too, set `INKDROP_CHOWN_LIBRARY=1` for one startup (this can
+  take a long time on a large library). Set `INKDROP_SKIP_CHOWN=1` to skip
+  the shallow chown step entirely if you manage mount ownership yourself.
+
+The entrypoint stays silent on a normal start -- `docker compose run`/`exec`
+don't reliably keep a container's stdout and stderr as separate streams from
+the caller's side, and this repo's own release tooling pipes container
+output straight into a JSON parser. Set `INKDROP_ENTRYPOINT_VERBOSE=1` to get
+the `[inkdrop-entrypoint] ...` status lines back for interactive
+troubleshooting (what UID/GID it remapped to, whether PUID/PGID were unset
+and it stayed root). A failed `chown` is never silenced by this flag --
+those warnings always print to stderr, since a partially-failed privilege
+drop needs to be visible for you to diagnose EACCES failures afterward.
+
+**Compose `user:` directive** (alternative): set `user: "UID:GID"` on both
+the `inkdrop` and `inkdrop-worker` services instead. Docker then starts the
+container directly as that UID/GID with no root step at all -- InkDrop never
+runs as root, but it also can't create the `inkdrop` account or `chown`
+anything itself. You are responsible for making sure `/config`, `/state`,
+`/staging`, `/manual-inbox`, and `/library` are already owned by that UID/GID
+on the host before starting the container; preflight will report an
+unwritable-path failure instead of importing anything if they aren't.
+
+**Precedence if both are set:** Docker resolves the container's starting user
+before the entrypoint script runs at all, so `user:` always wins when it
+names a non-root UID -- there is no root left for PUID/PGID's account/chown
+logic to use. The entrypoint detects this (the process isn't UID 0) and logs
+`Ignoring PUID/PGID -- container started as non-root UID ...` instead of
+silently doing nothing. Setting `PUID=0`/`PGID=0` explicitly is honored (runs
+as root, with a warning) rather than treated as "unset".
+
+`docker compose exec` sessions default to root regardless of which path you
+use, because the image's declared user stays root (only the entrypoint's
+runtime remap changes who PID 1 actually runs as). Add `--user inkdrop` (or
+`--user "$PUID:$PGID"`) to an `exec` command -- for example the backup/restore
+commands below -- if you need files it writes to match the container's
+remapped ownership.
 
 ## Existing Arr Stack Install
 

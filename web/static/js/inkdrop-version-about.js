@@ -49,6 +49,23 @@
   // complete release history without adding old entries to every page load.
   var DETAILED_RELEASES = Object.freeze([
     publicRelease({
+      version: "v0.1.10",
+      slug: "v0-1-10",
+      released_at: "2026-08-14",
+      title: "Pull List, full-backup import, and a large matching and security pass",
+      summary: "Adds Pull List, a full-backup import/restore workflow with a preview step, an Acquisition Reliability view with recovery controls, and Metron as a fallback metadata source. Also stops manga/comic classification reverting on every sync.",
+      highlights: [
+        "Manga and comic classification no longer reverts on every library sync -- it corrects itself now, and a manual correction sticks.",
+        "Added Pull List, a week-boxed view of what's publishing for the series you follow, plus a lightweight mobile status view at /m.",
+        "Added a full-backup import/restore workflow with a safety preview step; previewing a large library's backup dropped from about two minutes to about a second.",
+        "Added an Acquisition Reliability view with per-item lifecycle tracking, and Recovery controls to retry through a different source, block a release, or reopen a stuck import.",
+        "Prowlarr sends its API key in the header only by default now, keeping it out of proxy and access logs, and its health checks report real failures instead of swallowing them.",
+        "Fixed queue items stuck on \"Importing\" after the transfer had already finished, and manga volume/chapter imports silently stalling in operator review.",
+        "Fixed Edition Indifferent and the Monitored/Auto-Grab toggles turning themselves back on when a request sent \"false\" as a string instead of a real boolean.",
+        "Fixed a duplicate-series merge leaving issue and collection records pointed at the wrong series, and added Metron as an optional fallback comic metadata source."
+      ]
+    }),
+    publicRelease({
       version: "v0.1.09",
       slug: "v0-1-09",
       released_at: "2026-08-10",

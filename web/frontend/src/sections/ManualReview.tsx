@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { request, InkDropApiError } from "../api";
+import { useRowActions } from "../rowActions";
 import type { ManualReviewRow, ManualReviewViewPayload } from "./manualReviewTypes";
 
 // 10 per page: each row is a decision, not a log line -- a short page
@@ -38,8 +39,17 @@ function isAutomaticWork(row: ManualReviewRow): boolean {
 }
 
 function isHumanDecision(row: ManualReviewRow): boolean {
-  if (isAutomaticWork(row)) return false;
+  // The server already decided eligibility (manual_review_canonical_snapshot
+  // -> apply_manual_review_contract) before this row ever reached the
+  // client, so an explicit true here is authoritative -- check it before
+  // isAutomaticWork's text-sniffing regex, not after. A genuinely actionable
+  // row (e.g. a stuck import review, state "importing") can still contain
+  // words like "import"/"download"/"verify" in its status text, which used
+  // to make isAutomaticWork misclassify it as background automatic work and
+  // silently drop it here while total_count (server-side) still counted it
+  // -- the pager/badge and the rendered rows disagreeing.
   if (row.manual_review_actionable === true) return true;
+  if (isAutomaticWork(row)) return false;
   const text = decisionText(row);
   return /approve|approval|ignore|alias|choose|manual decision|needs decision|human decision|pack_requires_review|requires_review|repair|blocked|policy_block|language_blocked|destination_conflict|ambiguous/.test(
     text,
@@ -60,6 +70,28 @@ function reasonText(row: ManualReviewRow): string {
   return row.review_reason || row.reason || row.why_not_grabbed || row.activity_summary || "";
 }
 
+// Distinguishes a stuck IMPORT (file downloaded, verification/import failed)
+// from a stuck SEARCH -- Reopen Import only makes sense for the former.
+function isImportStuck(row: ManualReviewRow): boolean {
+  const state = String(row.state || "").toLowerCase();
+  if (state === "importing" || state === "verified") return true;
+  return /import/i.test(decisionText(row));
+}
+
+// Manual Review rows come from two different tables (manual_review_canonical_
+// snapshot() in inkdrop_state.py): queue_rows()-origin rows, whose own `id`
+// already IS the queue_items id, and review_exceptions-origin rows (any row
+// with `origin` set), whose `id` is a review_exceptions id instead -- the
+// linked queue item, if any, only appears at `linked_entities.queue_id`.
+// Treating `id` as interchangeable for both was RECOVERY-P1-02 (fixed
+// 2026-08-06): action buttons 404'd for every review_exceptions-only row.
+// These new retry/block/reopen actions operate on queue_items, so they must
+// resolve the real queue id per row, and stay hidden when none exists.
+function queueIdFor(row: ManualReviewRow): string {
+  if (row.origin) return row.linked_entities?.queue_id || "";
+  return row.id || "";
+}
+
 // Human copy + tone for the raw review-reason strings ("weak_filename_
 // unit_evidence" read as leaked internals in the list). Known reasons get
 // deliberate phrasing; the fallback title-cases whatever arrives, since
@@ -75,6 +107,7 @@ const REASON_META: Record<string, { label: string; tone: string }> = {
   policy_block: { label: "Blocked by policy", tone: "bad" },
   language_blocked: { label: "Blocked by language rule", tone: "bad" },
   staged_file_low_confidence: { label: "Staged file mismatch", tone: "warn" },
+  qbit_torrent_completed_outside_expected_save_path: { label: "Torrent finished in the wrong folder", tone: "bad" },
 };
 
 function reasonBadge(row: ManualReviewRow): { label: string; tone: string } | null {
@@ -128,6 +161,7 @@ export function ManualReview({ payload }: { payload: ManualReviewViewPayload }) 
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkIgnoring, setBulkIgnoring] = useState(false);
+  const { pendingIds, doneIds, actionError, clearActionError, runRowAction } = useRowActions(() => loadPage(offset));
 
   // A fresh `payload` reference arrives whenever the surrounding shell
   // re-fetched this section on our behalf -- filter change, section
@@ -141,6 +175,7 @@ export function ManualReview({ payload }: { payload: ManualReviewViewPayload }) 
     setHasMore(Boolean(payload.has_more));
     setManualReviewFilter(payload.manual_review_filter || "actionable");
     setError(null);
+    clearActionError();
     // A fresh payload means the previously selected rows may no longer be on
     // this page (or may have just been ignored/approved) -- stale ids left
     // checked would silently no-op on the next bulk action.
@@ -175,10 +210,79 @@ export function ManualReview({ payload }: { payload: ManualReviewViewPayload }) 
     }
   }
 
+  // Manual Review rows are queue_items rows under a different lens for the
+  // queue_rows()-origin half of this view (queueIdFor() resolves which id to
+  // use for either half) -- these reuse the exact same Queue-page endpoints
+  // rather than a Manual-Review-specific copy.
+  function runRetry(row: ManualReviewRow) {
+    const queueId = queueIdFor(row);
+    void runRowAction(row.id, rowTitle(row), "Queued", async () => {
+      const data = await request<{ ok: boolean; result?: { reason?: string } }>("/api/inkdrop-state/queue/run", {
+        method: "POST",
+        body: { id: queueId, revision: row.revision },
+      });
+      if (!data.ok) throw new InkDropApiError("Could not retry this item.", { status: 200, code: "mr_retry_failed" });
+    });
+  }
+
+  function runRetryNewSource(row: ManualReviewRow) {
+    const queueId = queueIdFor(row);
+    void runRowAction(row.id, rowTitle(row), "Queued", async () => {
+      const data = await request<{ ok: boolean; result?: { reason?: string } }>("/api/inkdrop-state/queue/retry-new-source", {
+        method: "POST",
+        body: { id: queueId, revision: row.revision },
+      });
+      if (!data.ok) {
+        const reason = data.result?.reason;
+        throw new InkDropApiError(
+          reason === "no_alternate_source_available"
+            ? "No alternate source is configured for this item -- every source already failed."
+            : "Could not retry with another source.",
+          { status: 200, code: "mr_retry_new_source_failed" },
+        );
+      }
+    });
+  }
+
+  function runReopenImport(row: ManualReviewRow) {
+    const queueId = queueIdFor(row);
+    void runRowAction(row.id, rowTitle(row), "Reopened", async () => {
+      const data = await request<{ ok: boolean; result?: { reason?: string } }>("/api/inkdrop-state/queue/reopen-import", {
+        method: "POST",
+        body: { id: queueId, revision: row.revision },
+      });
+      if (!data.ok) throw new InkDropApiError("Could not reopen this import.", { status: 200, code: "mr_reopen_import_failed" });
+    });
+  }
+
+  // No explicit source_attempt_id -- the backend blocks whichever candidate
+  // most recently attempted against this item, which for a Manual Review row
+  // is exactly the one that produced this row's reason.
+  function blockCandidate(row: ManualReviewRow) {
+    const queueId = queueIdFor(row);
+    if (!window.confirm(`Permanently block this release for ${rowTitle(row)}? InkDrop will never offer it again for this issue.`)) return;
+    void runRowAction(row.id, rowTitle(row), "Blocked", async () => {
+      const data = await request<{ ok: boolean; result?: { reason?: string } }>("/api/inkdrop-state/source-memory/block", {
+        method: "POST",
+        body: { id: queueId, revision: row.revision, retry: true },
+      });
+      if (!data.ok) {
+        const reason = data.result?.reason;
+        throw new InkDropApiError(
+          reason === "no_candidate_to_block" ? "No recent candidate is on record for this row to block." : "Could not block this release.",
+          { status: 200, code: "mr_block_candidate_failed" },
+        );
+      }
+    });
+  }
+
   const visibleRows = rows.filter(isHumanDecision);
   const selectableRows = visibleRows.filter((row) => Boolean(row.review_id));
-  const pageStart = totalCount === 0 ? 0 : offset + 1;
-  const pageEnd = offset + rows.length;
+  const pageStart = totalCount === 0 || visibleRows.length === 0 ? 0 : offset + 1;
+  // rows.length, not visibleRows.length, would count rows this page fetched
+  // but then hid (context-only rows in mixed buckets like source_hints) --
+  // the pager text must describe what's actually on screen.
+  const pageEnd = offset + visibleRows.length;
   const selectedCount = selectedIds.size;
   const allSelectableSelected = selectableRows.length > 0 && selectableRows.every((row) => selectedIds.has(row.id));
 
@@ -213,9 +317,9 @@ export function ManualReview({ payload }: { payload: ManualReviewViewPayload }) 
 
   return (
     <div className="inkdrop-react-manual-review">
-      {error && (
+      {(error || actionError) && (
         <div className="inkdrop-react-error-banner" role="alert">
-          {error}
+          {error || actionError}
         </div>
       )}
       <div className="arr-table-controlbar arr-table-controlbar-manual_review">
@@ -271,6 +375,9 @@ export function ManualReview({ payload }: { payload: ManualReviewViewPayload }) 
         <tbody>
           {visibleRows.map((row) => {
             const canAct = Boolean(row.review_id);
+            const queueId = queueIdFor(row);
+            const canRecover = Boolean(queueId);
+            const canReopenImport = canRecover && isImportStuck(row);
             return (
               <tr key={row.id} className="mr-row">
                 <td data-label="Select">
@@ -301,16 +408,59 @@ export function ManualReview({ payload }: { payload: ManualReviewViewPayload }) 
                   })()}
                 </td>
                 <td data-label="Actions">
-                  {canAct && (
-                    <button
-                      type="button"
-                      disabled={pendingId === row.id}
-                      onClick={() => openDecision(row)}
-                      title="Open the decision panel with evidence, consequences, and safe choices."
-                    >
-                      Review Decision
-                    </button>
-                  )}
+                  <div className="mr-row-actions">
+                    {canAct && (
+                      <button
+                        type="button"
+                        disabled={pendingId === row.id}
+                        onClick={() => openDecision(row)}
+                        title="Open the decision panel with evidence, consequences, and safe choices."
+                      >
+                        Review Decision
+                      </button>
+                    )}
+                    {canRecover && (
+                      <button
+                        type="button"
+                        disabled={pendingIds.has(row.id) || doneIds.has(row.id)}
+                        onClick={() => runRetry(row)}
+                        title="Retry this item's search, same as the Queue page's Retry"
+                      >
+                        {pendingIds.has(row.id) ? "Working…" : doneIds.get(row.id) || "Retry"}
+                      </button>
+                    )}
+                    {canRecover && (
+                      <button
+                        type="button"
+                        disabled={pendingIds.has(row.id) || doneIds.has(row.id)}
+                        onClick={() => runRetryNewSource(row)}
+                        title="Retry, skipping whichever source(s) most recently failed for this item"
+                      >
+                        {pendingIds.has(row.id) ? "Working…" : doneIds.get(row.id) || "Try another source"}
+                      </button>
+                    )}
+                    {canReopenImport && (
+                      <button
+                        type="button"
+                        disabled={pendingIds.has(row.id) || doneIds.has(row.id)}
+                        onClick={() => runReopenImport(row)}
+                        title="Re-check this import; only changes anything if it's genuinely stuck"
+                      >
+                        {pendingIds.has(row.id) ? "Working…" : doneIds.get(row.id) || "Reopen import"}
+                      </button>
+                    )}
+                    {canRecover && (
+                      <button
+                        type="button"
+                        className="mr-row-block-btn"
+                        disabled={pendingIds.has(row.id) || doneIds.has(row.id)}
+                        onClick={() => blockCandidate(row)}
+                        title="Permanently reject the release behind this review so InkDrop stops offering it"
+                      >
+                        {pendingIds.has(row.id) ? "Working…" : doneIds.get(row.id) || "Block release"}
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             );

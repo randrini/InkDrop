@@ -69,6 +69,36 @@ def check_folder_cleanup(tmp):
         "containing_root must not claim paths outside every root",
     )
 
+    for index, outer_first in enumerate((True, False)):
+        outer_root = Path(tmp) / f"nested-library-{index}"
+        inner_root = outer_root / "manga"
+        series_dir = inner_root / "Nested Series"
+        series_dir.mkdir(parents=True)
+        removed_nested_file = series_dir / "issue.cbz.gone"
+        configured_roots = (outer_root, inner_root) if outer_first else (inner_root, outer_root)
+
+        selected_root = inkdrop_folder_cleanup.containing_root(removed_nested_file, configured_roots)
+        require(
+            selected_root == inner_root.resolve(),
+            f"nested cleanup should select the deepest configured root: {selected_root}",
+        )
+
+        report = inkdrop_folder_cleanup.remove_empty_parents(removed_nested_file, selected_root, dry_run=True)
+        require(
+            report["removed"] == [str(series_dir.resolve())],
+            f"nested dry run should stop before the inner library root: {report}",
+        )
+        require(series_dir.is_dir() and inner_root.is_dir(), "nested dry run must not delete folders")
+
+        report = inkdrop_folder_cleanup.remove_empty_parents(removed_nested_file, selected_root)
+        require(
+            report["removed"] == [str(series_dir.resolve())],
+            f"nested sweep should remove only the empty series folder: {report}",
+        )
+        require(not series_dir.exists(), "empty nested series folder should be removed")
+        require(inner_root.is_dir(), "nested configured library root must never be removed")
+        require(outer_root.is_dir(), "outer configured library root must survive nested cleanup")
+
 
 def check_quarantine_wiring(tmp):
     from core import inkdrop_completed_import as importer

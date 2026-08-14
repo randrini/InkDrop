@@ -333,6 +333,29 @@ def _url_hash(value):
     return "sha256:" + hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
+def _origin(url):
+    """(scheme, host, effective port) -- the identity a credential is scoped to.
+
+    Port is resolved from the scheme's default when absent so
+    https://host and https://host:443 compare equal, and a plain http
+    downgrade of the same host never counts as the same origin.
+    """
+    parts = parse.urlsplit(str(url or ""))
+    scheme = _lower(parts.scheme)
+    host = _lower(parts.hostname)
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+    return (scheme, host, port)
+
+
+def _same_origin(current_url, next_url):
+    return _origin(current_url) == _origin(next_url)
+
+
 class _ConstrainedRedirectHandler(urlrequest.HTTPRedirectHandler):
     """Validate every urllib redirect before the next request is issued."""
 
@@ -343,6 +366,8 @@ class _ConstrainedRedirectHandler(urlrequest.HTTPRedirectHandler):
         self.max_redirects = max(0, int(max_redirects or 0))
         self.redirect_count = 0
         self.redirect_url_hashes = []
+        self.cross_origin_redirect_count = 0
+        self.stripped_secret_headers = []
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         next_count = self.redirect_count + 1
@@ -360,7 +385,86 @@ class _ConstrainedRedirectHandler(urlrequest.HTTPRedirectHandler):
         )
         self.redirect_count = next_count
         self.redirect_url_hashes.append(_url_hash(newurl))
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        follow_up = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if follow_up is None:
+            return None
+        # urllib copies every header onto the follow-up request, including the
+        # ones carrying our credential, no matter where the Location points.
+        # A provider that can set a redirect target -- or an upstream that has
+        # been compromised or simply misconfigured -- could therefore have the
+        # source worker hand its API key to an unrelated host, or downgrade
+        # https to http and send it in the clear. A credential is scoped to
+        # the origin it was issued for, so it does not survive leaving that
+        # origin. The host allowlist above narrows who can be redirected to;
+        # it does not make a different host inside the allowlist entitled to
+        # this host's key.
+        if not _same_origin(req.full_url, newurl):
+            self.cross_origin_redirect_count += 1
+            for name in _secret_header_names_on(follow_up):
+                follow_up.remove_header(name)
+                if name not in self.stripped_secret_headers:
+                    self.stripped_secret_headers.append(name)
+        return follow_up
+
+
+def _secret_header_names_on(request):
+    """Header names on a urllib Request that carry a credential.
+
+    Both stores matter: Request.headers holds what the caller set, and
+    unredirected_hdrs holds what the handler chain added -- remove_header()
+    clears both, but only for a name it is actually given.
+    """
+    names = []
+    for store in (getattr(request, "headers", None), getattr(request, "unredirected_hdrs", None)):
+        for name in list(_dict(store).keys()):
+            if _lower(name) in SECRET_HEADER_NAMES and name not in names:
+                names.append(name)
+    return names
+
+
+def scrub_secret_values(text, secrets):
+    """Replace resolved credential values wherever they appear in text.
+
+    Exception strings from the HTTP stack are not a controlled format: a
+    urllib/ssl/http.client error can embed the request URL -- query string
+    and all -- and a provider's own error body is arbitrary text that this
+    process asked for with a credential attached. Both end up in
+    `request_failed` messages, which reach logs, source-attempt evidence and
+    the UI. Scrubbing the exact resolved values is the one check that does
+    not depend on guessing the shape of either.
+    """
+    result = str(text or "")
+    for secret in sorted({str(value) for value in (secrets or []) if str(value or "").strip()}, key=len, reverse=True):
+        if secret in result:
+            result = result.replace(secret, "<redacted>")
+        quoted = parse.quote(secret, safe="")
+        if quoted != secret and quoted in result:
+            result = result.replace(quoted, "<redacted>")
+    return result
+
+
+def _resolved_secret_values(resolved, original_request):
+    """Every credential value this request actually carries.
+
+    Read off the resolved request rather than the caller's secret map: only
+    the values that were substituted into THIS request can appear in its
+    diagnostics, and a shared secret map may hold many more.
+    """
+    secrets = set()
+    original = _dict(original_request)
+    resolved = _dict(resolved)
+    # secret_params are substituted into resolved["params"], not back into
+    # a secret_params key -- that is where the resolved value ends up.
+    for source_key, resolved_key in (("headers", "headers"), ("secret_params", "params")):
+        source = _dict(original.get(source_key))
+        target = _dict(resolved.get(resolved_key))
+        for name, raw in source.items():
+            if not _contains_secret_ref(raw):
+                continue
+            value = str(target.get(name) or "").strip()
+            if value:
+                secrets.add(value)
+    return secrets
 
 
 def _read_limited(response, max_bytes, *, allow_truncated=False):
@@ -479,6 +583,71 @@ def _decode_payload(body, headers):
     return {"body": body}
 
 
+def _try_cloudflare_bypass_proxy(
+    http_error,
+    *,
+    url,
+    timeout_seconds,
+    cloudflare_proxy_url,
+    cloudflare_proxy_hosts,
+    allowed_target_hosts,
+):
+    """Return None to fall through to the original error untouched (no proxy
+    configured, host not scoped for it, or the failure isn't a Cloudflare
+    challenge). Return a result dict once a proxy attempt was actually made,
+    win or lose, so the caller can tell "not applicable" from "tried and
+    failed" and surface a clear reason either way."""
+    if not cloudflare_proxy_url or not cloudflare_proxy_hosts:
+        return None
+    host = _lower(parse.urlparse(url).hostname)
+    if host not in cloudflare_proxy_hosts:
+        return None
+    try:
+        from core import inkdrop_cloudflare_bypass_proxy as bypass_proxy
+    except ImportError:
+        import inkdrop_cloudflare_bypass_proxy as bypass_proxy
+    error_headers = {}
+    try:
+        error_headers = _response_headers(http_error)
+    except Exception:
+        error_headers = {}
+    error_body = b""
+    try:
+        error_body = http_error.read(65536)
+    except Exception:
+        error_body = b""
+    error_text = error_body.decode("utf-8", errors="replace")
+    if not bypass_proxy.cloudflare_challenge_detected(http_error.code, error_headers, error_text):
+        return None
+    proxied = bypass_proxy.resolve_via_cloudflare_bypass_proxy(
+        url,
+        proxy_url=cloudflare_proxy_url,
+        timeout_seconds=timeout_seconds,
+        allowed_target_hosts=allowed_target_hosts,
+    )
+    if not proxied.get("ok"):
+        return {"ok": False, "reason": proxied.get("reason") or "proxy_failed"}
+    headers = dict(proxied.get("headers") or {})
+    headers.setdefault("Content-Type", "text/html; charset=utf-8")
+    body = proxied.get("text", "").encode("utf-8")
+    response = {
+        "source_http_contract_version": CONTRACT_VERSION,
+        "status_code": proxied.get("status_code") or 200,
+        "headers": headers,
+        "elapsed_ms": proxied.get("elapsed_ms"),
+        "url": url,
+        "final_url": proxied.get("final_url") or url,
+        "redirect_count": 0,
+        "redirect_url_hashes": [],
+        "cross_origin_redirect_count": 0,
+        "stripped_secret_headers": [],
+        "peer_ip": None,
+        "cloudflare_bypass_proxy_used": True,
+        **_decode_payload(body, headers),
+    }
+    return {"ok": True, "response": response}
+
+
 def source_http_get(
     request,
     *,
@@ -494,6 +663,8 @@ def source_http_get(
     max_redirects=DEFAULT_MAX_REDIRECTS,
     opener=None,
     user_agent="InkDropSourceWorker/1",
+    cloudflare_proxy_url=None,
+    cloudflare_proxy_hosts=None,
 ):
     """Execute a settings-derived source request with secret redaction gates."""
 
@@ -503,6 +674,7 @@ def source_http_get(
         secret_resolver=secret_resolver,
         secret_values=secret_values,
     )
+    request_secrets = _resolved_secret_values(resolved, original_request)
     method = str(resolved.get("method") or "GET").strip().upper()
     if method not in {"GET", "HEAD", "POST"}:
         raise SourceHttpError("unsupported_method", f"source HTTP method is not supported: {method}", request=original_request)
@@ -594,6 +766,20 @@ def source_http_get(
                 if redirect_handler is not None
                 else getattr(response, "redirect_url_hashes", []) or []
             )
+            cross_origin_redirect_count = int(
+                getattr(redirect_handler, "cross_origin_redirect_count", 0)
+                if redirect_handler is not None
+                else getattr(response, "cross_origin_redirect_count", 0)
+                or 0
+            )
+            # Header NAMES only -- never a value. A provider whose auth
+            # quietly stopped working after a redirect is otherwise
+            # indistinguishable from a wrong key, and this is the difference.
+            stripped_secret_headers = list(
+                getattr(redirect_handler, "stripped_secret_headers", [])
+                if redirect_handler is not None
+                else getattr(response, "stripped_secret_headers", []) or []
+            )
             if method == "HEAD":
                 body = b""
                 truncated = False
@@ -617,9 +803,36 @@ def source_http_get(
     except SourceHttpError:
         raise
     except urlerror.HTTPError as exc:
+        proxied = _try_cloudflare_bypass_proxy(
+            exc,
+            url=url,
+            timeout_seconds=timeout,
+            cloudflare_proxy_url=cloudflare_proxy_url,
+            cloudflare_proxy_hosts=cloudflare_proxy_hosts,
+            allowed_target_hosts=effective_allowed_hosts,
+        )
+        if proxied is not None:
+            if not proxied.get("ok"):
+                raise SourceHttpError(
+                    "cloudflare_bypass_proxy_failed",
+                    scrub_secret_values(
+                        f"source blocked (http {exc.code}) and the Cloudflare-bypass proxy failed: {proxied.get('reason')}",
+                        request_secrets,
+                    ),
+                    request=original_request,
+                ) from exc
+            return proxied["response"]
         raise SourceHttpError("http_error", f"source HTTP error {exc.code}", request=original_request) from exc
     except Exception as exc:
-        raise SourceHttpError("request_failed", f"{type(exc).__name__}: {exc}", request=original_request) from exc
+        # str(exc) here is uncontrolled: urllib/ssl/http.client errors embed
+        # the request URL query string and a bypass-proxy reason can carry a
+        # provider's own response text. Both reach logs, source-attempt
+        # evidence and the UI, so the resolved credential comes out first.
+        raise SourceHttpError(
+            "request_failed",
+            scrub_secret_values(f"{type(exc).__name__}: {exc}", request_secrets),
+            request=original_request,
+        ) from exc
     elapsed_ms = int((time.time() - start) * 1000)
     if stream_handle is not None:
         decoded = {"body": stream_handle}
@@ -634,6 +847,8 @@ def source_http_get(
         "final_url": final_url,
         "redirect_count": redirect_count,
         "redirect_url_hashes": redirect_url_hashes,
+        "cross_origin_redirect_count": cross_origin_redirect_count,
+        "stripped_secret_headers": stripped_secret_headers,
         "peer_ip": peer_ip,
         **decoded,
     }

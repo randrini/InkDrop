@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from datetime import date
-from pathlib import PurePath
+from pathlib import PurePath, PurePosixPath
 
 from core import inkdrop_artifact_acceptance
 
@@ -33,6 +33,15 @@ COLLECTED_SINGLETON_MARKERS = COLLECTED_MARKERS | {
     "hardcover",
     "library_edition",
     "volume",
+}
+# Literal filename words for every collected-singleton format marker above --
+# already treated as a neutral (non-identity-bearing) title suffix regardless
+# of which specific printing the title names, so an edition-indifferent
+# target can accept any of them without widening what a plain word-for-word
+# suffix match allows.
+EDITION_FORMAT_SUFFIX_WORDS = {
+    "complete", "collection", "collected", "deluxe", "edition", "essential",
+    "hardcover", "hc", "library", "omnibus", "paperback", "tpb", "trade", "volume",
 }
 
 NUMBER_WORDS = {
@@ -170,6 +179,25 @@ def _first(*values):
         if value not in (None, "", [], {}):
             return value
     return ""
+
+
+def _strict_bool_flag(value):
+    """JSON-boolean-aware parse for override flags like edition_indifferent.
+
+    Python truthiness makes bool("false") == True, so a stray JSON string
+    would silently flip an operator's "disabled" choice to enabled. Real
+    booleans pass through; string "true"/"false" are honored case-
+    insensitively; anything else defaults to False (disabled), never True.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return False
 
 
 def _number(value):
@@ -566,6 +594,7 @@ def target_context(wanted_item=None):
         "singleton_issue_proof": singleton_issue_proof,
         "collected_singleton_proof": collected_singleton_proof,
         "collected_singleton_markers": collected_singleton_markers,
+        "edition_indifferent": _strict_bool_flag(wanted.get("edition_indifferent")),
     }
 
 
@@ -678,6 +707,13 @@ def _singleton_exact_title_match(candidate, wanted_item, target, evidence, *, al
 def _collected_singleton_exact_title_match(candidate, wanted_item, target, evidence):
     if not target.get("collected_singleton_proof"):
         return False
+    # An explicit per-series "Edition Indifferent" override: the operator has
+    # said any complete, correctly-identified release satisfies this series,
+    # not only the specific tracked printing. Below, this skips the marker
+    # (which printing) and year (which publication) checks that otherwise
+    # require the candidate to echo the tracked edition -- every other check
+    # here (title identity, unit-number absence, publisher) still applies.
+    edition_indifferent = _strict_bool_flag(target.get("edition_indifferent"))
     target_markers = {
         str(marker or "").strip().lower()
         for marker in (target.get("collected_singleton_markers") or [])
@@ -728,7 +764,7 @@ def _collected_singleton_exact_title_match(candidate, wanted_item, target, evide
             for marker in (source.get("edition_markers") or [source.get("edition_marker")])
             if str(marker or "").strip()
         )
-    if not all_candidate_markers or not all_candidate_markers.issubset(target_markers):
+    if not edition_indifferent and (not all_candidate_markers or not all_candidate_markers.issubset(target_markers)):
         return False
     wanted = wanted_item if isinstance(wanted_item, dict) else {}
     target_title = _normalized_title(
@@ -743,33 +779,20 @@ def _collected_singleton_exact_title_match(candidate, wanted_item, target, evide
         return False
     target_year = _year(_first(wanted.get("year"), wanted.get("release_date"), wanted.get("date")))
     candidate_year = _year(_first(candidate.get("year"), candidate.get("release_date"), evidence.get("year")))
-    if target_year and candidate_year and target_year != candidate_year:
+    if target_year and candidate_year and target_year != candidate_year and not edition_indifferent:
         return False
     source_years = {str(source.get("year") or "") for source in parsed_sources if source.get("year")}
-    if target_year and any(year != target_year for year in source_years):
+    if target_year and any(year != target_year for year in source_years) and not edition_indifferent:
         return False
     suffix_tokens = release_tokens[len(target_tokens) :]
     allowed_suffix = set(SINGLETON_NEUTRAL_SUFFIX_TOKENS)
-    allowed_suffix.update(
-        {
-            "complete",
-            "collection",
-            "collected",
-            "deluxe",
-            "edition",
-            "essential",
-            "hardcover",
-            "hc",
-            "library",
-            "omnibus",
-            "paperback",
-            "tpb",
-            "trade",
-            "volume",
-        }
-    )
+    allowed_suffix.update(EDITION_FORMAT_SUFFIX_WORDS)
     if target_year:
         allowed_suffix.add(target_year)
+    if edition_indifferent:
+        allowed_suffix.update(source_years)
+        if candidate_year:
+            allowed_suffix.add(candidate_year)
     if all(token in allowed_suffix for token in suffix_tokens):
         return True
     release_suffix = list(suffix_tokens)
@@ -905,6 +928,7 @@ def _collected_singleton_alias_exact_title_match(candidate, wanted_item, target,
             )
         ):
             return False
+    edition_indifferent = _strict_bool_flag(target.get("edition_indifferent"))
     target_markers = set(target.get("collected_singleton_markers") or [])
     candidate_markers = {
         str(marker or "").strip().lower()
@@ -917,7 +941,7 @@ def _collected_singleton_alias_exact_title_match(candidate, wanted_item, target,
             for marker in (source.get("edition_markers") or [source.get("edition_marker")])
             if str(marker or "").strip()
         )
-    if candidate_markers and not candidate_markers.issubset(target_markers):
+    if candidate_markers and not candidate_markers.issubset(target_markers) and not edition_indifferent:
         return False
     release_title = re.sub(
         r"(?i)\.(?:cbz|cbr|pdf|epub)$", "",
@@ -932,10 +956,10 @@ def _collected_singleton_alias_exact_title_match(candidate, wanted_item, target,
         return False
     target_year = _year(_first(wanted.get("year"), wanted.get("release_date"), wanted.get("date")))
     candidate_year = _year(_first(candidate.get("year"), candidate.get("release_date"), evidence.get("year")))
-    if target_year and candidate_year and target_year != candidate_year:
+    if target_year and candidate_year and target_year != candidate_year and not edition_indifferent:
         return False
     source_years = {str(source.get("year") or "") for source in parsed_sources if source.get("year")}
-    if target_year and any(year != target_year for year in source_years):
+    if target_year and any(year != target_year for year in source_years) and not edition_indifferent:
         return False
     target_publisher = _normalized_title(wanted.get("publisher"))
     candidate_publisher = _normalized_title(
@@ -949,6 +973,11 @@ def _collected_singleton_alias_exact_title_match(candidate, wanted_item, target,
     if target_year:
         allowed_suffix.add(target_year)
     allowed_suffix.update(target_publisher.split())
+    if edition_indifferent:
+        allowed_suffix.update(EDITION_FORMAT_SUFFIX_WORDS)
+        allowed_suffix.update(source_years)
+        if candidate_year:
+            allowed_suffix.add(candidate_year)
     return all(token in allowed_suffix for token in suffix)
 
 
@@ -984,10 +1013,65 @@ def _candidate_text_values(candidate, wanted_item=None):
         text = str(value or "").strip()
         if not text:
             continue
-        if label == "source_path":
-            text = PurePath(text.replace("\\", "/")).name
+        # Some providers put the full remote path in ``title`` or
+        # ``filename``, not only in ``path``.  Unit identity belongs to the
+        # artifact leaf: an uploader shelf is provenance, not release
+        # metadata.  Take the leaf before stripping the exact wanted title so
+        # a series ending in a unit-like token (real example: ``ODY-C 011``)
+        # cannot leave ``C 011`` behind to be read as chapter 11.  Keep
+        # ``text`` unchanged in the tuple so normalized evidence still
+        # records the provider's original value.
+        normalized_path_text = text.replace("\\", "/")
+        drive_relative = re.match(r"^[A-Za-z]:([^/]+)$", normalized_path_text)
+        leaf_text = (
+            drive_relative.group(1)
+            if drive_relative
+            else PurePosixPath(normalized_path_text).name
+        )
+        original_has_target_prefix = _strip_series_prefix(text, wanted_item) != text
+        leaf_has_target_prefix = (
+            leaf_text != text
+            and _strip_series_prefix(leaf_text, wanted_item) != leaf_text
+        )
+        wanted = wanted_item if isinstance(wanted_item, dict) else {}
+        wanted_series = str(
+            _first(
+                wanted.get("series_title"),
+                wanted.get("series"),
+                wanted.get("manga_title"),
+            )
+        ).strip()
+        wanted_title_ends_in_c = bool(
+            re.search(r"(?i)(?:^|[\W_])c\s*$", wanted_series)
+        )
+        path_shaped = (
+            "\\" in text
+            or normalized_path_text.startswith("/")
+            or bool(re.match(r"^[A-Za-z]:", normalized_path_text))
+            or normalized_path_text.count("/") >= 2
+            or leaf_has_target_prefix
+        )
+        # A single slash can be part of the actual series name (for example,
+        # Batman/Superman), so only project to a leaf when there is additional
+        # path evidence.  An exact wanted-title prefix on the leaf safely
+        # covers a one-folder provider path without weakening slash titles.
+        # Limit title/filename projection to the demonstrated terminal-C
+        # collision: stripping other titles early can change `v1_019` from an
+        # exact issue into apparent range coverage.  Source paths keep their
+        # pre-existing unconditional leaf semantics.
+        identity_text = (
+            leaf_text
+            if label == "source_path"
+            or (
+                path_shaped
+                and leaf_has_target_prefix
+                and not original_has_target_prefix
+                and wanted_title_ends_in_c
+            )
+            else text
+        )
         if text and not any(existing[1] == text for existing in values):
-            values.append((label, text, _strip_series_prefix(text, wanted_item)))
+            values.append((label, text, _strip_series_prefix(identity_text, wanted_item)))
     return values
 
 

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import requests
 
+from core import inkdrop_cloudflare_bypass_proxy as cloudflare_bypass_proxy
 from core import inkdrop_runtime_config
 
 
@@ -44,6 +45,7 @@ LIST_URLS = [
     "https://comics.codes/all-comics-list/",
     "https://comics.codes/all-manga-list/",
 ]
+COMICSCODES_PROXY_TARGET_HOSTS = frozenset({"comics.codes", "www.comics.codes"})
 USER_AGENT = "InkDrop-ComicsCodes-Discovery/1.0 (+guarded slow candidate discovery)"
 DEFAULT_LIMIT = 12
 DEFAULT_MAX_AUTO = 5
@@ -157,6 +159,27 @@ def blocked_by_challenge(response):
     return False
 
 
+def _fetch_via_cloudflare_bypass_proxy(url):
+    """Retry a Cloudflare-blocked ComicsCodes fetch through the configured
+    proxy. The second tuple item is empty when the proxy is unset so the
+    caller preserves its original challenge backoff; an attempted failure
+    carries a bounded, distinct reason into the normal source-status cache.
+    """
+    proxy_url = cloudflare_bypass_proxy.cloudflare_bypass_proxy_url(rss.INKDROP_STATE_DB)
+    if not proxy_url:
+        return None, ""
+    result = cloudflare_bypass_proxy.resolve_via_cloudflare_bypass_proxy(
+        url,
+        proxy_url=proxy_url,
+        allowed_target_hosts=COMICSCODES_PROXY_TARGET_HOSTS,
+    )
+    if not result.get("ok"):
+        failure_reason = cloudflare_bypass_proxy.cloudflare_bypass_failure_reason(result)
+        log("comicscodes_cloudflare_bypass_proxy_failed", {"source_url": url, "reason": failure_reason})
+        return None, failure_reason
+    return result.get("text") or "", ""
+
+
 def fetch_url(url, cache, args):
     sources = cache.setdefault("sources", {})
     key = source_key(url)
@@ -194,11 +217,22 @@ def fetch_url(url, cache, args):
         state["last_error"] = None
         return "", "not_modified", state
     if blocked_by_challenge(response):
+        proxied_text, proxy_failure_reason = _fetch_via_cloudflare_bypass_proxy(url)
+        if proxied_text is not None:
+            state.update({
+                "etag": None,
+                "last_modified": None,
+                "failure_count": 0,
+                "last_error": None,
+                "backoff_until": 0,
+                "content_type": "text/html",
+            })
+            return proxied_text, "fetched_via_cloudflare_bypass_proxy", state
         failures = int(state.get("failure_count") or 0) + 1
         backoff = min(MAX_BACKOFF_SECONDS, 3600 * failures)
         state.update({
             "failure_count": failures,
-            "last_error": "cloudflare_or_host_challenge",
+            "last_error": proxy_failure_reason or "cloudflare_or_host_challenge",
             "backoff_until": now + backoff,
         })
         return None, "blocked_by_challenge", state

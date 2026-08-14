@@ -266,6 +266,27 @@ def _boolish(value, default=False):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _optional_boolish(value):
+    """Three-state read of a settings flag: True, False, or None for "the row
+    never said". `_boolish` collapses absent to False, which is right for a
+    provider that owns its own setting and wrong for a child row that is
+    supposed to inherit its parent's choice -- a child with no opinion and a
+    child that was deliberately turned off are not the same thing, and only
+    the second one should override an opted-in parent."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return False
+
+
 def _intish(value, default=0):
     try:
         return int(value)
@@ -596,6 +617,19 @@ def registry_entry(provider, *, source_order=None):
         "enabled": enabled,
         "base_url": base_url,
         "secret_ref": secret_ref,
+        # Opt-in only: also send the secret_ref-resolved credential as a URL
+        # query param (in addition to the header) for the rare proxy in
+        # front of the provider that strips custom headers. Defaults off --
+        # a query-param credential lands in proxy/ingress access logs
+        # regardless of anything InkDrop redacts from its own responses.
+        #
+        # The effective value stays a plain bool for every consumer. The
+        # companion `_set` flag records whether *this* row declared it, which
+        # is what lets registry_from_settings_snapshot() tell "inherit the
+        # parent's opt-in" apart from "explicitly declined" for the child
+        # indexer rows that carry no settings of their own.
+        "apikey_query_param_fallback": _boolish(settings.get("apikey_query_param_fallback"), False),
+        "apikey_query_param_fallback_set": _optional_boolish(settings.get("apikey_query_param_fallback")) is not None,
         "source": provider.get("source"),
         "source_template": source_template,
         "source_kind": str(settings.get("source_kind") or ""),
@@ -750,6 +784,21 @@ def registry_from_settings_snapshot(
                 row["base_url"] = str(parent.get("base_url") or parent_settings.get("base_url") or "").strip()
             if row.get("secret_ref") in (None, ""):
                 row["secret_ref"] = str(parent.get("secret_ref") or parent_settings.get("secret_ref") or "").strip()
+            # A child indexer reaches the same host, through the same proxy,
+            # with the same credential it just inherited above -- so it has to
+            # inherit *how* that credential is sent too. Only base_url and
+            # secret_ref used to be copied, which left every child sending the
+            # header alone: behind the header-stripping proxy this flag exists
+            # for, Connect and legacy search worked while automatic
+            # child-indexer searches failed authentication. An explicit value
+            # on the child still wins; unset means "follow the parent".
+            if not row.get("apikey_query_param_fallback_set"):
+                parent_fallback = _optional_boolish(parent_settings.get("apikey_query_param_fallback"))
+                if parent_fallback is None:
+                    parent_fallback = _optional_boolish(parent.get("apikey_query_param_fallback"))
+                if parent_fallback is not None:
+                    row["apikey_query_param_fallback"] = parent_fallback
+                    row["apikey_query_param_fallback_inherited_from"] = parent_id
         if not include_non_acquisition and not is_searchable_provider_type(
             row["provider_type"],
             row["source_template"],
@@ -776,31 +825,3 @@ def registry_from_db(db_path, *, include_non_acquisition=False, include_disabled
         include_disabled=include_disabled,
         provider_health_map=provider_health_map,
     )
-
-
-def enabled_registry_entries(snapshot, *, states=None):
-    states = set(states or {"ready", "assist", "manual_review", "metadata_only"})
-    return [
-        row
-        for row in registry_from_settings_snapshot(snapshot, include_disabled=False)
-        if row["registry_state"] in states and row["enabled"]
-    ]
-
-
-def registry_summary(rows):
-    rows = list(rows or [])
-    counts = {}
-    for row in rows:
-        state = str((row or {}).get("registry_state") or "unknown")
-        counts[state] = counts.get(state, 0) + 1
-    return {
-        "total": len(rows),
-        "by_state": dict(sorted(counts.items())),
-        "auto_search": sum(1 for row in rows if row.get("auto_search_allowed")),
-        "auto_download": sum(1 for row in rows if row.get("auto_download_allowed")),
-        "manual_review": sum(1 for row in rows if row.get("manual_review_allowed")),
-    }
-
-
-def registry_json(rows):
-    return json.dumps(list(rows or []), ensure_ascii=False, sort_keys=True, indent=2)

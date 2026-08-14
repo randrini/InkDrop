@@ -54,7 +54,15 @@ EVENT_TYPES = (
 
 CHANNEL_TYPES = ("discord", "pushover")
 
-DELIVERY_STATUSES = ("sent", "sending", "failed", "queued", "deduped", "filtered", "disabled")
+# "skipped" is distinct from "filtered" (series not in a channel's filter)
+# and "disabled" (channel/event toggled off) -- both of those are pipeline
+# decisions made before a delivery ever queues. "skipped" is for a delivery
+# that already reserved a real queued slot and is later decided, after the
+# fact, to be not worth sending -- e.g. an operator retroactively clearing a
+# backlog of notifications a scanner bug queued for events too old to still
+# be meaningful (see scan_import_verified()'s cold-start guard). Set only via
+# update_delivery(); nothing in the dispatch pipeline produces it on its own.
+DELIVERY_STATUSES = ("sent", "sending", "failed", "queued", "deduped", "filtered", "disabled", "skipped")
 QUEUE_REASONS = ("quiet_hours", "retry", "rate_limit")
 
 DEFAULT_URGENT_EVENTS = ("health_issue",)
@@ -865,6 +873,14 @@ def prune_history(db_path, *, retention_days=None):
 # Watch state (diff-based event detection: grabbed/download_failed/health/update)
 # --------------------------------------------------------------------------
 
+# How long one scanner run may hold a per-row claim before another run is
+# allowed to take it over. Comfortably longer than a single notification
+# send (REQUEST_TIMEOUT_SECONDS * retries) and shorter than the 180s job
+# interval is not achievable at both ends, so this errs long: a stranded
+# claim costs one delayed notification, a too-short lease costs a duplicate.
+WATCH_CLAIM_LEASE_SECONDS = 300
+
+
 def get_watch_state(db_path, key):
     with _connection(db_path) as con:
         row = con.execute("select value_json from notification_watch_state where key=?", (key,)).fetchone()
@@ -879,6 +895,84 @@ def set_watch_state(db_path, key, value):
                on conflict(key) do update set value_json=excluded.value_json, updated_at=excluded.updated_at""",
             (key, _dump(value), now),
         )
+
+
+def _claim_field(flag):
+    return f"claim_until:{flag}"
+
+
+def _coerce_ts(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def claim_watch_flag(db_path, key, flag, *, lease_seconds=WATCH_CLAIM_LEASE_SECONDS, now=None):
+    """Take a short lease on one flag of a watch-state entry.
+
+    Returns "done" if the flag is already set, "busy" if another run holds an
+    unexpired lease on it, or "claimed" for the single caller that just took
+    the lease. begin immediate is what makes that safe: the write lock is
+    taken before the read, so two overlapping notification-dispatch jobs
+    serialize and the second one sees the first one's lease.
+
+    The lease exists because taking the flag and earning the right to set it
+    are two different things -- a caller that claims and then dies mid-send
+    must not strand the row forever, so the claim expires and the row becomes
+    claimable again on a later pass.
+    """
+    now = float(now) if now is not None else time.time()
+    field = _claim_field(flag)
+    with _connection(db_path) as con:
+        con.execute("begin immediate")
+        row = con.execute("select value_json from notification_watch_state where key=?", (key,)).fetchone()
+        current = _json(row["value_json"], {}) if row else {}
+        if current.get(flag):
+            return "done"
+        if _coerce_ts(current.get(field)) > now:
+            return "busy"
+        current[field] = now + max(1.0, float(lease_seconds or 0))
+        con.execute(
+            """insert into notification_watch_state(key, value_json, updated_at) values(?,?,?)
+               on conflict(key) do update set value_json=excluded.value_json, updated_at=excluded.updated_at""",
+            (key, _dump(current), now),
+        )
+        return "claimed"
+
+
+def finish_watch_flag(db_path, key, flag, *, extra=None):
+    """Set the flag and drop its lease in one transaction -- the durable
+    acknowledgement that this row's outcome was recorded and it never needs
+    looking at again."""
+    return _update_watch_claim(db_path, key, flag, done=True, extra=extra)
+
+
+def release_watch_flag(db_path, key, flag):
+    """Drop the lease without setting the flag, leaving the row claimable
+    again on the next pass. This is what keeps a delivery that failed to
+    record from being silently acknowledged."""
+    return _update_watch_claim(db_path, key, flag, done=False, extra=None)
+
+
+def _update_watch_claim(db_path, key, flag, *, done, extra):
+    now = time.time()
+    field = _claim_field(flag)
+    with _connection(db_path) as con:
+        con.execute("begin immediate")
+        row = con.execute("select value_json from notification_watch_state where key=?", (key,)).fetchone()
+        current = _json(row["value_json"], {}) if row else {}
+        current.pop(field, None)
+        if done:
+            current[flag] = True
+        if extra:
+            current.update(extra)
+        con.execute(
+            """insert into notification_watch_state(key, value_json, updated_at) values(?,?,?)
+               on conflict(key) do update set value_json=excluded.value_json, updated_at=excluded.updated_at""",
+            (key, _dump(current), now),
+        )
+        return dict(current)
 
 
 def watch_state_prefix(db_path, prefix):

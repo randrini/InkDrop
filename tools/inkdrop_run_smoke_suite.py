@@ -100,6 +100,10 @@ SKIP = {
         "drives a real browser: needs playwright plus a live authenticated "
         "instance; run locally against a throwaway instance instead"
     ),
+    "inkdrop-mobile-setup-redirect-browser-smoke.py": (
+        "drives a real browser: needs playwright plus a live pre-bootstrap "
+        "instance; run locally against a throwaway instance instead"
+    ),
     "inkdrop-blocklist-react-island-browser-smoke.py": (
         "drives a real browser: needs playwright, a built web/frontend React "
         "bundle, and a live authenticated instance; run locally against a "
@@ -164,8 +168,15 @@ MIN_EXPECTED_SMOKE_COUNT = 300
 
 
 def tracked_smokes():
+    # Repo-root smoke scripts (inkdrop-*-smoke.py and inkdrop_*_smoke.py) were
+    # never included here -- this glob only ever covered tests/. 8 tracked
+    # root-level smoke scripts existed and were allowlisted in .gitignore but
+    # never executed by any workflow or tool, some silently broken since
+    # before any of them ran (see SKIP entries below). "inkdrop*smoke*.py" as
+    # a bare pathspec matches only the repo root, not subdirectories -- it
+    # does not re-match anything tests/inkdrop-*smoke*.py already covers.
     out = subprocess.run(
-        ["git", "ls-files", "tests/inkdrop-*smoke*.py"],
+        ["git", "ls-files", "tests/inkdrop-*smoke*.py", "inkdrop*smoke*.py"],
         capture_output=True,
         text=True,
         check=True,

@@ -28,7 +28,13 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-NOW = 1784376000.0
+# scan_import_verified() only fires for a row verified within its staleness
+# window (see IMPORT_VERIFIED_STALE_SECONDS), so this must track wall-clock
+# time rather than a fixed historical constant -- a frozen NOW eventually
+# ages past that window and every row this test inserts as "just verified"
+# starts silently failing to fire, for reasons that have nothing to do with
+# whatever the test is actually checking.
+NOW = time.time()
 
 with tempfile.TemporaryDirectory() as temp_dir:
     db_path = Path(temp_dir) / "state.sqlite3"
@@ -97,14 +103,13 @@ with tempfile.TemporaryDirectory() as temp_dir:
     require(call_kwargs.get("series_id") == "series-1", f"series_id not threaded to notify_wanted_cleared: {call_kwargs}")
     require(call_kwargs.get("issue_id") == "issue-1", f"issue_id not threaded to notify_wanted_cleared: {call_kwargs}")
 
-    # 2. A notify_wanted_cleared failure must not corrupt the watermark --
-    #    notify() is documented to never raise (every failure is caught and
-    #    recorded to delivery history internally), so this proves that
-    #    contract holds even when a channel implementation misbehaves, rather
-    #    than assuming it. A raise here escaping notify_wanted_cleared would
-    #    abort scan_import_verified() mid-loop and never advance the
-    #    watermark, which would silently duplicate every already-succeeded
-    #    notification in this batch on the next pass.
+    # 2. A notify_wanted_cleared failure must not escape the scan, and must
+    #    not be counted as a delivered notification either. notify_result() is
+    #    documented never to raise (every failure is caught and recorded to
+    #    delivery history internally), so this proves that contract holds even
+    #    when a channel implementation misbehaves, rather than assuming it.
+    #    Nothing was recorded, so the row stays unannounced and the cursor
+    #    stays put -- it comes back on the next pass instead of being lost.
     with inkdrop_state.connect(db_path) as con:
         con.execute(
             "insert into queue_items(id,wanted_id,series_id,issue_id,state,current_source,active,created_at,updated_at,raw_json) values(?,?,?,?,?,?,?,?,?,?)",
@@ -118,8 +123,16 @@ with tempfile.TemporaryDirectory() as temp_dir:
         except RuntimeError:
             fired2 = None
             raised = True
-    require(not raised, "notify_wanted_cleared raising must not escape scan_import_verified (notify() is documented to never raise)")
-    require(fired2 == {"import_verified": 1}, f"the scan should still report the row as processed: {fired2}")
+    require(not raised, "notify_wanted_cleared raising must not escape scan_import_verified (notify_result() is documented never to raise)")
+    require(fired2 == {"import_verified": 0}, f"a notification that was never recorded must not count as fired: {fired2}")
+    require(
+        not store.get_watch_state(str(db_path), "qv:queue-2").get("announced"),
+        "a row whose notification never recorded must stay unannounced so the next pass retries it",
+    )
+    with mock.patch.object(inkdrop_notifications, "notify_wanted_cleared") as recovered_mock:
+        fired3 = inkdrop_notification_events.scan_import_verified(str(db_path))
+    require(fired3 == {"import_verified": 1}, f"the retryable row must succeed on the next pass: {fired3}")
+    require(recovered_mock.call_count == 1, f"expected exactly one recovery notify, got {recovered_mock.call_count}")
 
     # 3. append_manual_review (inkdrop_completed_import) calls notify_manual_review
     #    when it actually persists a record. Points the write-time dedup store at

@@ -25,6 +25,7 @@ from core import inkdrop_runtime_config
 from core import inkdrop_internal_jobs
 from core import inkdrop_artifact_acceptance
 from core import inkdrop_completed_import
+from core import inkdrop_library_paths
 
 try:
     from core import inkdrop_state
@@ -2824,6 +2825,62 @@ def missing_staged_file_repeat_park_row(probe, review_id, record):
     )
 
 
+def reopen_stuck_slskd_queue_claim(review_id, record, reason):
+    """Un-stick a queue row's display state after its candidate just failed.
+
+    recover_completed_slskd_candidate_task() (inkdrop_state.py) optimistically
+    bumps queue_items.state to 'importing' the moment an SLSKD transfer looks
+    done, before the file has actually passed the stricter zero-touch import
+    safety gate. When that gate then rejects the candidate here, nothing on
+    this reject-and-retry path ever revisits queue_items -- mark_manual_
+    source_candidate_bad() only writes the actions/bad-candidate ledgers, and
+    run_next_slskd_autopick() only starts hunting for the next candidate.
+
+    Confirmed live 2026-08-12: 30+ queue rows sat showing "Importing /
+    Transfer complete" for 4-48 days (Love and Rockets back issues, Powers,
+    Frieren, etc.) while cycling through 1-31 SLSKD candidates apiece behind
+    the scenes, each one correctly rejected by auto_import_quality (weak
+    filename confidence, TPB-vs-issue mismatches -- the same population
+    slskd-missing-stage-live-recovery-20260728.md already found mostly fails
+    that gate for real reasons) and each rejection leaving the prior
+    optimistic 'importing' write frozen in place. Reusing reopen_stuck_import
+    -- the exact same safe, idempotent recovery the UI's own "Reopen import"
+    button calls -- rather than writing new queue-mutation logic here: it
+    already refuses to touch a queue that is genuinely verified, and re-
+    proves from disk before ever falling back to 'searching'.
+
+    Only acts when the row is actually still 'importing' right now, so a
+    queue that already moved on (a different candidate claimed it, a human
+    intervened, etc.) is left untouched.
+    """
+    if inkdrop_state is None or not INKDROP_STATE_DB.exists():
+        return
+    queue_id = first_text(record.get("autopilot_queue_key"), record.get("queue_key")) if isinstance(record, dict) else ""
+    if not queue_id:
+        return
+    try:
+        with inkdrop_state.connect_read(INKDROP_STATE_DB) as con:
+            row = con.execute("select state from queue_items where id=? limit 1", (queue_id,)).fetchone()
+        if not row or str(row["state"] or "").strip().lower() != "importing":
+            return
+        reopened = inkdrop_state.reopen_stuck_import(INKDROP_STATE_DB, queue_id, source="slskd_candidate_recovery")
+        log(
+            "manual_source_stuck_import_reopened",
+            review_id=review_id,
+            queue_id=queue_id,
+            reason=reason,
+            reopen_result=reopened,
+        )
+    except Exception as exc:
+        log(
+            "manual_source_stuck_import_reopen_failed",
+            review_id=review_id,
+            queue_id=queue_id,
+            reason=reason,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
 def recover_failed_waiting_candidate(args, result, review_id, record, detected, reason, transfer=None):
     if not args.live:
         return None
@@ -2885,6 +2942,7 @@ def recover_failed_waiting_candidate(args, result, review_id, record, detected, 
     except Exception as exc:
         log("manual_source_terminal_attempt_state_failed", review_id=review_id, error=str(exc))
     bad_entry = mark_manual_source_candidate_bad(review_id, record, detected, reason, transfer=transfer)
+    reopen_stuck_slskd_queue_claim(review_id, record, reason)
     cancel_result = cancel_failed_slskd_transfer(record, transfer)
     if cancel_result:
         result["cancelled_transfer_count"] = int(result.get("cancelled_transfer_count") or 0) + int(bool(cancel_result.get("cancelled")))
@@ -4813,9 +4871,15 @@ def kavita_path_for_host_path(path):
     if not path:
         return None
     candidate = Path(str(path))
+    # COMIC_ROOT/MANGA_ROOT/KAVITA_*_ROOT above are env-var snapshots taken at
+    # import time; they never see a Library Paths card edit made after this
+    # process started. Refresh through the shared accessor before every lookup
+    # so the unmatched-download matcher -- one of that card's own advertised
+    # consumers -- actually reflects what the card shows as saved.
+    paths = inkdrop_library_paths.current_paths()
     for host_root, kavita_root in (
-        (COMIC_ROOT, KAVITA_COMIC_ROOT),
-        (MANGA_ROOT, KAVITA_MANGA_ROOT),
+        (paths["comic_root"], paths["kavita_comic_root"]),
+        (paths["manga_root"], paths["kavita_manga_root"]),
     ):
         try:
             rel = candidate.relative_to(host_root)

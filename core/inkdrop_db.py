@@ -27,6 +27,28 @@ def _label(db_path) -> str:
         return "sqlite"
 
 
+AUTO_VACUUM_INCREMENTAL = 2
+
+
+def _configure_new_database_auto_vacuum(con) -> bool:
+    """Set auto_vacuum=INCREMENTAL, but only while the database is still empty.
+
+    Must run before ``journal_mode=wal``: switching journal mode writes the
+    database header, and auto_vacuum is a header field that can afterwards only
+    be changed by a full VACUUM.
+
+    Lives here rather than in inkdrop_db_maintenance so that module can keep
+    importing this one without a cycle.
+    """
+    try:
+        if int(con.execute("pragma page_count").fetchone()[0] or 0) != 0:
+            return False
+        con.execute(f"pragma auto_vacuum={AUTO_VACUUM_INCREMENTAL}")
+        return True
+    except (sqlite3.Error, TypeError, ValueError, IndexError):
+        return False
+
+
 def open_connection(
     db_path,
     *,
@@ -50,6 +72,18 @@ def open_connection(
     if readonly:
         con.execute("pragma query_only=1")
     elif configure_wal:
+        # Give a brand-new database incremental auto-vacuum before it has any
+        # pages. SQLite only ever reclaims freed pages when something asks it
+        # to; with the default auto_vacuum=NONE a bulk delete leaves the space
+        # dead in the file forever, which is how the production state database
+        # reached 27% (11.4GB) freelist. The pragma writes into the database
+        # header, and the header can only be rewritten by a full VACUUM once
+        # the file is populated -- so this is free here and expensive later.
+        # On an existing database it is a documented no-op, which is exactly
+        # the behaviour wanted: converting those is a deliberate maintenance
+        # action (inkdrop_db_maintenance.convert_to_incremental), never a
+        # side effect of opening a connection.
+        _configure_new_database_auto_vacuum(con)
         try:
             current = str(con.execute("pragma journal_mode").fetchone()[0] or "").lower()
             if current != "wal":

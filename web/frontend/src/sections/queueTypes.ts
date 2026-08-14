@@ -72,7 +72,7 @@ export type QueueRowDetail = QueueRow & {
     started_at?: number;
     completed_at?: number;
   };
-  last_attempt?: { title?: string; provider?: string; failure_reason?: string };
+  last_attempt?: { id?: string; source_attempt_id?: string; title?: string; provider?: string; failure_reason?: string };
   latest_import?: { dest_path?: string };
 };
 
@@ -102,7 +102,20 @@ export type QueueRunResult = {
     series?: string;
     issue?: string;
     action?: string;
+    reason?: string;
+    excluded_sources?: string[];
+    message?: string;
     dbRetry?: { ok?: boolean; action?: string; reason?: string };
+    [key: string]: unknown;
+  };
+};
+
+export type QueueBlockResult = {
+  ok: boolean;
+  result?: {
+    reason?: string;
+    candidate_id?: string;
+    retry?: { ok?: boolean; result?: unknown; reason?: string };
     [key: string]: unknown;
   };
 };

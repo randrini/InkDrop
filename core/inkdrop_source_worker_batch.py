@@ -14,6 +14,7 @@ import json
 import os
 import re
 import socket
+import threading
 import time
 import uuid
 from datetime import date, datetime, timedelta
@@ -39,6 +40,11 @@ RUNTIME_BUDGET_STARVED_HEAD_SLOTS = 3
 RUNTIME_BUDGET_STARVED_MIN_AGE_SECONDS = 6 * 60 * 60
 SOURCE_RETRY_STARVED_HEAD_SLOTS = 3
 SOURCE_RETRY_STARVED_MIN_AGE_SECONDS = 6 * 60 * 60
+# Cap on how much of one pass's runtime budget the per-source floor
+# reservation can claim before the ordinary estimate-bucket ordering takes
+# back over -- a floor guarantee that could itself exhaust the pass would
+# just move who starves next.
+SOURCE_FLOOR_RESERVE_MAX_BUDGET_FRACTION = 0.5
 COMIC_PACK_TRUSTED_PAIR_RUNTIME_MAX_SECONDS = 180
 QUEUE_FILL_SCAN_MULTIPLIER = 4
 QUEUE_FILL_SCAN_MAX = 500
@@ -206,19 +212,41 @@ def _cached_source_http_get(http_get):
         return http_get, {"enabled": False, "hits": 0, "misses": 0, "bypassed": 0, "entries": 0}
     cache = {}
     stats = {"enabled": True, "hits": 0, "misses": 0, "bypassed": 0, "entries": 0}
+    cache_lock = threading.Lock()
+    in_flight = {}
 
     def _client(request):
         key = _source_http_cache_key(request)
         if not key:
-            stats["bypassed"] += 1
+            with cache_lock:
+                stats["bypassed"] += 1
             return http_get(request)
-        if key in cache:
-            stats["hits"] += 1
-            return _copy_source_http_response(cache[key])
-        stats["misses"] += 1
-        response = http_get(request)
-        cache[key] = _copy_source_http_response(response)
-        stats["entries"] = len(cache)
+        while True:
+            with cache_lock:
+                if key in cache:
+                    stats["hits"] += 1
+                    return _copy_source_http_response(cache[key])
+                pending = in_flight.get(key)
+                if pending is None:
+                    pending = threading.Event()
+                    in_flight[key] = pending
+                    stats["misses"] += 1
+                    break
+            # Do not hold the bookkeeping lock while another request owns the
+            # network call. A failed owner wakes waiters, which may retry.
+            pending.wait()
+        try:
+            response = http_get(request)
+        except Exception:
+            with cache_lock:
+                in_flight.pop(key, None)
+                pending.set()
+            raise
+        with cache_lock:
+            cache[key] = _copy_source_http_response(response)
+            stats["entries"] = len(cache)
+            in_flight.pop(key, None)
+            pending.set()
         return response
 
     return _client, stats
@@ -2491,6 +2519,106 @@ def _runtime_remaining_seconds(started_monotonic, max_run_seconds, *, reserved_s
     return max(0.0, budget - elapsed - _float(reserved_seconds, 0.0) - RUNTIME_CLEANUP_SECONDS)
 
 
+def _source_floor_head_plan_ids(plans, *, source_http_timeout_seconds=None, max_run_seconds=None, now=None):
+    """One guaranteed head-of-line slot per distinct source lane, per pass.
+
+    Without this, _runtime_budget_order sorts strictly by estimate bucket, so
+    cheap flat-cost lanes (RSS/Prowlarr/ComicsCodes at ~120s) always sort
+    ahead of a lane whose cost scales with real work (Suwayomi volume packs,
+    up to ~1300s for an 80-request pass) -- the expensive lane's turn never
+    comes before the shared per-pass budget is gone. Confirmed live
+    2026-08-11: 116/828 Suwayomi manga plans skipped with "did not start
+    before the worker runtime budget" on every attempt in 14 days, never once
+    admitted. RSS shows the same mechanism (see
+    inkdrop_rss_source_ladder_budget_starvation_20260810).
+
+    Reserve each lane's single cheapest candidate a spot near the front,
+    preferring one already marked runtime-budget-starved so the reservation
+    targets a lane that is actually stuck rather than an arbitrary cheap
+    plan. Bounded by SOURCE_FLOOR_RESERVE_MAX_BUDGET_FRACTION so the floor
+    guarantee itself can't consume the whole pass -- that would just move
+    who starves next, not fix the mechanism.
+
+    This rescues a lane whose own estimate would fit in the per-pass budget
+    but never got a turn because cheaper lanes filled the budget first. It
+    cannot rescue a candidate whose own estimate exceeds the entire pass
+    budget by itself (confirmed live 2026-08-11: 213/240 sampled Suwayomi
+    volume-pack candidates estimate ~1328s against a 600s
+    INKDROP_SOURCE_WORKER_MAX_RUN_SECONDS pass, ~570s usable after cleanup --
+    no admission order fits that in this pass). That case needs a larger
+    max_run_seconds or a cheaper per-item estimate, not a reorder.
+    """
+    plans = list(plans or [])
+    if len(plans) <= 1:
+        return set()
+    provider_counts = _provider_counts(plans)
+    lane_head = {}
+    for index, plan in enumerate(plans):
+        lane = _provider_lane_key(plan, provider_counts)
+        if not lane:
+            continue
+        estimate = _plan_runtime_estimate(plan, source_http_timeout_seconds=source_http_timeout_seconds)
+        starved = _runtime_budget_starved_age_seconds(plan, now=now) > 0
+        current = lane_head.get(lane)
+        if current is None:
+            lane_head[lane] = (estimate, index, id(plan), starved)
+            continue
+        current_estimate, _current_index, _current_id, current_starved = current
+        if starved and not current_starved:
+            lane_head[lane] = (estimate, index, id(plan), starved)
+        elif starved == current_starved and estimate < current_estimate:
+            lane_head[lane] = (estimate, index, id(plan), starved)
+    if len(lane_head) <= 1:
+        return set()
+    budget = _runtime_budget(max_run_seconds)
+    ceiling = budget * SOURCE_FLOOR_RESERVE_MAX_BUDGET_FRACTION if budget > 0 else None
+    # Starved lanes claim the reservation first; among the rest, the most
+    # expensive lane claims it next -- a cheap lane clears the ordinary
+    # greedy fill on its own and doesn't need the floor, so spend the
+    # bounded reservation on the lane structurally least likely to survive
+    # estimate-bucket ordering.
+    ordered_lanes = sorted(
+        lane_head.items(),
+        key=lambda entry: (0 if entry[1][3] else 1, -entry[1][0], entry[1][1]),
+    )
+    # The single most-urgent lane (starved, or -- if nothing is starved yet
+    # -- simply the most expensive) always gets its reservation regardless of
+    # the ceiling: that is the whole point of the floor, and a lane whose own
+    # estimate exceeds the ceiling but still fits the full pass budget must
+    # not be refused a slot it would otherwise never win (that's exactly what
+    # this function exists to rescue). The ceiling instead bounds every
+    # *other* lane's reservation combined, so one oversized lane winning the
+    # unconditional first slot can no longer consume the whole pass and
+    # silently deny every other lane its own promised one-per-lane guarantee
+    # -- each remaining lane still gets in as long as the group of them
+    # together stays under the cap.
+    # Ranked, not just a flat set: rank 0 is the single most-urgent lane and
+    # always keeps the front-most spot in _runtime_budget_order's final sort
+    # (see _source_floor_head_priority) even though every other admitted
+    # lane also gets floor priority now -- otherwise a handful of cheap
+    # lanes admitted alongside it would sort ahead of it on cost-bucket and
+    # eat the real runtime budget before its turn came, defeating the one
+    # reservation that actually matters (confirmed: this happened when the
+    # first version of this fix gave every floor lane equal priority).
+    head_ranks = {}
+    reserved_seconds = 0.0
+    additional_reserved_seconds = 0.0
+    for position, (_lane, (estimate, _index, plan_id, _starved)) in enumerate(ordered_lanes):
+        if position > 0 and ceiling is not None and additional_reserved_seconds + estimate > ceiling:
+            continue
+        head_ranks[plan_id] = len(head_ranks)
+        reserved_seconds += estimate
+        if position > 0:
+            additional_reserved_seconds += estimate
+    return head_ranks
+
+
+def _source_floor_head_priority(plan, head_plan_ranks):
+    head_plan_ranks = head_plan_ranks or {}
+    rank = head_plan_ranks.get(id(plan))
+    return rank if rank is not None else len(head_plan_ranks)
+
+
 def _runtime_budget_order(plans, *, max_run_seconds=None, source_http_timeout_seconds=None, now=None):
     plans = list(plans or [])
     if _runtime_budget(max_run_seconds) <= 0 or len(plans) <= 1:
@@ -2500,6 +2628,12 @@ def _runtime_budget_order(plans, *, max_run_seconds=None, source_http_timeout_se
     local_page_pack_head_ids = _runtime_local_page_pack_head_plan_ids(plans)
     runtime_starved_head_ids = _runtime_budget_starved_plan_ids(plans, now=now)
     source_retry_starved_head_ids = _source_retry_starved_plan_ids(plans, now=now)
+    source_floor_head_ids = _source_floor_head_plan_ids(
+        plans,
+        source_http_timeout_seconds=source_http_timeout_seconds,
+        max_run_seconds=max_run_seconds,
+        now=now,
+    )
     direct_local_page_pack_head_ids = {
         id(plan)
         for plan in plans
@@ -2507,13 +2641,14 @@ def _runtime_budget_order(plans, *, max_run_seconds=None, source_http_timeout_se
     }
     return [
         row
-        for _initial_search, _comic_head, _runtime_starved, _runtime_starved_age, _direct_local_head, _local_head, _source_retry_starved, _source_retry_starved_age, _round, _fast_lane, _coverage, _bucket, _backlog_priority, _impact, _index, row in sorted(
+        for _initial_search, _comic_head, _runtime_starved, _runtime_starved_age, _source_floor, _direct_local_head, _local_head, _source_retry_starved, _source_retry_starved_age, _round, _fast_lane, _coverage, _bucket, _backlog_priority, _impact, _index, row in sorted(
             (
                 (
                     0 if (plan or {}).get(INITIAL_SEARCH_PRIORITY_FIELD) else 1,
                     _runtime_comic_pack_head_priority(plan, comic_pack_head_ids),
                     _runtime_budget_starved_priority(plan, runtime_starved_head_ids),
                     _runtime_budget_starved_age_priority(plan, runtime_starved_head_ids, now=now),
+                    _source_floor_head_priority(plan, source_floor_head_ids),
                     _runtime_direct_local_page_pack_head_priority(plan, direct_local_page_pack_head_ids),
                     _runtime_local_page_pack_head_priority(plan, local_page_pack_head_ids),
                     _source_retry_starved_priority(plan, source_retry_starved_head_ids),
@@ -2529,7 +2664,7 @@ def _runtime_budget_order(plans, *, max_run_seconds=None, source_http_timeout_se
                 )
                 for index, plan in enumerate(plans)
             ),
-            key=lambda item: item[:15],
+            key=lambda item: item[:16],
         )
     ]
 

@@ -24,7 +24,7 @@
   }
 
   function safePayloadDetail(payload, fallback) {
-    return String(payload?.detail || payload?.message || payload?.error_description || fallback || "Request failed.");
+    return String(payload?.detail || payload?.message || payload?.error_description || payload?.error || fallback || "Request failed.");
   }
 
   function safeDownloadFilename(value) {

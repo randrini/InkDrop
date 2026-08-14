@@ -1916,7 +1916,7 @@
     }
     .series-detail-issue-row {
       display: grid;
-      grid-template-columns: minmax(62px, .28fr) minmax(240px, 1.8fr) minmax(112px, .52fr) minmax(220px, 1.28fr) minmax(116px, max-content);
+      grid-template-columns: minmax(62px, .28fr) minmax(220px, 1.6fr) minmax(100px, .44fr) minmax(180px, 1.1fr) minmax(150px, 266px);
       gap: 7px;
       align-items: center;
       min-width: 0;
@@ -2005,11 +2005,11 @@
     .series-detail-issue-state.bad { color: var(--bad); border-color: rgba(255, 125, 125, .45); }
     .series-detail-issue-actions {
       display: flex;
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
       justify-content: flex-end;
       gap: 4px;
       justify-self: end;
-      width: max-content;
+      width: 100%;
       max-width: 100%;
       min-width: 0;
     }

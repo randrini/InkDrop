@@ -7,6 +7,7 @@ stored in ``app_settings`` and validated here before it reaches SQLite.
 
 from __future__ import annotations
 
+import math
 import os
 
 from core import inkdrop_operator_contracts
@@ -28,6 +29,7 @@ BOOLEAN_KEYS = {
     "media_management.apply_planned_path",
     "media_management.delete_empty_folders",
     "media_management.frontend_sync_after_import",
+    "media_management.hardlink_imports",
     "media_management.library_visibility_checks_enabled",
     "media_management.library_visibility_required",
     "media_management.manga_companion_folder_convergence",
@@ -60,6 +62,20 @@ ARRAY_KEYS = {
 }
 
 NUMBER_SPECS = {
+    # Backup retention. The minimum of 1 on each is the point of putting these
+    # behind the registry at all: prune_backup_archives() reads 0 as "this
+    # limit is switched off", so a UI that accepted 0 -- or a negative, which
+    # max(0, ...) also collapses to 0 -- would silently disable the very cap
+    # the operator was trying to tighten. The upper bounds match the ones the
+    # container scheduler already applied to the equivalent environment
+    # variables, so nothing an install could previously configure becomes
+    # unreachable through the setting.
+    "backup.retention_count": {
+        "min": 1, "max": 100, "integer": True, "units": "backups", "default": 6, "recommended": 6,
+    },
+    "backup.retention_days": {
+        "min": 1, "max": 365, "integer": True, "units": "days", "default": 28, "recommended": 28,
+    },
     "auth.password_min_length": {"min": 1, "max": 128, "integer": True},
     "auth.session_ttl_seconds": {"min": 300, "max": 2592000, "integer": True},
     "automation.queue_watchdog_slskd_stale_minutes": {
@@ -74,6 +90,15 @@ NUMBER_SPECS = {
     "automation.queue_watchdog_handoff_stale_hours": {"min": 1, "max": 168, "integer": False},
     "automation.queue_watchdog_download_client_stale_hours": {"min": 1, "max": 336, "integer": False},
     "automation.queue_watchdog_retry_delay_minutes": {"min": 1, "max": 1440, "integer": True},
+    "automation.queue_watchdog_max_stall_retries": {
+        "min": 1, "max": 20, "integer": True, "units": "retries", "default": 3, "recommended": 3,
+    },
+    "automation.awaiting_release_hours": {
+        "min": 24, "max": 720, "integer": False, "units": "hours", "default": 72, "recommended": 72,
+    },
+    "automation.awaiting_release_revival_hours": {
+        "min": 6, "max": 168, "integer": False, "units": "hours", "default": 24, "recommended": 24,
+    },
     "media_management.minimum_free_space_gb": {"min": 0, "max": 100000, "integer": False},
 }
 
@@ -99,7 +124,9 @@ STRING_KEYS = {
     "media_management.comic_issue_format",
     "media_management.manga_chapter_format",
     "media_management.series_folder_format",
+    "path.comic_incoming_root",
     "path.comic_root",
+    "path.ebook_incoming_root",
     "path.kavita_comic_root",
     "path.kavita_manga_root",
     "path.manga_root",
@@ -153,6 +180,8 @@ def validate_value(key, value):
             parsed = float(value)
         except (TypeError, ValueError):
             raise ValueError(f"{key} must be a number") from None
+        if not math.isfinite(parsed):
+            raise ValueError(f"{key} must be a finite number")
         if parsed < schema["min"] or parsed > schema["max"]:
             raise ValueError(f"{key} must be between {schema['min']} and {schema['max']}")
         return int(parsed) if schema.get("integer") else parsed

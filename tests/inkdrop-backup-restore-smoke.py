@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import contextlib
 import zipfile
@@ -225,6 +227,63 @@ def main():
             backup_dir=restore_backups,
         )
         require("pre_restore_snapshots" not in preview_after_apply, "a dry-run preview must not create or report any snapshot")
+
+        # 20260811 audit finding: a stale -wal/-shm pair left at the restore
+        # target (normal for the live state DB, which always runs in WAL
+        # mode -- see backup_sqlite_db) used to survive the state DB's
+        # os.replace() untouched, unlike the auth DB's replace a few lines
+        # below it. On next open, SQLite would replay those leftover frames
+        # over the freshly restored file, silently reinstating the
+        # pre-restore data while restore_backup_archive() still reported
+        # ok=True.
+        #
+        # Reproducing this needs a genuinely uncheckpointed WAL, not just an
+        # empty leftover file -- SQLite auto-checkpoints (and can delete the
+        # -wal entirely) the moment the last connection to a database
+        # closes. A real InkDrop worker process that dies mid-write (crash,
+        # OOM kill) never gets that clean-close checkpoint. A same-process
+        # connection held open across restore_backup_archive()'s os.replace()
+        # would reproduce the dirty WAL but risks the replace itself failing
+        # on Windows, which locks files held open by any handle in the same
+        # process. A separate subprocess that hard-exits (os._exit, skipping
+        # Python's own connection finalizers) is what actually leaves a
+        # dirty WAL on disk with no open handles left behind -- the same
+        # thing an unclean shutdown of a live InkDrop instance leaves.
+        wal_restore_state = root / "wal-restore-state"
+        wal_restore_config = root / "wal-restore-config"
+        wal_restore_state.mkdir(parents=True, exist_ok=True)
+        wal_target_db = wal_restore_state / "inkdrop-state.sqlite3"
+        dirty_wal_setup = (
+            "import sqlite3, os, sys\n"
+            "target = sys.argv[1]\n"
+            "con = sqlite3.connect(target)\n"
+            "con.execute('pragma journal_mode=wal')\n"
+            "con.execute('pragma wal_autocheckpoint=0')\n"
+            "con.execute('create table app_settings(key text primary key, value_json text)')\n"
+            "con.execute(\"insert into app_settings(key, value_json) values ('marker', '\\\"pre-restore-live-value\\\"')\")\n"
+            "con.commit()\n"
+            "reader = sqlite3.connect(target)\n"
+            "reader.execute('select 1 from app_settings').fetchall()\n"
+            "con.execute(\"insert into app_settings(key, value_json) values ('marker2', '\\\"uncheckpointed\\\"')\")\n"
+            "con.commit()\n"
+            "os._exit(0)\n"
+        )
+        subprocess.run([sys.executable, "-c", dirty_wal_setup, str(wal_target_db)], check=True)
+        require((wal_target_db.parent / (wal_target_db.name + "-wal")).stat().st_size > 0, "test setup must leave a non-empty -wal file, or this isn't exercising the bug")
+        wal_apply = inkdrop_backup_restore.restore_backup_archive(
+            archive,
+            target_config_dir=wal_restore_config,
+            target_state_dir=wal_restore_state,
+            apply=True,
+            backup_dir=root / "wal-restore-backups",
+        )
+        require(wal_apply["ok"], f"restore over a stale live WAL should still succeed: {wal_apply}")
+        require(not (wal_target_db.parent / (wal_target_db.name + "-wal")).exists(), "restore must not leave the pre-restore state DB's stale -wal behind")
+        require(not (wal_target_db.parent / (wal_target_db.name + "-shm")).exists(), "restore must not leave the pre-restore state DB's stale -shm behind")
+        with contextlib.closing(sqlite3.connect(wal_target_db)) as con:
+            rows = dict(con.execute("select key, value_json from app_settings").fetchall())
+        require("marker" not in rows and "marker2" not in rows, f"stale pre-restore WAL data must not reappear after restore: {rows}")
+        require(json.loads(rows.get("path.comic_root", "null")) == str(library), f"restore must actually apply the archive's data, not the pre-restore live data: {rows}")
 
         # A syntactically valid ZIP containing arbitrary bytes used to pass
         # preview and overwrite the live state database.  Both preview and

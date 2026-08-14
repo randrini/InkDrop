@@ -10988,7 +10988,7 @@
     }
     .series-detail-issue-row {
       display: grid;
-      grid-template-columns: minmax(62px, .28fr) minmax(240px, 1.8fr) minmax(112px, .52fr) minmax(220px, 1.28fr) minmax(116px, max-content);
+      grid-template-columns: minmax(62px, .28fr) minmax(220px, 1.6fr) minmax(100px, .44fr) minmax(180px, 1.1fr) minmax(150px, 266px);
       gap: 7px;
       align-items: center;
       min-width: 0;
@@ -11077,11 +11077,11 @@
     .series-detail-issue-state.bad { color: var(--bad); border-color: rgba(255, 125, 125, .45); }
     .series-detail-issue-actions {
       display: flex;
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
       justify-content: flex-end;
       gap: 4px;
       justify-self: end;
-      width: max-content;
+      width: 100%;
       max-width: 100%;
       min-width: 0;
     }
@@ -19448,6 +19448,15 @@ body[data-inkdrop-view="manual_review"] .section-table-detail * {
   background: rgba(15, 21, 28, .45);
 }
 
+.settings-backup-restore-disabled-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(230, 162, 62, .4);
+  border-radius: 4px;
+  background: rgba(230, 162, 62, .1);
+  color: #e6a23e;
+}
+
 .settings-backup-restore > p,
 .settings-backup-status {
   margin: 0;
@@ -19470,8 +19479,38 @@ body[data-inkdrop-view="manual_review"] .section-table-detail * {
   cursor: pointer;
 }
 
+/* Retention number box plus its unit word ("most recent", "days"). The box is
+   capped narrow because the values are two digits at most -- a full-width
+   number input next to a three-word suffix reads as a text field. The
+   selector has to carry .settings-form-control to outrank
+   `.settings-form-control input:not([type="checkbox"])`, whose :not() argument
+   makes it more specific than a bare `.settings-backup-retention-input input`
+   would be. */
+.settings-backup-retention-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-form-control .settings-backup-retention-input input {
+  width: 110px;
+  max-width: 110px;
+}
+
+.settings-backup-retention-input > span {
+  white-space: nowrap;
+}
+
 .settings-backup-file input {
   max-width: min(100%, 320px);
+}
+
+.settings-backup-preserve-auth {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
 }
 
 @media (max-width: 600px) {
@@ -22463,9 +22502,6 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
   text-transform: uppercase;
   background: var(--panel-2);
 }
-.history-row {
-  cursor: pointer;
-}
 .history-col-time {
   white-space: nowrap;
   color: var(--muted);
@@ -22485,14 +22521,30 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
   width: 28px;
   text-align: right;
 }
+.history-chevron-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  cursor: pointer;
+}
 .history-chevron {
   display: inline-block;
   color: var(--muted);
   font-size: 16px;
   transition: transform .12s ease;
 }
+.history-chevron-btn:hover .history-chevron,
+.history-chevron-btn:focus-visible .history-chevron {
+  color: var(--text);
+}
 .history-chevron.open {
   transform: rotate(90deg);
+}
+.section-workbench-note {
+  grid-column: 1 / -1;
+  margin: 2px 2px 0;
+  color: var(--muted);
 }
 .history-detail-row td {
   padding: 10px 14px 14px;
@@ -22670,8 +22722,10 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
     text-transform: uppercase;
   }
   /* History card specifics: the day header row is a section divider, not a
-     card; the chevron column is pointless when the whole card is tappable;
-     the expanded detail row reads as part of its parent card. */
+     card; the expanded detail row reads as part of its parent card. The
+     chevron is the only disclosure control (rows themselves aren't
+     clickable, desktop or mobile), so it must stay visible and tappable
+     here -- keep it right-aligned as its own line rather than hiding it. */
   .history-day-row {
     margin: 0 0 8px;
     padding: 0 2px 4px;
@@ -22683,7 +22737,8 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
     content: none;
   }
   .history-col-chevron {
-    display: none !important;
+    width: 100%;
+    text-align: right;
   }
   .history-col-details {
     max-width: none;
@@ -22774,6 +22829,18 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
 .mr-row.selected-detail-row {
   background: rgba(114, 210, 255, .07);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.mr-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mr-row-block-btn {
+  color: var(--bad, #e26464);
+  border-color: var(--bad, #e26464);
 }
 
 /* Slimmed download-client-manager empty state: one muted line where a
@@ -23029,6 +23096,7 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
 .queue-row-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
 }
@@ -23037,6 +23105,12 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
   color: var(--bad, #e26464);
   font-weight: 700;
   line-height: 1;
+}
+
+.queue-row-block-btn {
+  margin-top: 10px;
+  color: var(--bad, #e26464);
+  border-color: var(--bad, #e26464);
 }
 
 .queue-row-detail {
@@ -23096,3 +23170,356 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
   }
 }
 
+    .pull-list-page-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      border-bottom: 1px solid var(--line-soft);
+      padding: 0 0 10px;
+    }
+    .pull-list-page-head h2 {
+      margin: 0;
+      font-size: var(--font-2xl);
+      line-height: 1.15;
+    }
+    .pull-list-week-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .pull-list-page-body {
+      display: grid;
+      gap: 12px;
+    }
+    .pull-list-summary-row {
+      color: var(--muted);
+    }
+    .pull-list-forward-note {
+      border: 1px solid var(--line-soft);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: rgba(114, 210, 255, .05);
+    }
+    .pull-list-error {
+      color: var(--bad);
+    }
+    .pull-list-truncated-note {
+      color: var(--muted);
+    }
+    .pull-list-week-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(150px, 1fr));
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .pull-list-day-col {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: var(--panel);
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      min-width: 0;
+    }
+    .pull-list-day-today {
+      border-color: rgba(114, 210, 255, .48);
+      background: rgba(18, 29, 45, .5);
+    }
+    .pull-list-day-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .pull-list-day-head strong {
+      color: var(--text);
+      font-size: var(--font-sm);
+      font-weight: var(--weight-semibold);
+    }
+    .pull-list-today-badge {
+      border: 1px solid rgba(114, 210, 255, .48);
+      border-radius: 999px;
+      padding: 1px 8px;
+      color: var(--accent);
+      font-size: var(--font-2xs);
+      font-weight: var(--weight-bold);
+      text-transform: uppercase;
+    }
+    .pull-list-day-empty {
+      color: var(--muted);
+      font-style: italic;
+    }
+    .pull-list-entry-list {
+      display: grid;
+      gap: 6px;
+    }
+    .pull-list-entry-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: 6px;
+      min-width: 0;
+    }
+    .pull-list-entry-row .pull-list-status-pip {
+      margin-top: 5px;
+    }
+    .pull-list-entry-text {
+      display: grid;
+      gap: 1px;
+      min-width: 0;
+    }
+    .pull-list-entry-title {
+      overflow-wrap: anywhere;
+      color: var(--text);
+    }
+    .pull-list-entry-unit,
+    .pull-list-entry-status {
+      color: var(--muted);
+    }
+    .pull-list-status-pip {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+      background: var(--muted);
+    }
+    .pull-list-status-pip.pull-list-status-good { background: var(--good); }
+    .pull-list-status-pip.pull-list-status-warn { background: var(--warn); }
+    .pull-list-status-pip.pull-list-status-accent { background: var(--accent); }
+    .pull-list-status-pip.pull-list-status-muted { background: var(--muted); }
+
+    @media (max-width: 860px) {
+      .pull-list-week-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+/* Reliability island (web/frontend/src/sections/ReliabilityView.tsx): the
+   rollup bucket cards, per-item cards, the horizontal lifecycle stepper, and
+   the pager. Tone colors reuse the existing --good/--warn/--bad tokens the
+   rest of the app already uses -- nothing here introduces a new palette. */
+
+.reliability-info-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent) 8%);
+  color: var(--muted);
+  font-size: var(--font-sm, 12px);
+}
+
+.reliability-rollup-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+/* The sitewide `button { height: 38px }` rule clips a two-line button --
+   these cards stack a count and a label, so height/white-space are
+   explicitly overridden rather than inherited. */
+.reliability-rollup-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  height: auto;
+  min-height: 64px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.reliability-rollup-card:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.reliability-rollup-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--panel) 85%, var(--accent) 15%);
+}
+.reliability-rollup-card .reliability-rollup-count {
+  font-size: var(--font-lg, 20px);
+  font-weight: var(--weight-bold, 800);
+}
+.reliability-rollup-card .reliability-rollup-label {
+  font-size: var(--font-xs, 11px);
+  color: var(--muted);
+}
+.reliability-rollup-card.tone-good .reliability-rollup-count { color: var(--good); }
+.reliability-rollup-card.tone-warn .reliability-rollup-count { color: var(--warn); }
+.reliability-rollup-card.tone-bad .reliability-rollup-count { color: var(--bad); }
+
+.reliability-item-list {
+  display: grid;
+  gap: 10px;
+}
+
+.reliability-item-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--panel);
+}
+.reliability-item-card.tone-bad { border-left-color: var(--bad); }
+.reliability-item-card.tone-warn { border-left-color: var(--warn); }
+.reliability-item-card.tone-good { border-left-color: var(--good); }
+.reliability-item-card.tone-neutral { border-left-color: var(--line-soft); }
+
+.reliability-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.reliability-item-title-block {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.reliability-item-title {
+  overflow-wrap: break-word;
+}
+.reliability-bucket-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.reliability-stage-tracker {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+}
+.reliability-stage-step {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  gap: 6px;
+  min-width: 0;
+}
+.reliability-stage-step:not(:last-child)::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 2px;
+  margin: 0 4px;
+  background: var(--line-soft);
+}
+.reliability-stage-step.done:not(:last-child)::after {
+  background: var(--good);
+}
+.reliability-stage-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid var(--line-soft);
+  background: var(--panel);
+}
+.reliability-stage-step.done .reliability-stage-dot {
+  border-color: var(--good);
+  background: var(--good);
+}
+.reliability-stage-step.current .reliability-stage-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.reliability-stage-label {
+  font-size: var(--font-xs, 11px);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reliability-stage-step.current .reliability-stage-label {
+  color: var(--text);
+  font-weight: var(--weight-semibold, 700);
+}
+
+.reliability-item-reason {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-sm, 13px);
+}
+
+.reliability-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--font-xs, 11px);
+}
+
+.reliability-item-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.reliability-item-block-btn {
+  color: var(--bad, #e26464);
+  border-color: var(--bad, #e26464);
+}
+
+.reliability-empty-state {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line-soft);
+  border-radius: 8px;
+}
+
+.reliability-pager {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.reliability-pager-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.reliability-pager-pages button {
+  min-width: 32px;
+  min-height: 32px;
+  height: 32px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--font-sm, 12px);
+}
+.reliability-pager-pages button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #0b1720;
+  font-weight: var(--weight-semibold, 700);
+}
+.reliability-pager-gap {
+  padding: 0 4px;
+  color: var(--muted);
+}
+
+/* Narrow viewports: let the stepper's text labels wrap under their dots
+   instead of forcing the card wider than its container. */
+@media (max-width: 640px) {
+  .reliability-stage-tracker {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .reliability-stage-step:not(:last-child)::after {
+    display: none;
+  }
+}

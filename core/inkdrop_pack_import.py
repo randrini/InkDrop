@@ -2976,6 +2976,14 @@ def classify_files(importer, files, targets, missing, item=None):
             row["missing_issue"] = synthetic_missing_row(number, source_unit)
             matched.append((path, target, row))
         else:
+            if source_unit == "unknown" and target:
+                row.update(
+                    {
+                        "skip_reason": "unit_type_unproven",
+                        "detail": "ambiguous_artifact_unit_not_matched_to_a_missing_item",
+                        "action_needed": "manual_review",
+                    }
+                )
             already_or_unmatched.append(row)
     return matched, already_or_unmatched
 
@@ -3137,15 +3145,26 @@ def comicinfo_xml(series, number, title=None, year=None, unit_type="volume"):
 
 
 def ensure_comicinfo(dest, target, row):
-    if Path(dest).suffix.lower() != ".cbz":
+    dest = Path(dest)
+    if dest.suffix.lower() != ".cbz":
         return {"written": False, "reason": "not_cbz"}
     source_unit = str(row.get("source_unit") or row.get("unit_type") or "volume").strip().lower()
     if source_unit not in {"chapter", "volume", "pack"}:
         source_unit = "volume"
-    with zipfile.ZipFile(dest, "a", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(dest, "r") as archive:
         if any(name.lower() == "comicinfo.xml" for name in archive.namelist()):
             return {"written": False, "reason": "already_present"}
-        archive.writestr(
+    # Read-then-write-to-a-tmp-file-then-replace, never an in-place "a" (append)
+    # open: dest can be a hardlink sharing an inode with the still-seeding
+    # source torrent file, and an in-place write would corrupt it. A
+    # tmp-file-then-replace always produces a fresh, independent inode at
+    # dest and leaves source's bytes untouched either way.
+    tmp_cbz = dest.with_suffix(dest.suffix + ".tmp")
+    tmp_cbz.unlink(missing_ok=True)
+    with zipfile.ZipFile(dest, "r") as src, zipfile.ZipFile(tmp_cbz, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as out:
+        for info in src.infolist():
+            out.writestr(info, src.read(info.filename))
+        out.writestr(
             "ComicInfo.xml",
             comicinfo_xml(
                 target.get("title"),
@@ -3155,6 +3174,7 @@ def ensure_comicinfo(dest, target, row):
                 unit_type=source_unit,
             ),
         )
+    tmp_cbz.replace(dest)
     return {"written": True, "reason": "generated_for_kavita_manga", "unit_type": source_unit}
 
 
@@ -3206,7 +3226,7 @@ def existing_manga_unit(importer, target, row, source_path, target_dir):
         try:
             existing = existing or finder(target, source_number, source_unit, exclude=source_path)
         except Exception:
-            existing = existing
+            pass
     if not existing:
         for candidate in Path(target_dir).rglob("*"):
             if internal(candidate, target_dir):
@@ -3342,6 +3362,12 @@ def import_matched_files(importer, matched, dry_run, max_files, review_id, extra
     bad_archives = []
     handled_units = set()
     scan_folders = set()
+    hardlink_imports = False
+    if inkdrop_state is not None and INKDROP_STATE_DB.exists():
+        try:
+            hardlink_imports = bool(inkdrop_state.media_management_settings_context(INKDROP_STATE_DB).get("hardlink_imports"))
+        except Exception:
+            hardlink_imports = False
     for path, target, row in matched:
         source_unit = str(row.get("source_unit") or row.get("unit_type") or "volume").strip().lower()
         if source_unit == "pack":
@@ -3592,7 +3618,10 @@ def import_matched_files(importer, matched, dry_run, max_files, review_id, extra
                 event["normalized_archive"] = importer.convert_pdf_to_cbz(path, dest, target, issue_row)
             else:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, dest)
+                if hasattr(importer, "place_import_file"):
+                    event.update(importer.place_import_file(path, dest, hardlink=hardlink_imports))
+                else:
+                    shutil.copy2(path, dest)
             if event.get("truth_model") == "kavita_manga":
                 event["comicinfo"] = ensure_comicinfo(dest, target, row)
             conn.execute(
@@ -4262,6 +4291,26 @@ def run(args):
         "not_imported": not_imported[:50],
     }
     if not args.dry_run:
+        for ambiguous_row in not_imported:
+            if ambiguous_row.get("skip_reason") != "unit_type_unproven":
+                continue
+            source_name = Path(str(ambiguous_row.get("source") or "")).name
+            append_manual_review(
+                "ambiguous_manga_unit_filename",
+                {
+                    "review_id": args.review_id,
+                    "series": ambiguous_row.get("matched_series") or item.get("series"),
+                    "matched_series": ambiguous_row.get("matched_series"),
+                    "source": ambiguous_row.get("source"),
+                    "issue_number": ambiguous_row.get("issue_number"),
+                    "target_unit_type": ambiguous_row.get("target_unit_type"),
+                    "detail": (
+                        f"Can't tell whether \"{source_name}\" is a volume or a chapter "
+                        "from the filename alone -- pick which one it is before InkDrop imports it."
+                    ),
+                },
+                db_path=INKDROP_STATE_DB,
+            )
         if files:
             import_result = import_matched_files(
                 importer,

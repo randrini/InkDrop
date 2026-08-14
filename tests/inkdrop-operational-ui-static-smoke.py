@@ -131,11 +131,12 @@ checks = {
     # History's stat cards (Completed/Failed/Retried/Needs review) get their
     # real counts from a cached, sampled rollup (history_outcome_rollup() in
     # inkdrop_state.py) rather than scanning every history_events row on
-    # every request -- outcomeSummary.sampled visibly labels the cards with
-    # the sample size when a card's count is approximate.
+    # every request -- outcomeSummary.sampled discloses the sample size once,
+    # in a single plain-language note, rather than repeating "(from Xk recent
+    # events)" as jargon on all four cards (flagged in review).
     and "const outcomeSummary = viewPayload?.outcome_summary || {};" in web
     and "outcomeSummary.sampled" in web
-    and "recent events)`" in web
+    and "Based on the most recent ${Number(outcomeSummary.sample_size || 0).toLocaleString()} events." in web
     and 'sectionWorkbenchCard(box, "Completed", Number(outcomeSummary.completed || 0)' in web
     and 'sectionWorkbenchCard(box, "Needs review", needsReviewCount' in web,
     "page size reloads endpoint": 'loadInkdropSection(key, focus, {scroll: "none", keepExisting: true, limit: size})' in web,

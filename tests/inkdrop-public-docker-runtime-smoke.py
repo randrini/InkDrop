@@ -486,9 +486,9 @@ def assert_public_release_workflow_contract():
         "GITHUB_STEP_SUMMARY",
         "docker compose config --quiet",
         "docker compose build inkdrop",
-        "docker compose run --rm inkdrop python -B core/inkdrop_preflight.py --create --quiet --strict-dependencies --strict-runtime-tools",
-        "docker compose run --rm inkdrop python -B core/inkdrop_container_healthcheck.py --preflight-only",
-        "docker compose run --rm inkdrop python -B tools/inkdrop_install_support_summary.py --create --json",
+        "docker compose run --rm -T inkdrop python -B core/inkdrop_preflight.py --create --quiet --strict-dependencies --strict-runtime-tools",
+        "docker compose run --rm -T inkdrop python -B core/inkdrop_container_healthcheck.py --preflight-only",
+        "docker compose run --rm -T inkdrop python -B tools/inkdrop_install_support_summary.py --create --json",
         "inkdrop-install-support-summary.json",
         "inkdrop-public-http-smoke.json",
         'assert payload["install_support_schema_version"] == 1',
@@ -1229,6 +1229,13 @@ def assert_preflight_config_key_contract():
     root = Path(__file__).resolve().parents[1]
     compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
     compose_env = set((compose.get("services") or {}).get("inkdrop", {}).get("environment") or {})
+    # PUID/PGID are entrypoint-only container-user-remapping knobs, resolved by
+    # inkdrop-docker-entrypoint.sh before the Python process (and therefore
+    # inkdrop_preflight.py) ever starts. They're intentionally outside the
+    # INKDROP_ effective-config namespace this contract otherwise enforces.
+    docker_runtime_env_keys = {"PUID", "PGID"}
+    require(docker_runtime_env_keys <= compose_env, "compose inkdrop service should expose PUID/PGID for optional container user remapping")
+    compose_env -= docker_runtime_env_keys
     env_example = {
         match.group(1)
         for match in re.finditer(r"^(INKDROP_[A-Z0-9_]+)=", (root / ".env.example").read_text(encoding="utf-8"), flags=re.MULTILINE)

@@ -8,6 +8,7 @@ import { History } from "./sections/History";
 import { ManualReview } from "./sections/ManualReview";
 import { Series } from "./sections/Series";
 import { SeriesDetail } from "./sections/SeriesDetail";
+import { ReliabilityView } from "./sections/ReliabilityView";
 
 // Bridge between the existing vanilla-JS shell (inkdrop_web.py's inline
 // renderInkdropSection) and React. The shell owns navigation, the section
@@ -41,6 +42,7 @@ const SECTION_COMPONENTS: Record<string, SectionComponent> = {
   // gate the way "series" is) -- the vanilla page still owns the toolbar and
   // commandbar around it. See SeriesDetail.tsx's file comment.
   series_detail: SeriesDetail as unknown as SectionComponent,
+  reliability: ReliabilityView as unknown as SectionComponent,
 };
 
 const roots = new WeakMap<Element, Root>();

@@ -49,14 +49,6 @@ SOURCE_KIND_PROVIDER_TYPES = {
     "torrent_rss_feed": "indexer",
 }
 
-MODE_STATUS = {
-    "auto": "available",
-    "assist": "configured",
-    "manual_review": "manual_review",
-    "metadata_only": "configured",
-    "disabled": "disabled",
-}
-
 MODE_ENABLED_DEFAULT = {
     "auto": True,
     "assist": True,
@@ -364,10 +356,6 @@ def requires_manual_review(entry):
     entry = entry if isinstance(entry, dict) else {}
     policy = entry.get("policy") if isinstance(entry.get("policy"), dict) else {}
     return provider_mode(entry) == "manual_review" or policy.get("requires_manual_confirm") is True
-
-
-def is_disabled_boundary(entry):
-    return provider_mode(entry) == "disabled" and not is_auto_download_candidate(entry)
 
 
 def provider_summary(entry):
@@ -778,13 +766,6 @@ def settings_seed_payload(path=None):
     }
 
 
-def provider_summary_by_id(provider_id, path=None):
-    entry = provider_entry(provider_id, path)
-    if not entry:
-        return None
-    return provider_summary(entry)
-
-
 def provider_summaries(path=None, *, mode=None, auto_download_allowed=None, media_type=None, capability=None):
     rows = []
     for entry in provider_candidates(path):
@@ -836,23 +817,3 @@ def source_attempt_seed(provider_id, path=None):
     }
 
 
-def provider_status_from_catalog(provider_id, path=None, *, row_kind="provider"):
-    entry = provider_entry(provider_id, path)
-    if not entry:
-        return None
-    summary = provider_summary(entry)
-    status = MODE_STATUS.get(summary["provider_mode"], "observed")
-    state = "disabled" if summary["provider_mode"] == "disabled" else "configured"
-    next_action = summary["first_ticket"] or f"{summary['provider_label']} is available to InkDrop"
-    return inkdrop_sources.provider_status_contract(
-        {
-            "provider_id": summary["provider_id"],
-            "provider_type": summary["provider_type"],
-            "status": status,
-            "state": state,
-            "enabled": summary["enabled_by_default"],
-            "detail": f"{summary['provider_label']} source mode is {summary['provider_mode']}",
-            "next_action": next_action,
-        },
-        row_kind=row_kind,
-    )
