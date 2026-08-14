@@ -47,6 +47,7 @@
 # inside the image; a locally-built copy on the host must not leak into
 # the context, or a pre-build-then-measure workflow silently doubles it.
 /web/static/dist/
+!/scripts/
 !/inkdrop-completion-identity-audit-diff-alert.sh
 !/inkdrop-completion-identity-audit-diff-check.sh
 !/inkdrop-docker-entrypoint.sh
