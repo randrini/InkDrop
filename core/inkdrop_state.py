@@ -67544,6 +67544,16 @@ MANUAL_REVIEW_COMPACT_ROW_KEYS = QUEUE_COMPACT_ROW_KEYS | {
     "legacy_manual_review",
     "actionable",
     "parked",
+    # Decision-modal gate fields: without these the "Use this candidate" /
+    # "Use as {type}" button renders permanently disabled for artifact-
+    # acceptance-gate rows whose source is a staged local file.
+    "can_approve",
+    "can_approve_pack",
+    "can_approve_local_file",
+    "local_file_missing",
+    "local_file_name",
+    "detail",
+    "filename",
 }
 
 

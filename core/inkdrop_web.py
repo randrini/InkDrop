@@ -49056,10 +49056,23 @@ def inkdrop_manual_review_compact_view_public(limit=80, manual_review_filter=Non
     # is the human sentence explaining the rejection; `filename` names the
     # actual staged file). Rows without a legacy record fall back to a
     # direct staged-path check.
+    #
+    # Key fix: the legacy JSONL stores review_ids computed by
+    # normalize_review_exception_id (sha256[:24]), but review_id_for()
+    # produces sha256[:16]. Index under both key forms so artifact-
+    # acceptance-gate rows (which carry the normalize_review_exception_id
+    # form) can join regardless.
     legacy_by_id = {}
     try:
         for legacy in load_manual_review_raw(limit=300):
-            legacy_by_id[str(review_id_for(legacy) or "")] = legacy
+            rid = str(review_id_for(legacy) or "")
+            if rid:
+                legacy_by_id[rid] = legacy
+                # Also index the normalize_review_exception_id form so
+                # rows carrying that form can join.
+                normalized = normalize_review_exception_id(legacy)
+                if normalized and normalized != rid:
+                    legacy_by_id[normalized] = legacy
     except Exception:
         legacy_by_id = {}
     for row in payload.get("rows") or []:
@@ -57887,7 +57900,27 @@ def manual_review_local_source_path(source):
     # never an unattended/autopilot path -- and archive_check plus the
     # duplicate-hash guard in inkdrop_completed_import.py still hard-reject
     # a genuinely incomplete or corrupt file regardless of source root.
-    allowed_roots = (paths["slskd_download_root"], paths["manual_comics_inbox"], paths["slskd_incomplete_root"])
+    #
+    # Pack imports (inkdrop_pack_import.PACK_SOURCES) and direct downloads
+    # (inkdrop_completed_import.DIRECT_DOWNLOAD_ROOT /
+    # UNMATCHED_DOWNLOAD_ROOT) land under staging/downloads/comics,
+    # staging/direct/comics, staging/temp/downloads/comics, and staging/ebooks
+    # -- all outside the original slskd/inbox allowlist. The artifact-
+    # acceptance-gate rows whose source is one of these paths rendered a
+    # permanently disabled "Use this candidate" button, even though the
+    # underlying file was safe to import. Expand the allowlist to include
+    # all staging roots that completed-import and pack-import actually use.
+    staging_dir = inkdrop_runtime_config.staging_dir()
+    allowed_roots = (
+        paths["slskd_download_root"],
+        paths["manual_comics_inbox"],
+        paths["slskd_incomplete_root"],
+        Path(os.environ.get("INKDROP_DIRECT_DOWNLOAD_ROOT") or staging_dir / "direct" / "comics"),
+        Path(os.environ.get("INKDROP_UNMATCHED_DOWNLOAD_ROOT") or staging_dir / "downloads" / "comics"),
+        Path(os.environ.get("INKDROP_PACK_DOWNLOAD_ROOT") or staging_dir / "downloads" / "comics"),
+        Path(os.environ.get("INKDROP_PACK_TEMP_DOWNLOAD_ROOT") or staging_dir / "temp" / "downloads" / "comics"),
+        Path(os.environ.get("INKDROP_EBOOK_DOWNLOAD_ROOT") or staging_dir / "ebooks"),
+    )
     if not any(path_within(candidate, root) for root in allowed_roots):
         return None
     return candidate
