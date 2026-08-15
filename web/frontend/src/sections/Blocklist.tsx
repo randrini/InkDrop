@@ -136,7 +136,7 @@ export function Blocklist({ payload }: { payload: BlocklistViewPayload }) {
   };
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { pendingIds, doneIds, actionError, runRowAction } = useRowActions(() => loadPage(offset));
+  const { pendingIds, doneIds, actionError, clearActionError, runRowAction } = useRowActions(() => loadPage(offset));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const summary = payload.summary || {};
   const activeFilterRef = useRef(compoundFilter(persistedFilters));
@@ -161,6 +161,11 @@ export function Blocklist({ payload }: { payload: BlocklistViewPayload }) {
   // the user has filters active, the shell's unfiltered page one would
   // silently discard them -- refetch with the active compound filter instead.
   useEffect(() => {
+    // A fresh payload is a different page/filter than the one any announced
+    // row failure was about. The other four islands already reset it here;
+    // Blocklist never consumed clearActionError at all, so its failure banner
+    // had no way to clear short of a full remount.
+    clearActionError();
     if (activeFilterRef.current === "all") {
       setRows(payload.rows || []);
       setOffset(payload.offset || 0);

@@ -49,10 +49,12 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import zipfile
 from pathlib import Path
 
@@ -255,10 +257,211 @@ def list_archive_members(source, container):
 
 
 def _list_rar_members_unrar(source, unrar):
-    code, stdout, stderr = _run_bounded([unrar, "lb", str(source)], LIST_TIMEOUT_SECONDS)
+    return [record["path"] for record in _list_rar_records_unrar(source, unrar)]
+
+
+# A RAR member is not just a path. It carries a type, and a link member carries
+# a target that the path itself says nothing about. The extractor honours all of
+# that; a name-only check does not, so a member named "Pages/link" whose target
+# is "../../outside" passes a path check and still escapes.
+RAR_MAX_MEMBERS = 10000
+RAR_MAX_TOTAL_BYTES = 8 * 1024 * 1024 * 1024
+
+
+def _parse_sevenzip_slt_records(stdout):
+    """Structured members from `7z l -slt`, which emits blank-line-separated blocks."""
+    records = []
+    block = {}
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if block:
+                records.append(block)
+                block = {}
+            continue
+        if " = " not in line:
+            continue
+        key, _, value = line.partition(" = ")
+        block[key.strip().lower()] = value.strip()
+    if block:
+        records.append(block)
+    out = []
+    for block in records:
+        if "path" not in block:
+            continue
+        out.append(
+            {
+                "path": block.get("path", ""),
+                "attributes": block.get("attributes", ""),
+                "folder": block.get("folder", ""),
+                "size": block.get("size", ""),
+                "link": block.get("symbolic link", "") or block.get("hard link", "") or block.get("link", ""),
+            }
+        )
+    return out
+
+
+def _parse_unrar_lta_records(stdout):
+    """Structured members from `unrar lta`, whose blocks use "Key: value"."""
+    records = []
+    block = {}
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if block:
+                records.append(block)
+                block = {}
+            continue
+        if ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        block[key.strip().lower()] = value.strip()
+    if block:
+        records.append(block)
+    out = []
+    for block in records:
+        name = block.get("name", "")
+        if not name:
+            continue
+        out.append(
+            {
+                "path": name,
+                "attributes": block.get("attributes", ""),
+                "folder": "+" if str(block.get("type", "")).lower() == "directory" else "-",
+                "size": block.get("size", ""),
+                "link": block.get("target", ""),
+                "type": block.get("type", ""),
+            }
+        )
+    return out
+
+
+def _list_rar_records_sevenzip(source, sevenzip):
+    code, stdout, stderr = _run_bounded([sevenzip, "l", "-slt", str(source)], LIST_TIMEOUT_SECONDS)
     if code != 0:
         raise ConversionRefused("source_listing_failed", (stderr or stdout).strip()[:400])
-    return [line.strip() for line in stdout.splitlines() if line.strip()]
+    return [record for record in _parse_sevenzip_slt_records(stdout) if record["path"] != str(source)]
+
+
+def _list_rar_records_unrar(source, unrar):
+    # "lb" prints bare names and nothing else, so it cannot answer "is this a
+    # link". "lta" is the technical listing that can.
+    code, stdout, stderr = _run_bounded([unrar, "lta", str(source)], LIST_TIMEOUT_SECONDS)
+    if code != 0:
+        raise ConversionRefused("source_listing_failed", (stderr or stdout).strip()[:400])
+    return _parse_unrar_lta_records(stdout)
+
+
+def list_rar_member_records(source):
+    tools = rar_tooling()
+    if tools["sevenzip"]:
+        return _list_rar_records_sevenzip(source, tools["sevenzip"])
+    if tools["unrar"]:
+        return _list_rar_records_unrar(source, tools["unrar"])
+    raise ConversionRefused("rar_tooling_missing")
+
+
+def _is_directory_record(record):
+    if str(record.get("folder", "")).strip() == "+":
+        return True
+    if str(record.get("type", "")).strip().lower() == "directory":
+        return True
+    attributes = str(record.get("attributes", ""))
+    return attributes.startswith("D") or attributes.startswith("d")
+
+
+def _record_link_kind(record):
+    """"" for an ordinary file, otherwise why this member is not one."""
+    if str(record.get("link", "")).strip():
+        return "link_target"
+    attributes = str(record.get("attributes", "")).strip().lower()
+    if not attributes:
+        return ""
+    # 7z surfaces unix mode strings; unrar surfaces its own attribute letters.
+    if attributes.startswith("l"):
+        return "symlink"
+    for marker in ("symlink", "hardlink", "link"):
+        if marker in attributes:
+            return marker
+    if attributes[0] in {"b", "c", "p", "s"}:
+        return "special_node"
+    return ""
+
+
+def _normalized_collision_key(relative):
+    # Two members can differ as byte strings and still land on one file: case
+    # folding on Windows/macOS, and unicode normalization anywhere. Whichever
+    # one is written last silently wins, which is a way to smuggle content past
+    # a reviewer who read the first.
+    return unicodedata.normalize("NFC", relative).casefold()
+
+
+def assert_safe_rar_members(records):
+    """Refuse an archive before extraction unless every member is an ordinary,
+    contained file. Returns the accepted relative names."""
+    if len(records) > RAR_MAX_MEMBERS:
+        raise ConversionRefused("source_member_count_exceeded", len(records))
+    accepted = []
+    seen = {}
+    total = 0
+    for record in records:
+        raw = str(record.get("path", ""))
+        if _is_directory_record(record):
+            # A directory entry writes no bytes, but its name still has to be
+            # contained or the extractor creates it outside the work dir.
+            if _safe_relative_name(raw) is None and raw.strip():
+                raise ConversionRefused("source_member_path_unsafe", raw)
+            continue
+        link_kind = _record_link_kind(record)
+        if link_kind:
+            raise ConversionRefused("source_member_type_unsafe", f"{link_kind}:{raw}")
+        relative = _safe_relative_name(raw)
+        if relative is None:
+            raise ConversionRefused("source_member_path_unsafe", raw)
+        key = _normalized_collision_key(relative)
+        if key in seen and seen[key] != relative:
+            raise ConversionRefused("source_member_normalization_collision", f"{seen[key]}|{relative}")
+        if key in seen:
+            raise ConversionRefused("source_member_duplicate", relative)
+        seen[key] = relative
+        try:
+            size = int(str(record.get("size", "") or 0).strip() or 0)
+        except ValueError:
+            size = 0
+        total += max(0, size)
+        if total > RAR_MAX_TOTAL_BYTES:
+            raise ConversionRefused("source_member_size_exceeded", total)
+        accepted.append(relative)
+    return accepted
+
+
+def assert_extraction_contained(workdir):
+    """Verify the tree the extractor actually produced.
+
+    The pre-extraction checks describe what the archive claimed. This describes
+    what landed, which is the only thing that matters if the extractor honours
+    something the listing did not show.
+    """
+    root = Path(workdir).resolve()
+    for current, dirs, names in os.walk(workdir, followlinks=False):
+        current_path = Path(current)
+        for name in list(dirs) + list(names):
+            child = current_path / name
+            if child.is_symlink():
+                raise ConversionRefused("extracted_member_type_unsafe", f"symlink:{name}")
+            try:
+                resolved = child.resolve()
+            except OSError as exc:
+                raise ConversionRefused("extracted_member_unreadable", f"{type(exc).__name__}: {name}")
+            if resolved != root and root not in resolved.parents:
+                raise ConversionRefused("extracted_member_escaped", name)
+            if child.is_file() and not child.is_dir():
+                try:
+                    mode = child.lstat().st_mode
+                except OSError as exc:
+                    raise ConversionRefused("extracted_member_unreadable", f"{type(exc).__name__}: {name}")
+                if not stat.S_ISREG(mode):
+                    raise ConversionRefused("extracted_member_type_unsafe", f"special:{name}")
 
 
 def _extract_zip(source, workdir):
@@ -286,12 +489,12 @@ def _extract_rar(source, workdir):
     tools = rar_tooling()
     if not tools["available"]:
         raise ConversionRefused("rar_tooling_missing")
-    # 7z/unrar extract straight to disk with no "refuse unsafe member path"
-    # option of their own, so member names are checked against the same rule
-    # zip extraction enforces per-member before either tool ever touches workdir.
-    for name in list_archive_members(source, "rar"):
-        if _safe_relative_name(name) is None:
-            raise ConversionRefused("source_member_path_unsafe", name)
+    # 7z/unrar extract straight to disk with no "refuse unsafe member" option of
+    # their own, so the archive is judged on structured member records -- type,
+    # link target, size, path -- before either tool touches workdir, and the
+    # resulting tree is verified afterwards in case the extractor honoured
+    # something the listing did not show.
+    assert_safe_rar_members(list_rar_member_records(source))
     attempts = []
     if tools["sevenzip"]:
         attempts.append(("7z", [tools["sevenzip"], "x", "-y", f"-o{workdir}", str(source)]))
@@ -306,6 +509,7 @@ def _extract_rar(source, workdir):
             _empty_directory(workdir)
             continue
         if code == 0:
+            assert_extraction_contained(workdir)
             return {"extractor": name, "exit_code": code}
         last = {"extractor": name, "exit_code": code, "error": (stderr or stdout).strip()[:400]}
         _empty_directory(workdir)

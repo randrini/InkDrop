@@ -49,6 +49,23 @@
   // complete release history without adding old entries to every page load.
   var DETAILED_RELEASES = Object.freeze([
     publicRelease({
+      version: "v0.1.11",
+      slug: "v0-1-11",
+      released_at: "2026-08-14",
+      title: "Security and reliability follow-up to 0.1.10",
+      summary: "Tightens the MangaDex download transport and CBR/RAR extraction, stops an admin path reveal succeeding when its access record cannot be written, and fixes an import guard that could quarantine a correct collected edition because of a temporary folder's name.",
+      highlights: [
+        "MangaDex downloads now use one bounded transport: embedded credentials and odd ports are refused, every redirect is re-checked, and the address connected to must match the one approved.",
+        "CBR/RAR conversion reads each member's type and link target instead of just its name, so an archive cannot smuggle a symlink or device node past the path check and write outside its work folder.",
+        "The admin-only \"show full paths\" control on Queue now refuses when the record of that access cannot be written, instead of returning the paths and reporting that it was recorded.",
+        "API keys are stripped from cross-origin redirects based on where the value came from rather than a fixed list of header names, and scrubbed from error text in the form a query string encodes them.",
+        "A file staged under a folder containing something like \"c3\" is no longer read as chapter 3 -- unit identity comes from the file and its release folder, not the download client's temporary path.",
+        "Fixed a crash in duplicate-issue cleanup that could stop the background sweep when two workers disagreed about which record to keep.",
+        "A completed Soulseek transfer from weeks ago is no longer replayed as if it just finished, and confirmed unambiguous rejections no longer go to Manual Review.",
+        "A failed row action no longer stays on screen after a newer action has already succeeded, and System health findings now say what to do about them."
+      ]
+    }),
+    publicRelease({
       version: "v0.1.10",
       slug: "v0-1-10",
       released_at: "2026-08-14",

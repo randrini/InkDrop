@@ -76,6 +76,14 @@ export type QueueRowDetail = QueueRow & {
   latest_import?: { dest_path?: string };
 };
 
+// Set by the queue view route: true when it kept only the filename of a path
+// and dropped the download client's item id / provider peer username on the
+// way out (the default), false once an admin has deliberately revealed them.
+export type QueueDetailFetch = {
+  detail: QueueRowDetail;
+  redacted: boolean;
+};
+
 export type StateViewFilter = {
   value: string;
   label: string;

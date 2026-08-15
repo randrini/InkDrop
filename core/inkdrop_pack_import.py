@@ -3573,7 +3573,12 @@ def import_matched_files(importer, matched, dry_run, max_files, review_id, extra
                     )
                 finally:
                     bad_conn.close()
-            append_manual_review("artifact_acceptance_gate", blocked_event, db_path=INKDROP_STATE_DB)
+            # Same escalation contract as the single-file importer: a gate
+            # verdict that declares its own recovery automatic does not also
+            # get to park a human decision.
+            needs_review = getattr(importer, "skip_needs_manual_review", None)
+            if needs_review is None or needs_review(blocked_event):
+                append_manual_review("artifact_acceptance_gate", blocked_event, db_path=INKDROP_STATE_DB)
             bad_archives.append(blocked_event)
             log(blocked_event)
             continue

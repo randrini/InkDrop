@@ -958,6 +958,12 @@ def comicinfo_language_gate(path):
                 "language": language_check.get("language") or "",
                 "comicinfo_path": (info or {}).get("comicinfo_path") or "",
                 "detail": language_check.get("detail") or "wrong language source",
+                # Carry the evidence tier through. Dropping it here is what
+                # forced the caller to escalate every language block to a
+                # human -- it could not tell a confirmed LanguageISO read
+                # from a guess off the filename.
+                "confidence": language_check.get("confidence") or "",
+                "evidence_confirmed": inkdrop_language.language_evidence_is_confirmed(language_check),
             }
     if not info:
         return {"ok": True, "language": "", "comicinfo_path": ""}
@@ -971,6 +977,10 @@ def comicinfo_language_gate(path):
             "language": language,
             "comicinfo_path": info.get("comicinfo_path") or "",
             "detail": f"wrong language source: ComicInfo LanguageISO={language}",
+            # Read straight off ComicInfo -- same strength as the "metadata"
+            # tier above, so this fallback must not escalate either.
+            "confidence": "metadata",
+            "evidence_confirmed": True,
         }
     return {"ok": True, "language": language, "comicinfo_path": info.get("comicinfo_path") or ""}
 
@@ -3285,6 +3295,33 @@ def mark_manual_review_logged(review_id, now=None):
     }
     dedup[review_id] = now
     write_json_atomic(MANUAL_REVIEW_DEDUP_FILE, dedup)
+
+
+# Every skip branch in the import routing path already states, in
+# "action_needed", whether recovery is automatic. "retry_another_source" is
+# consumed by inkdrop_manual_source_autoresolve.actionable_import_skip_reason(),
+# which marks the candidate bad and searches again, and by
+# inkdrop_series_autopilot.wrong_language_quarantine_active(), which re-queues
+# the item. Filing a Manual Review row on top of that parks a human decision on
+# something the system has already decided and already recovered from -- which
+# is exactly what it used to do for a confirmed non-English ComicInfo read.
+AUTOMATIC_SKIP_ACTIONS = frozenset({"retry_another_source", "automatic_wait", "none"})
+
+
+def skip_needs_manual_review(event, evidence_confirmed=True):
+    """Escalation threshold for an import skip.
+
+    A skip earns a human only when recovery is not automatic, or when the
+    evidence behind it was inferred rather than confirmed. `evidence_confirmed`
+    is the gate's confidence in its own signal -- a ComicInfo LanguageISO read
+    is confirmed, a language guess off the filename is not. Events with no
+    `action_needed` escalate, so a branch that forgets to declare one fails
+    safe rather than silently swallowing a decision.
+    """
+    action = str((event or {}).get("action_needed") or "").strip().lower()
+    if action not in AUTOMATIC_SKIP_ACTIONS:
+        return True
+    return not evidence_confirmed
 
 
 def append_manual_review(reason, payload, db_path=None):
@@ -5982,7 +6019,11 @@ def is_manga_unit_guard_target(target):
     return is_manga_target(target) or is_volume_as_issue_target(target)
 
 
-def exact_manga_volume_import_identity(source, target):
+def exact_manga_volume_import_identity(source, target, *, allow_source_archive_evidence=False):
+    """``allow_source_archive_evidence`` is the fresh-source opt-in described in
+    inkdrop_state.collection_guard_source_mixed_marker_volume_proof(). Callers
+    judging an already-present destination file must leave it off.
+    """
     if inkdrop_state is None or not target or not is_manga_target(target):
         return None
     issue_title = str(target.get("issue_title") or "").strip()
@@ -6007,6 +6048,7 @@ def exact_manga_volume_import_identity(source, target):
     return inkdrop_state.exact_manga_volume_target_identity(
         queue_context,
         {"matched_local_path": str(source), "matched_series": target.get("title")},
+        allow_source_archive_evidence=allow_source_archive_evidence,
     )
 
 
@@ -6042,6 +6084,9 @@ def unsafe_comic_target_match_reason(source, target):
         shared_reason = inkdrop_state.collection_target_single_part_block_reason(
             queue_context,
             {"matched_local_path": str(source)},
+            # Both callers of this function judge a freshly staged/downloaded
+            # source file, never a file already in the library.
+            allow_source_archive_evidence=True,
         )
         if shared_reason:
             return shared_reason
@@ -6963,21 +7008,24 @@ def _existing_file_rejected_by_artifact_gate(path, dest_path, event, decision, c
     artifact_acceptance_skip_event(event, decision)
     log(event)
     if not dry_run:
+        # Recording the bad content is unconditional -- that is how the file
+        # stops being retried. Only the human decision is conditional.
         event["bad_content_identity"] = record_artifact_bad_content_memory(conn, digest, path, decision)
-        append_manual_review(
-            "artifact_acceptance_gate",
-            {
-                "source": str(path),
-                "dest": str(dest_path),
-                "matched_series": target.get("title"),
-                "matched_kapowarr_id": target.get("id"),
-                "native_series_id": target.get("native_series_id"),
-                "artifact_acceptance": event.get("artifact_acceptance"),
-                "bad_content_identity": event.get("bad_content_identity"),
-                "note": f"Existing {dest_label} evidence was not allowed to satisfy this target because the artifact acceptance gate rejected it.",
-            },
-            db_path=INKDROP_STATE_DB,
-        )
+        if skip_needs_manual_review(event):
+            append_manual_review(
+                "artifact_acceptance_gate",
+                {
+                    "source": str(path),
+                    "dest": str(dest_path),
+                    "matched_series": target.get("title"),
+                    "matched_kapowarr_id": target.get("id"),
+                    "native_series_id": target.get("native_series_id"),
+                    "artifact_acceptance": event.get("artifact_acceptance"),
+                    "bad_content_identity": event.get("bad_content_identity"),
+                    "note": f"Existing {dest_label} evidence was not allowed to satisfy this target because the artifact acceptance gate rejected it.",
+                },
+                db_path=INKDROP_STATE_DB,
+            )
     return True
 
 
@@ -9192,9 +9240,13 @@ def import_files(kind, dry_run=False, min_age_seconds=600, ignore_cutoff=False, 
                     "matched_series_folder": target.get("folder"),
                     "matched_kapowarr_id": target.get("id"),
                     "action_needed": "retry_another_source",
+                    "language_confidence": language_gate.get("confidence") or "",
+                    "language_evidence_confirmed": bool(language_gate.get("evidence_confirmed")),
                 }
                 log(event)
-                if not dry_run:
+                if not dry_run and skip_needs_manual_review(
+                    event, evidence_confirmed=bool(language_gate.get("evidence_confirmed"))
+                ):
                     append_manual_review(
                         "wrong_language_source",
                         {
@@ -9205,7 +9257,7 @@ def import_files(kind, dry_run=False, min_age_seconds=600, ignore_cutoff=False, 
                             "detail": event["detail"],
                             "language": event.get("language"),
                             "comicinfo_path": event.get("comicinfo_path"),
-                            "note": "InkDrop blocked this archive before import because its ComicInfo language was not English.",
+                            "note": "InkDrop read a non-English language marker in this file's name or path, but nothing in the file itself confirms it. Check the release before discarding it.",
                         },
                         db_path=INKDROP_STATE_DB,
                     )
@@ -9246,7 +9298,13 @@ def import_files(kind, dry_run=False, min_age_seconds=600, ignore_cutoff=False, 
             manga_guard = None
             exact_volume_identity = None
             if kind == "comics" and target and is_manga_unit_guard_target(target) and not collection:
-                exact_volume_identity = exact_manga_volume_import_identity(path, target)
+                # `path` here is the freshly staged source being offered to the
+                # target, so archive evidence may vindicate a redundant chapter
+                # suffix. exact_volume_existing_path_matches_target() below
+                # judges files already in the library and deliberately does not.
+                exact_volume_identity = exact_manga_volume_import_identity(
+                    path, target, allow_source_archive_evidence=True
+                )
                 manga_guard = manga_import_guard(
                     path,
                     target,
@@ -9587,19 +9645,20 @@ def import_files(kind, dry_run=False, min_age_seconds=600, ignore_cutoff=False, 
                         event["bad_content_identity"] = record_artifact_bad_content_memory(
                             conn, digest, path, decision
                         )
-                        append_manual_review(
-                            "artifact_acceptance_gate",
-                            {
-                                "source": str(path),
-                                "matched_series": target["title"] if target else None,
-                                "matched_kapowarr_id": target["id"] if target else None,
-                                "native_series_id": target.get("native_series_id") if target else None,
-                                "artifact_acceptance": event.get("artifact_acceptance"),
-                                "bad_content_identity": event.get("bad_content_identity"),
-                                "note": "Import blocked before managed-library copy because target-aware artifact acceptance rejected this file.",
-                            },
-                            db_path=INKDROP_STATE_DB,
-                        )
+                        if skip_needs_manual_review(event):
+                            append_manual_review(
+                                "artifact_acceptance_gate",
+                                {
+                                    "source": str(path),
+                                    "matched_series": target["title"] if target else None,
+                                    "matched_kapowarr_id": target["id"] if target else None,
+                                    "native_series_id": target.get("native_series_id") if target else None,
+                                    "artifact_acceptance": event.get("artifact_acceptance"),
+                                    "bad_content_identity": event.get("bad_content_identity"),
+                                    "note": "Import blocked before managed-library copy because target-aware artifact acceptance rejected this file.",
+                                },
+                                db_path=INKDROP_STATE_DB,
+                            )
                     if pending_only:
                         append_pending_status(kind, path, decision.get("decision") or "artifact_acceptance_rejected", None, target, pending_imports)
                     skipped.append(event)

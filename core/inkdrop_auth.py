@@ -1423,6 +1423,36 @@ def reset_password_with_recovery(db_path, token, new_password, *, remote_addr=No
     return {"ok": True, "password_reset": True, "sessions_revoked": True}
 
 
+def record_audit_event(db_path, event_type, outcome, *, actor=None, remote_addr=None, user_agent=None, detail=None):
+    """Write one entry to the auth audit log from outside this module.
+
+    Every _audit() caller so far has been an authentication event owned by
+    this file. Authorization decisions made elsewhere -- an admin asking a
+    route to hand back values it normally withholds, for instance -- belong in
+    the same log, and there was no way to say so. Never raises: an audit-write
+    failure must not turn a working request into an error.
+    """
+    actor = actor if isinstance(actor, dict) else {}
+    user = actor.get("user") if isinstance(actor.get("user"), dict) else {}
+    try:
+        with _connect(db_path, operation="auth_audit_record") as con:
+            ensure_auth_schema(con)
+            _audit(
+                con,
+                event_type,
+                outcome,
+                actor_type=actor.get("method"),
+                actor_id=actor.get("id") or user.get("id"),
+                username=user.get("username"),
+                remote_addr=remote_addr,
+                user_agent=user_agent,
+                detail=detail,
+            )
+        return True
+    except Exception:
+        return False
+
+
 def recent_audit_events(db_path, limit=100):
     limit = max(1, min(500, int(limit or 100)))
     with _connect(db_path, operation="auth_audit_list") as con:

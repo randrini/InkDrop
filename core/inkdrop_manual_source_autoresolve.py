@@ -127,6 +127,30 @@ SLSKD_WAITING_NO_TRANSFER_STALE_SECONDS = env_int("INKDROP_SLSKD_NO_TRANSFER_STA
 SLSKD_WAITING_QUEUED_STALE_SECONDS = env_int("INKDROP_SLSKD_QUEUED_WAIT_STALE_SECONDS", 48 * 60 * 60)
 SLSKD_WAITING_ZERO_PROGRESS_STALE_SECONDS = env_int("INKDROP_SLSKD_ZERO_PROGRESS_STALE_SECONDS", 45 * 60)
 SLSKD_WAITING_UNKNOWN_STALE_SECONDS = env_int("INKDROP_SLSKD_UNKNOWN_STALE_SECONDS", 90 * 60)
+# SLSKD forgets a finished transfer once its client is restarted or its
+# completed list is cleared, so "SLSKD no longer lists it" is normal and can't
+# by itself mean the download failed -- which is why a recorded completion
+# snapshot is trusted when the live lookup finds nothing. But that snapshot is
+# a copy of what SLSKD said once, not a live signal, and nothing bounded how
+# old it may get: a month-old copy kept re-asserting "the transfer completed"
+# on every pass, so the resolver re-derived "completed but nothing staged"
+# forever against a peer, a transfer, and a staged file that no longer exist.
+# Past this window an unlisted completion is expired evidence, not a live
+# completion, and the candidate is retired so the source ladder can move on.
+SLSKD_RECORDED_COMPLETION_TTL_SECONDS = env_int(
+    "INKDROP_SLSKD_RECORDED_COMPLETION_TTL_SECONDS", 7 * 24 * 3600
+)
+# inkdrop_state.slskd_private_evidence_payload() rewrites peer usernames (and
+# any provider that isn't literally SLSKD) to this sentinel before persisting
+# download_tasks/source_attempts. It is a marker that the value was removed --
+# never a peer identity. Reading it back as one both defeats the live
+# username-scoped transfer lookup below and collapses every scrubbed peer into
+# a single durable bad-candidate key.
+REDACTED_EVIDENCE_SENTINEL = "[redacted]"
+# A stored timestamp below this (2000-01-01) is not a date -- it's a row whose
+# timestamp was never really written. Plain epoch math reads those as decades
+# old, which must never be mistaken for real age evidence.
+PLAUSIBLE_EPOCH_FLOOR_SECONDS = 946684800
 SLSKD_STALL_SETTING_KEY = "automation.queue_watchdog_slskd_stale_minutes"
 SLSKD_STALL_MIN_MINUTES = 5
 SLSKD_STALL_MAX_MINUTES = 1440
@@ -374,6 +398,20 @@ def first_text(*values):
     for value in values:
         text = str(value or "").strip()
         if text:
+            return text
+    return ""
+
+
+def unredacted_text(*values):
+    """first_text(), but the credential-scrub sentinel is treated as absent.
+
+    Persisted SLSKD evidence stores "[redacted]" where a peer username used to
+    be. That string is not a username, so callers that key identity or filter
+    live transfers on it must see "" and fall back to the next candidate value.
+    """
+    for value in values:
+        text = str(value or "").strip()
+        if text and text.lower() != REDACTED_EVIDENCE_SENTINEL:
             return text
     return ""
 
@@ -1019,6 +1057,24 @@ def db_import_retry_records(min_age_seconds=120, limit=DB_IMPORT_RETRY_LIMIT):
             transfer.setdefault("id", row["external_id"])
             transfer.setdefault("filename", filename)
             transfer.setdefault("state", "Completed, Succeeded")
+            # This dict is a replay of a completion SLSKD reported once, not a
+            # live reading, so it has to carry when that completion happened.
+            #
+            # Each replay projects a NEW download_task row that stores this
+            # same "Completed, Succeeded" with current timestamps, so the row's
+            # own updated_at/completed_at track the retry loop rather than the
+            # transfer -- dating the snapshot by those lets the loop launder
+            # its own staleness and stay young forever. Anchor on SLSKD's
+            # timestamps instead, which are immutable, and carry them forward
+            # into the replay so the next projection can't lose them.
+            # started_at (when this transfer was started) is the fallback; it
+            # drifts only when a genuinely new candidate row is minted.
+            transfer.setdefault("endedAt", task_raw.get("transfer_ended_at"))
+            transfer.setdefault("requestedAt", task_raw.get("transfer_requested_at"))
+            transfer["recorded_snapshot"] = True
+            snapshot_ts = numeric_ts(row["started_at"])
+            if snapshot_ts >= PLAUSIBLE_EPOCH_FLOOR_SECONDS:
+                transfer.setdefault("recorded_snapshot_ts", snapshot_ts)
         record = {
             "review_id": review_id,
             "series": series,
@@ -1038,7 +1094,7 @@ def db_import_retry_records(min_age_seconds=120, limit=DB_IMPORT_RETRY_LIMIT):
             "local_path": local_path,
             "path": local_path,
             "detected_path": local_path,
-            "username": first_text(row["provider"], task_raw.get("username"), task_raw.get("provider")),
+            "username": unredacted_text(row["provider"], task_raw.get("username"), task_raw.get("provider")),
             "candidate_score": first_text(task_raw.get("candidate_score"), task_raw.get("score")),
             "candidate_size": first_text(row["size_bytes"], task_raw.get("candidate_size"), task_raw.get("size")),
             "slskd_transfer_id": first_text(row["external_id"], task_raw.get("slskd_transfer_id"), task_raw.get("transfer_id")),
@@ -2012,10 +2068,26 @@ def classify_candidate_failure(reason):
             "label": "Waiting for verification",
             "detail": detail,
         }
-    if "wrong language" in lowered or "non-english" in lowered or "language source" in lowered:
+    # "metadata language ja is not preferred" is the detail inkdrop_language
+    # emits for a confirmed ComicInfo/provider language read, and
+    # actionable_import_skip_reason() inspects `detail` before `skip_reason` --
+    # so without this the strongest language evidence there is fell through to
+    # the generic "Candidate failed" label.
+    if (
+        "wrong language" in lowered
+        or "non-english" in lowered
+        or "language source" in lowered
+        or "metadata language" in lowered
+    ):
         reason_key, kind, label = "wrong_language_source", "language", "Wrong language source"
     elif "transfer stalled" in lowered or "zero progress" in lowered or "queued remotely" in lowered or "queued locally" in lowered:
         reason_key, kind, label = "slskd_transfer_stalled", "transfer", "SLSKD transfer stalled"
+    elif "no longer has any record of this transfer" in lowered or "transfer_evidence_expired" in lowered:
+        reason_key, kind, label = (
+            "slskd_transfer_evidence_expired",
+            "transfer",
+            "SLSKD no longer has this transfer",
+        )
     elif "transfer disappeared" in lowered or "completed but no staged file" in lowered:
         reason_key, kind, label = "slskd_transfer_missing_staged_file", "transfer", "SLSKD transfer did not stage a file"
     elif "slskd transfer failed" in lowered or "transfer failed" in lowered:
@@ -3403,6 +3475,48 @@ def transfer_state_status(row):
     return "transfer_unknown"
 
 
+def recorded_transfer_age_seconds(record, transfer):
+    """How long ago did we record the completion we're about to replay?
+
+    Returns None when nothing plausibly dates the snapshot. That is deliberate:
+    a row whose timestamps were never really set reads as 1970 under plain
+    epoch math, and treating "1970" as "ancient" would retire candidates whose
+    only real problem is a missing timestamp. Undated evidence keeps today's
+    behavior; only provably old evidence expires.
+
+    Takes the newest of the timestamps available -- the transfer's own SLSKD
+    stamps, the download_task row the retry was rebuilt from, and the record's
+    own stamp -- so a snapshot is only ever as old as its freshest evidence.
+    """
+    transfer = transfer if isinstance(transfer, dict) else {}
+    record = record if isinstance(record, dict) else {}
+
+    def plausible(*values):
+        stamps = []
+        for value in values:
+            ts = numeric_ts(value)
+            if ts < PLAUSIBLE_EPOCH_FLOOR_SECONDS:
+                ts = numeric_ts(parse_slskd_time(value))
+            if ts >= PLAUSIBLE_EPOCH_FLOOR_SECONDS:
+                stamps.append(ts)
+        return stamps
+
+    # The transfer's own stamps win outright. The record's `ts` is the last
+    # time InkDrop touched the row, which the retry loop refreshes on every
+    # pass -- consulting it alongside a real transfer stamp would hand the loop
+    # back the freshness this is meant to take away.
+    stamps = plausible(
+        transfer.get("recorded_snapshot_ts"),
+        transfer.get("endedAt"),
+        transfer.get("requestedAt"),
+    )
+    if not stamps:
+        stamps = plausible(record.get("recorded_snapshot_ts"), record.get("ts"))
+    if not stamps:
+        return None
+    return max(0.0, now() - max(stamps))
+
+
 def waiting_transfer_status(record, download_status=None):
     recorded_transfer = (record or {}).get("slskd_transfer") if isinstance((record or {}).get("slskd_transfer"), dict) else {}
     expected_id = str((record or {}).get("slskd_transfer_id") or recorded_transfer.get("id") or "").strip().lower()
@@ -3435,6 +3549,21 @@ def waiting_transfer_status(record, download_status=None):
             transfer = compact_transfer(recorded_transfer)
             transfer["status"] = recorded_status
             transfer["recorded_snapshot"] = True
+            age_seconds = recorded_transfer_age_seconds(record, recorded_transfer)
+            if age_seconds is not None:
+                transfer["recorded_snapshot_age_seconds"] = int(age_seconds)
+            if (
+                recorded_status == "transfer_succeeded"
+                and age_seconds is not None
+                and age_seconds >= SLSKD_RECORDED_COMPLETION_TTL_SECONDS
+            ):
+                # SLSKD has no record of this transfer and our own copy of its
+                # completion is older than the window above. Replaying it as a
+                # live completion is what kept these rows re-deriving "nothing
+                # staged" indefinitely; report expired evidence instead so the
+                # candidate is retired and the ladder searches again.
+                transfer["status"] = "transfer_evidence_expired"
+                transfer["recorded_snapshot_expired"] = True
             return transfer
         return None
     matches.sort(key=lambda row: str(row.get("requestedAt") or row.get("endedAt") or ""), reverse=True)
@@ -5479,7 +5608,10 @@ def run(args):
         record = records.get(review_id) or {}
         transfer = waiting_transfer_status(record, download_status) if source == "waiting" else None
         direct_rejection = None
-        if transfer and transfer.get("status") == "transfer_succeeded":
+        if transfer and transfer.get("status") in {"transfer_succeeded", "transfer_evidence_expired"}:
+            # Expired evidence still gets one real look on disk first: if the
+            # staged file is actually there this imports normally, and only a
+            # genuine miss falls through to the retirement branch below.
             direct_candidates = transfer_local_path_candidates(probe, record, transfer)
             direct_detected = completed_transfer_detected_files(
                 probe,
@@ -5568,6 +5700,27 @@ def run(args):
                     direct_rejection,
                     reason,
                     transfer=transfer,
+                )
+                if recovery:
+                    skip["recovery"] = recovery
+                result["skipped"].append(skip)
+            elif transfer and transfer.get("status") == "transfer_evidence_expired":
+                age_hours = int((transfer.get("recorded_snapshot_age_seconds") or 0) // 3600)
+                reason = (
+                    "SLSKD no longer has any record of this transfer and the file it staged is not "
+                    f"on disk (last seen {age_hours}h ago)"
+                )
+                record_slskd_learning(record, None, False, reason, review_id)
+                skip = waiting_status_row(
+                    review_id,
+                    record,
+                    reason,
+                    source=source,
+                    status="transfer_evidence_expired",
+                    transfer=transfer,
+                )
+                recovery = recover_failed_waiting_candidate(
+                    args, result, review_id, record, None, reason, transfer=transfer
                 )
                 if recovery:
                     skip["recovery"] = recovery

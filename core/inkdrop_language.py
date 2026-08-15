@@ -70,6 +70,23 @@ NON_ENGLISH_MARKERS = {
 
 EXPLICIT_ENGLISH_MARKERS = {"english", "eng"}
 
+# Evidence tiers that classify_release_language() reports in "confidence".
+# Only "metadata" is the release stating its own language (ComicInfo
+# LanguageISO, provider translatedLanguage). "marker" and "script" are
+# inferred from title/path text and do misfire -- "raw" is in
+# NON_ENGLISH_MARKERS, so a series genuinely titled "Raw" trips the marker
+# path, and a scanlator's name in the folder can drag in CJK characters.
+# Callers use this to decide whether a block is safe to act on alone.
+CONFIRMED_LANGUAGE_EVIDENCE = frozenset({"metadata"})
+
+
+def language_evidence_is_confirmed(result):
+    """True when a language verdict came from a direct metadata read rather
+    than an inference off the filename or path."""
+    if not isinstance(result, dict):
+        return False
+    return str(result.get("confidence") or "").strip().lower() in CONFIRMED_LANGUAGE_EVIDENCE
+
 
 def normalize_text(value):
     text = unicodedata.normalize("NFKD", str(value or ""))

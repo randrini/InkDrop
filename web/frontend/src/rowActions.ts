@@ -13,12 +13,50 @@ import { InkDropApiError } from "./api";
 //    eats the next click);
 //  - an action failure survives the reload (the reload's own error reset
 //    used to wipe the only message saying which click failed).
+//
+// That last rule is why failures have to be retired deliberately rather
+// than on the next render: nothing else clears them. Every operation gets a
+// monotonic sequence number at click time, and the announced failure
+// remembers which operation raised it, so ordering decides who wins:
+//  - a NEWER operation succeeding retires an older operation's failure --
+//    the banner is about a click the operator has since superseded;
+//  - an OLDER operation completing (success or failure) never touches a
+//    newer failure -- otherwise a slow first request landing after a fast
+//    second one would erase the message describing the click that just
+//    failed;
+//  - a newer failure always replaces an older one.
+//
+// Those rules have to hold on arrival order too, which is why success is
+// remembered even when there is no failure to retire. The first version only
+// retired an EXISTING failure, so a newer success that landed before an older
+// failure recorded nothing, and the late older failure was then announced as
+// if nothing had superseded it. Identical clicks and identical outcomes gave
+// opposite banners depending purely on which request the server answered
+// first:
+//   fail(1) then succeed(2) -> banner cleared
+//   succeed(2) then fail(1) -> banner announced
+// So the newest successfully settled sequence is tracked, and a failure older
+// than it is never announced.
+// Without this, the banner only cleared when the surrounding shell handed
+// the island a fresh `payload` prop -- which the hook's own reload does not
+// produce -- so a failed mutation stayed announced, indefinitely and
+// looking current, through any number of later successful ones.
+type ActionFailure = { seq: number; message: string };
+
 export function useRowActions(reload: () => void | Promise<void>) {
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
   const [doneIds, setDoneIds] = useState<ReadonlyMap<string, string>>(new Map());
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ActionFailure | null>(null);
   const reloadTimer = useRef<number>(0);
   const inFlight = useRef(0);
+  // Click order, not completion order. Assigned before the request goes out
+  // so two overlapping actions keep a stable relative age no matter which
+  // one the server answers first.
+  const nextSeq = useRef(0);
+  // Newest sequence that has settled successfully. A ref rather than state:
+  // it is ordering bookkeeping that must be readable by whichever handler
+  // runs next, not something a render depends on.
+  const settledSeq = useRef(0);
   // Always call the latest reload closure -- the one captured at schedule
   // time can hold a stale offset/filter.
   const reloadRef = useRef(reload);
@@ -44,14 +82,29 @@ export function useRowActions(reload: () => void | Promise<void>) {
     action: () => Promise<void>,
   ) {
     if (pendingIds.has(id)) return;
+    nextSeq.current += 1;
+    const seq = nextSeq.current;
     setPendingIds((prev) => new Set(prev).add(id));
     inFlight.current += 1;
     try {
       await action();
       setDoneIds((prev) => new Map(prev).set(id, doneLabel));
+      // Recorded whether or not there is a failure to retire right now: an
+      // older operation may still be in flight and fail later.
+      settledSeq.current = Math.max(settledSeq.current, seq);
+      // Only an operation newer than the announced failure retires it.
+      setFailure((prev) => (prev && prev.seq < seq ? null : prev));
     } catch (cause) {
       const detail = cause instanceof InkDropApiError ? cause.message : "The action failed.";
-      setActionError(`${rowLabel}: ${detail}`);
+      setFailure((prev) => {
+        // A newer operation already succeeded, so this click has been
+        // superseded -- the same reason a newer success retires an existing
+        // failure. Announcing it here would make the banner depend on which
+        // request the server happened to answer first.
+        if (seq < settledSeq.current) return prev;
+        // Newest failure wins; an older one landing late must not overwrite it.
+        return prev && prev.seq > seq ? prev : { seq, message: `${rowLabel}: ${detail}` };
+      });
     } finally {
       inFlight.current -= 1;
       setPendingIds((prev) => {
@@ -63,9 +116,18 @@ export function useRowActions(reload: () => void | Promise<void>) {
     }
   }
 
+  // The shell handing down a fresh `payload` means a different page/filter
+  // is now on screen, so any row failure announced about the old one is
+  // unconditionally stale -- that reset stays absolute.
   function clearActionError() {
-    setActionError(null);
+    setFailure(null);
   }
 
-  return { pendingIds, doneIds, actionError, clearActionError, runRowAction };
+  return {
+    pendingIds,
+    doneIds,
+    actionError: failure ? failure.message : null,
+    clearActionError,
+    runRowAction,
+  };
 }

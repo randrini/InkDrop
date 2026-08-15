@@ -7668,7 +7668,7 @@ HTML = r"""<!doctype html>
           healthBody.appendChild(ok);
         } else {
           const healthRows = [
-            ["System", systemHealth.state || systemHealth.status, systemHealth.detail],
+            ["System", systemHealth.state || systemHealth.status, systemHealth.detail, systemHealth.actions],
           ];
           for (const pathCheck of (Array.isArray(systemHealth.path_checks) ? systemHealth.path_checks : [])) {
             if (pathCheck.state === "critical") healthRows.push([
@@ -7693,20 +7693,41 @@ HTML = r"""<!doctype html>
             if (tone !== "good") {
               const actions = document.createElement("span");
               actions.className = "system-health-actions";
-              const primary = document.createElement("button");
-              primary.type = "button";
-              const isSlskdPath = String(item[0] || "").startsWith("SLSKD ");
-              primary.textContent = isSlskdPath ? "Open path settings" : (item[0] === "Providers" ? "Open source settings" : "Open Tasks");
-              primary.onclick = isSlskdPath
-                ? () => openInkdropSettingsArea("paths")
-                : item[0] === "Providers"
-                  ? () => openInkdropSettingsArea("automation")
-                  : () => openSystemArea("tasks");
-              const logs = document.createElement("button");
-              logs.type = "button";
-              logs.textContent = "Open Logs";
-              logs.onclick = () => openSystemArea("logs");
-              actions.append(primary, logs);
+              // The backend names the actual next step for each finding it
+              // reports. Fall back to the old generic pair only for rows it
+              // does not describe (Providers, SLSKD paths, endpoint errors).
+              const declared = Array.isArray(item[3]) ? item[3] : [];
+              if (declared.length) {
+                for (const action of declared) {
+                  const button = document.createElement("button");
+                  button.type = "button";
+                  button.textContent = action.label || "Open";
+                  if (action.detail) button.title = action.detail;
+                  const kind = String(action.kind || "system");
+                  const target = String(action.target || "");
+                  button.onclick = kind === "settings"
+                    ? () => openInkdropSettingsArea(target)
+                    : kind === "section"
+                      ? () => revealSystemSection(target)
+                      : () => openSystemArea(target);
+                  actions.append(button);
+                }
+              } else {
+                const primary = document.createElement("button");
+                primary.type = "button";
+                const isSlskdPath = String(item[0] || "").startsWith("SLSKD ");
+                primary.textContent = isSlskdPath ? "Open path settings" : (item[0] === "Providers" ? "Open source settings" : "Open Tasks");
+                primary.onclick = isSlskdPath
+                  ? () => openInkdropSettingsArea("paths")
+                  : item[0] === "Providers"
+                    ? () => openInkdropSettingsArea("automation")
+                    : () => openSystemArea("tasks");
+                const logs = document.createElement("button");
+                logs.type = "button";
+                logs.textContent = "Open Logs";
+                logs.onclick = () => openSystemArea("logs");
+                actions.append(primary, logs);
+              }
               line.appendChild(actions);
             }
             healthBody.appendChild(line);
@@ -8125,11 +8146,16 @@ HTML = r"""<!doctype html>
             const path = document.createElement("span");
             path.textContent = disk.path || disk.probe_path || "";
             name.append(strong, document.createElement("br"), path);
+            // A missing path's figures are its nearest existing parent's, so
+            // printing them here produced a warning-toned row showing exactly
+            // the same free space as the un-flagged Local root row -- which is
+            // what made the flag look arbitrary. Say what is actually wrong.
+            const missing = disk.problem === "missing";
             appendSystemTableRow(table, [
               name,
-              `${disk.free_gib ?? "?"} GiB`,
-              size(disk.total_bytes),
-              systemMeter(disk.used_percent, tone),
+              missing ? "path not found" : `${disk.free_gib ?? "?"} GiB`,
+              missing ? "--" : size(disk.total_bytes),
+              missing ? systemStatusBadge("Not found", "warn") : systemMeter(disk.used_percent, tone),
             ]);
           }
           diskBody.appendChild(table);
@@ -22361,7 +22387,13 @@ HTML = r"""<!doctype html>
       const matchedTitle = String(row?.last_attempt?.title || "").trim();
       const meta = [
         matchedTitle ? `Matched release: ${matchedTitle}` : "No matched-release title on record",
-        latestImport.dest_path ? `File: ${latestImport.dest_path}` : "File path unavailable",
+        // The payload carries the file NAME, not its path -- exact filesystem
+        // paths are withheld from the ordinary API (see
+        // redact_operational_detail in this file). Say "file name" so the
+        // label matches what is actually shown; the name is what identifies
+        // the release being judged here, and Mark Wrong posts an import id
+        // rather than any path.
+        latestImport.dest_path ? `File name: ${latestImport.dest_path}` : "File name unavailable",
       ];
       const approved = await openInkdropConfirmModal({
         title: "Mark Wrong Match",
@@ -45751,6 +45783,7 @@ def disk_health_item(key, path, label):
             "path": str(target),
             "state": "unknown",
             "status": "UNKNOWN",
+            "problem": "",
             "detail": f"disk usage unavailable: {exc}",
             "error": str(exc),
         }
@@ -45758,26 +45791,40 @@ def disk_health_item(key, path, label):
     used_percent = round((used / usage.total) * 100, 1) if usage.total else 0.0
     free_gib = bytes_to_gib(usage.free)
     state = "healthy"
+    low_on_space = False
     if used_percent >= SYSTEM_DISK_CRITICAL_USED_PERCENT or free_gib <= SYSTEM_DISK_CRITICAL_FREE_GIB:
         state = "critical"
+        low_on_space = True
     elif used_percent >= SYSTEM_DISK_WARN_USED_PERCENT or free_gib <= SYSTEM_DISK_WARN_FREE_GIB:
         state = "watch"
+        low_on_space = True
     try:
         target_exists = target.exists()
     except OSError:
         target_exists = False
     reasons = []
     if not target_exists:
-        reasons.append("target path missing")
+        # shutil.disk_usage() was measured on nearest_existing_path(), so when
+        # the configured path is gone these figures belong to whichever parent
+        # still exists -- usually the root filesystem. Saying so is the whole
+        # point: a missing path otherwise reports the root's numbers and reads
+        # as a healthy volume that someone has inexplicably flagged.
+        reasons.append(f"target path missing -- figures are for {probe}, the nearest existing parent")
         state = system_health_state_from_severity(max(system_health_severity(state), 2))
     reasons.append(f"{free_gib} GiB free")
     reasons.append(f"{used_percent}% used")
+    # A missing path and a full disk are different faults with different fixes,
+    # and the summary above used to bin both into "N disk paths are running
+    # low". Classify it here, where both facts are actually in hand.
+    problem = "missing" if not target_exists else ("low" if low_on_space else "")
     return {
         "key": key,
         "label": label,
         "path": str(target),
         "probe_path": str(probe),
         "target_exists": target_exists,
+        "usage_is_target": target_exists,
+        "problem": problem,
         "state": state,
         "status": state.upper() if state != "healthy" else "OK",
         "total_bytes": int(usage.total),
@@ -45981,14 +46028,28 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
     path_checks = slskd_paths["roots"]
     database = database_health_item()
     database_problem_count = 1 if system_health_severity(database.get("state")) >= 2 else 0
-    disk_problem_count = sum(1 for item in disks if system_health_severity(item.get("state")) >= 2)
-    log_problem_count = sum(1 for item in logs if system_health_severity(item.get("state")) >= 2)
+    disk_missing_count = sum(1 for item in disks if item.get("problem") == "missing")
+    disk_low_count = sum(1 for item in disks if item.get("problem") == "low")
+    disk_problem_count = disk_missing_count + disk_low_count
+    # A log past the watch threshold is self-resolving by construction: rotation
+    # runs every five minutes and clears anything over 64 MiB, a quarter of this
+    # threshold. Badging that as "needs attention" asks the operator to act on a
+    # background job's backlog, which is the alert-fatigue complaint. Only the
+    # critical threshold -- which means rotation is genuinely losing ground to
+    # this file -- is a finding a person can do anything about.
+    log_lagging_count = sum(1 for item in logs if system_health_severity(item.get("state")) >= 3)
+    log_watch_count = sum(1 for item in logs if system_health_severity(item.get("state")) == 2)
+    log_problem_count = log_lagging_count
     path_problem_count = int(slskd_paths.get("problem_count") or 0)
     severity = 0
     for item in disks:
         severity = max(severity, system_health_severity(item.get("state")))
     for item in logs:
-        severity = max(severity, system_health_severity(item.get("state")))
+        # Same reasoning as log_problem_count: a watch-level log must not be
+        # what pushes the whole Web tile to "Needs attention".
+        item_severity = system_health_severity(item.get("state"))
+        if item_severity >= 3:
+            severity = max(severity, item_severity)
     for item in path_checks:
         severity = max(severity, system_health_severity(item.get("state")))
     # Only a real finding moves the overall state. Before the first maintenance
@@ -46003,22 +46064,31 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
     detail_bits = []
     if local:
         detail_bits.append(f"Local root has {local.get('free_gib')} GiB free ({local.get('used_percent')}% used)")
-    if disk_problem_count:
+    if disk_low_count:
         # The noun was pluralised but the verb was not, so a single bad path
         # read "1 disk path need attention" on the System page.
         detail_bits.append(
-            f"{disk_problem_count} disk path{'s' if disk_problem_count != 1 else ''} "
-            f"{'are' if disk_problem_count != 1 else 'is'} running low"
+            f"{disk_low_count} disk path{'s' if disk_low_count != 1 else ''} "
+            f"{'are' if disk_low_count != 1 else 'is'} running low on space"
         )
-    if log_problem_count:
-        # Log rotation is already automatic (a scheduled job checks every 5
-        # minutes and rotates any log past 64 MiB) -- this only fires when
-        # writes have briefly outpaced that check, so say so instead of
-        # reading like something the operator has to go fix by hand.
+    if disk_missing_count:
+        # This used to be folded into "running low", which was measurably
+        # wrong: the free-space figure shown for a missing path belongs to its
+        # nearest existing parent, so the row read as a healthy volume that had
+        # been flagged for no visible reason.
+        missing_labels = ", ".join(
+            str(item.get("label") or item.get("key") or "path")
+            for item in disks
+            if item.get("problem") == "missing"
+        )
         detail_bits.append(
-            f"{log_problem_count} log file{'s' if log_problem_count != 1 else ''} "
-            f"{'are' if log_problem_count != 1 else 'is'} larger than usual "
-            f"(auto-rotation will clear {'them' if log_problem_count != 1 else 'it'} on its next pass)"
+            f"{disk_missing_count} configured path{'s' if disk_missing_count != 1 else ''} "
+            f"{'do' if disk_missing_count != 1 else 'does'} not exist ({missing_labels})"
+        )
+    if log_lagging_count:
+        detail_bits.append(
+            f"{log_lagging_count} log file{'s' if log_lagging_count != 1 else ''} "
+            f"{'have' if log_lagging_count != 1 else 'has'} outgrown auto-rotation"
         )
     if path_problem_count:
         detail_bits.append(f"{path_problem_count} SLSKD download path{'s' if path_problem_count != 1 else ''} cannot be read and written by InkDrop")
@@ -46026,6 +46096,51 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
         detail_bits.append(str(database["detail"]).rstrip("."))
     if not detail_bits:
         detail_bits.append("Disk space and log sizes look fine")
+    # Every finding above names one concrete place to go, because a tile that
+    # says "watch this" and then offers a generic "Open Tasks" is the complaint
+    # this exists to answer. Built here rather than in JS so the UI cannot
+    # invent an action for a finding that has none.
+    actions = []
+    if disk_low_count:
+        actions.append({
+            "key": "disk_low",
+            "label": "Review disk space",
+            "kind": "section",
+            "target": "disk-space",
+            "detail": "See which paths are low and what is filling them.",
+        })
+    if disk_missing_count:
+        actions.append({
+            "key": "disk_missing",
+            "label": "Fix path settings",
+            "kind": "settings",
+            "target": "paths",
+            "detail": "Point the setting at a path that exists, or create it on the host.",
+        })
+    if log_lagging_count:
+        actions.append({
+            "key": "log_lagging",
+            "label": "Open Logs",
+            "kind": "system",
+            "target": "logs",
+            "detail": "Rotation is not keeping up with this file; check what is writing to it.",
+        })
+    if path_problem_count:
+        actions.append({
+            "key": "slskd_paths",
+            "label": "Open path settings",
+            "kind": "settings",
+            "target": "paths",
+            "detail": "InkDrop cannot read and write the configured SLSKD download paths.",
+        })
+    if database_problem_count:
+        actions.append({
+            "key": "database",
+            "label": "Open Tasks",
+            "kind": "system",
+            "target": "tasks",
+            "detail": "Database maintenance reports a problem; check its last pass.",
+        })
     # status stays an uppercase token: statusTone(), sourceTone() and
     # providerActivityTone() all branch on it. It is humanised where it is
     # painted, by systemStatusWord() in the UI, not renamed here.
@@ -46047,8 +46162,14 @@ def system_health_summary(disk_targets=None, log_dir=None, explicit_log_paths=No
         "label": label,
         "detail": ". ".join(detail_bits) + ".",
         "problem_count": disk_problem_count + log_problem_count + path_problem_count + database_problem_count,
+        "actions": actions,
         "disk_problem_count": disk_problem_count,
+        "disk_low_count": disk_low_count,
+        "disk_missing_count": disk_missing_count,
         "log_problem_count": log_problem_count,
+        # Surfaced so the Logs table can show a passive "rotation will clear
+        # this" note without the Web tile claiming anything needs doing.
+        "log_watch_count": log_watch_count,
         "path_problem_count": path_problem_count,
         "database_problem_count": database_problem_count,
         "database": database,
@@ -49258,6 +49379,85 @@ def run_inkdrop_library_frontend_sync(payload):
         "candidate": candidates,
         "history": history,
     }
+
+
+# Series Detail tells users, in the UI, that "Exact filesystem paths are
+# hidden from the normal public UI" (web/frontend/src/sections/SeriesDetail.tsx).
+# Several operator views did not honor that. They rendered complete File and
+# Imported-to paths, the download client's own item id, and the Soulseek
+# peer's account name to every principal allowed to read them:
+#
+#   - Queue Details (web/frontend/src/sections/Queue.tsx)
+#   - the operational row's Import chip detail, which is what the Series page
+#     shows for an imported issue
+#   - the Mark Wrong Match confirmation modal ("File: <full path>")
+#   - the imports view's own row line
+#
+# None of these is an authentication bypass -- they all require a principal.
+# It is a contract mismatch, and what it hands out is operational topology:
+# directory layout, a third-party client identity that addresses the transfer
+# in that client, and a real other person's username.
+#
+# So the default response keeps the filename and drops the rest, for EVERY
+# state view rather than one of them -- redacting a field on one route while
+# another route serves the same field from the same table is a bypass, not a
+# contract. An operator who genuinely needs the full values to troubleshoot
+# asks for them explicitly: reveal=1 requires an admin principal and is
+# written to the auth audit log. Nothing is removed from the database or from
+# any internal path -- this is the boundary where the payload leaves the
+# process, and every action that acts on these rows posts an id, never a path.
+OPERATIONAL_DETAIL_REDACTED_PATH_FIELDS = ("save_path", "local_path", "source_path", "dest_path")
+OPERATIONAL_DETAIL_REDACTED_IDENTITY_FIELDS = ("external_id", "peer")
+OPERATIONAL_DETAIL_REDACTED_CONTAINERS = ("download_task", "latest_import", "last_attempt")
+
+
+def path_leaf_only(value):
+    """Last path segment, splitting on BOTH separators.
+
+    os.path.basename is not enough here: a save_path is reported by the
+    download client, which can be running on Windows while InkDrop runs on
+    Linux, and posixpath.basename("C:\\\\downloads\\\\x.cbz") returns the whole
+    string -- leaking exactly what this is supposed to withhold.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.split(r"[\\/]+", text.rstrip("\\/"))[-1]
+
+
+def redact_operational_detail(payload):
+    """Reduce filesystem paths to their filename and drop third-party
+    identities in a queue view payload, in place.
+
+    Returns True when something was actually withheld, so the UI can offer the
+    admin reveal only on rows that have something behind it.
+    """
+    if not isinstance(payload, dict):
+        return False
+    withheld = False
+    for row in payload.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        containers = [row]
+        for key in OPERATIONAL_DETAIL_REDACTED_CONTAINERS:
+            container = row.get(key)
+            if isinstance(container, dict):
+                containers.append(container)
+        for container in containers:
+            for key in OPERATIONAL_DETAIL_REDACTED_PATH_FIELDS:
+                original = container.get(key)
+                if not str(original or "").strip():
+                    continue
+                leaf = path_leaf_only(original)
+                if leaf != original:
+                    withheld = True
+                container[key] = leaf
+            for key in OPERATIONAL_DETAIL_REDACTED_IDENTITY_FIELDS:
+                if str(container.get(key) or "").strip():
+                    container.pop(key, None)
+                    withheld = True
+    payload["operational_detail_redacted"] = withheld
+    return withheld
 
 
 def inkdrop_state_view_public(view, limit=80, source_filter=None, provider_filter=None, queue_filter=None, wanted_filter=None, series_filter=None, issue_filter=None, history_filter=None, import_filter=None, download_filter=None, manual_review_filter=None, focus=None, summary_mode=None, row_mode=None, offset=0, sort_key=None, sort_direction=None, history_search=None):
@@ -65444,6 +65644,12 @@ class Handler(BaseHTTPRequestHandler):
                     sort_direction=(query.get("direction") or query.get("sort_direction") or [None])[0],
                     history_search=(query.get("history_search") or query.get("historySearch") or [None])[0],
                 )
+                # Same privacy policy as /api/inkdrop-state/queue -- this
+                # older ?view=queue entry point returns the identical payload,
+                # so redacting only the other route would be a bypass rather
+                # than a contract.
+                if not self._apply_operational_detail_privacy(view, query, payload):
+                    return
                 self.send_json({"ok": bool(payload.get("ok")), "view": payload}, status=200 if payload.get("ok") else 404)
             elif summary_mode in {"compact", "minimal", "sections"}:
                 payload = inkdrop_state_sections_public()
@@ -65498,6 +65704,8 @@ class Handler(BaseHTTPRequestHandler):
                 sort_direction=(query.get("direction") or query.get("sort_direction") or [None])[0],
                 history_search=(query.get("history_search") or query.get("historySearch") or [None])[0],
             )
+            if not self._apply_operational_detail_privacy(view, query, payload):
+                return
             self.send_json({"ok": bool(payload.get("ok")), "view": payload}, status=200 if payload.get("ok") else 404)
         elif path == "/api/inkdrop-settings":
             query = parse_qs(urlparse(self.path).query)
@@ -66479,6 +66687,69 @@ class Handler(BaseHTTPRequestHandler):
             is_client_api = str(locals().get("path") or "").startswith("/api/" + "download-clients")
             status = download_client_error_status(exc) if is_client_api else 400
             self.send_json({"ok": False, "error": str(exc)}, status=status, headers={"Cache-Control": "no-store"} if is_client_api else None)
+
+    def _apply_operational_detail_privacy(self, view, query, payload):
+        """Hold every state view to the filesystem-privacy promise Series
+        Detail already makes to users, or serve the deliberate admin
+        exception.
+
+        Applies to all views, not a named list. Queue Details was the surface
+        the audit named, but the imports view's row line, the operational
+        row's Import chip and the Mark Wrong Match modal read the same fields
+        out of the same tables -- redacting one route while another still
+        serves them would be a bypass rather than a contract, and a list of
+        view names would go stale the first time a view is added.
+
+        Returns False when it has already answered the request itself (403 for
+        a non-admin reveal), True when the caller should send `payload`.
+        """
+        if str((query.get("reveal") or [""])[0]).strip().lower() not in {"1", "true", "yes", "on"}:
+            redact_operational_detail(payload)
+            return True
+        # Deliberate, authorized, and announced: only an admin may ask for the
+        # withheld values, and the ask is recorded. A principal of None here
+        # means auth enforcement is off for this instance -- the gate in the
+        # auth handler answers an unauthenticated request with 401 long before
+        # this runs, so there is no privilege boundary left to hold.
+        principal = getattr(self, "inkdrop_principal", None)
+        if principal is not None:
+            try:
+                inkdrop_auth.authorize(principal, admin_required=True)
+            except inkdrop_auth.AuthError as exc:
+                self.send_json(exc.payload(), status=exc.status)
+                return False
+        recorded = inkdrop_auth.record_audit_event(
+            INKDROP_STATE_DB,
+            "operational_detail_reveal",
+            "success",
+            actor=principal,
+            remote_addr=self.client_address[0] if self.client_address else None,
+            user_agent=self.headers.get("User-Agent"),
+            # Which view and which row was asked for, never what came back.
+            detail={
+                "view": str(view or "").strip().lower(),
+                "queue_id": (query.get("queue_id") or query.get("focus_queue_id") or [""])[0],
+                "series_id": (query.get("series_id") or query.get("seriesId") or [""])[0],
+            },
+        )
+        if not recorded:
+            # record_audit_event() returns False rather than raising, because an
+            # audit failure must not break an ordinary request. This request is
+            # not ordinary: the only reason handing back real paths, peers, and
+            # client identifiers is acceptable is that the ask leaves a durable
+            # trail, and the UI tells the operator it was recorded. With no
+            # trail there is nothing left justifying the disclosure, so withhold
+            # the values rather than serve them unrecorded.
+            redact_operational_detail(payload)
+            payload["operational_detail_redacted"] = True
+            payload["operational_detail_revealed"] = False
+            payload["ok"] = False
+            payload["error"] = "operational_detail_audit_unavailable"
+            self.send_json(payload, status=503, headers={"Cache-Control": "no-store"})
+            return False
+        payload["operational_detail_redacted"] = False
+        payload["operational_detail_revealed"] = True
+        return True
 
     def _handle_settings_write(self, path, data):
         if path in {"/api/inkdrop-settings/app", "/api/inkdrop-settings/app/update"}:

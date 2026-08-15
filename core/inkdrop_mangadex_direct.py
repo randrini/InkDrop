@@ -17,7 +17,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from xml.sax.saxutils import escape as xml_escape
 
 import requests
@@ -221,24 +221,197 @@ def _unsafe_host(host):
     return not address.is_global
 
 
-def assert_safe_at_home_base_url(base_url):
-    # At-Home hands us a URL pointing at a third-party, volunteer-hosted mirror
-    # node chosen by MangaDex; treat it as untrusted external input, the same
-    # way inkdrop_page_pack_downloader validates page-image hosts.
-    parsed = urlparse(base_url)
-    host = str(parsed.hostname or "")
-    if parsed.scheme not in {"http", "https"} or not host:
-        raise RuntimeError("MangaDex At-Home base URL is not a safe http(s) URL")
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    if _unsafe_host(host):
-        raise RuntimeError("MangaDex At-Home base URL host is not a public address")
+# At-Home hands us a URL pointing at a third-party, volunteer-hosted mirror
+# node chosen by MangaDex, so every hop of every fetch is untrusted external
+# input. A pre-request hostname check alone is not a boundary: it leaves
+# userinfo, off-protocol ports, redirects to somewhere else entirely, and DNS
+# rebinding between the check and the connect. Everything below exists so the
+# bytes we read come from an address we approved.
+AT_HOME_ALLOWED_PORTS = {80, 443}
+AT_HOME_MAX_REDIRECTS = 3
+
+
+def _at_home_url_origin(value):
+    """(scheme, host, port) when a URL is shaped safely, else None.
+
+    Userinfo is refused outright rather than ignored. "https://real.test@evil"
+    reads as the trusted host to a human and resolves to the attacker for the
+    socket, and no part of this path needs credentials in a URL.
+    """
+    parsed = urlparse(str(value or "").strip())
+    scheme = str(parsed.scheme or "").lower()
+    host = str(parsed.hostname or "").lower().rstrip(".").strip("[]")
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    if parsed.fragment:
+        return None
     try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except OSError as exc:
-        raise RuntimeError(f"MangaDex At-Home base URL host could not be resolved: {exc}") from exc
-    ips = {str(info[4][0]) for info in infos if info and info[4]}
-    if not ips or any(_unsafe_host(ip) for ip in ips):
-        raise RuntimeError("MangaDex At-Home base URL resolves to a non-public address")
+        port = parsed.port
+    except ValueError:
+        return None
+    if scheme not in {"http", "https"} or not host:
+        return None
+    port = port or (443 if scheme == "https" else 80)
+    if port not in AT_HOME_ALLOWED_PORTS:
+        return None
+    return scheme, host, port
+
+
+def _at_home_resolved_ips(host, port):
+    try:
+        return [str(ipaddress.ip_address(str(host).split("%", 1)[0]))]
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, int(port), type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    out = []
+    for info in list(infos or [])[:32]:
+        try:
+            address = str(ipaddress.ip_address(str(info[4][0]).split("%", 1)[0]))
+        except (IndexError, TypeError, ValueError):
+            continue
+        if address not in out:
+            out.append(address)
+    return out[:16]
+
+
+def assert_safe_at_home_base_url(base_url):
+    """Approve a URL and return the resolved addresses it may connect to.
+
+    Errors never quote the URL. The value comes from a third party and flows
+    into logs, History, and operator-visible errors.
+    """
+    origin = _at_home_url_origin(base_url)
+    if not origin:
+        raise RuntimeError("MangaDex At-Home URL is not an approved http(s) endpoint")
+    scheme, host, port = origin
+    if _unsafe_host(host):
+        raise RuntimeError("MangaDex At-Home host is not a public address")
+    ips = _at_home_resolved_ips(host, port)
+    if not ips:
+        raise RuntimeError("MangaDex At-Home host could not be resolved")
+    if any(_unsafe_host(ip) for ip in ips):
+        raise RuntimeError("MangaDex At-Home host resolves to a non-public address")
+    return set(ips)
+
+
+def _response_peer_address(response):
+    """The address actually connected to, or "" when it cannot be observed.
+
+    Deliberately mirrors _response_peer_address() in core/inkdrop_acquire.py:
+    both verify a peer against its own approved resolution, and the socket is
+    reachable through several different shapes depending on urllib3 version and
+    whether the body has been consumed. Keep the two in sync.
+    """
+    raw = getattr(response, "raw", None)
+    candidates = (
+        getattr(getattr(raw, "_connection", None), "sock", None),
+        getattr(getattr(raw, "connection", None), "sock", None),
+        getattr(getattr(getattr(getattr(raw, "_fp", None), "fp", None), "raw", None), "_sock", None),
+        getattr(
+            getattr(getattr(getattr(raw, "_original_response", None), "fp", None), "raw", None),
+            "_sock",
+            None,
+        ),
+    )
+    for sock in candidates:
+        if not sock:
+            continue
+        try:
+            peer = sock.getpeername()
+            if peer and peer[0]:
+                return str(peer[0]).split("%", 1)[0]
+        except (AttributeError, OSError, TypeError, ValueError):
+            continue
+    return ""
+
+
+def _close_quietly(response):
+    close = getattr(response, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def _assert_approved_peer(response, approved_ips):
+    """Fail closed unless the socket landed on an address we resolved ourselves.
+
+    This is the only check that survives DNS rebinding: the pre-request
+    resolution and the connection are separate lookups, so an attacker who
+    answers the first with a public address and the second with a private one
+    passes every string-level check. An unobservable peer is refused rather
+    than assumed good -- silently skipping the check is exactly the hole.
+    """
+    peer = _response_peer_address(response)
+    if not peer:
+        raise RuntimeError("MangaDex At-Home connection peer could not be verified")
+    try:
+        peer_address = ipaddress.ip_address(peer)
+    except ValueError:
+        raise RuntimeError("MangaDex At-Home connection peer was refused")
+    if not peer_address.is_global or str(peer_address) not in approved_ips:
+        raise RuntimeError("MangaDex At-Home connection peer was refused")
+
+
+def at_home_get(url, *, timeout=45, session=None):
+    """Fetch an At-Home URL through a bounded, per-hop-validated transport.
+
+    Redirects are followed by hand rather than by requests, because the whole
+    point is that each hop must be re-approved and re-verified. A redirect to a
+    loopback address, an odd port, or a userinfo URL is a fresh attempt at the
+    same attack the first hop was checked for.
+    """
+    owned = session is None
+    if owned:
+        session = requests.Session()
+        session.trust_env = False
+        session.auth = ()
+    current = str(url or "")
+    try:
+        for _ in range(AT_HOME_MAX_REDIRECTS + 1):
+            approved = assert_safe_at_home_base_url(current)
+            try:
+                response = session.get(
+                    current,
+                    headers=mangadex_headers(),
+                    timeout=timeout,
+                    stream=True,
+                    allow_redirects=False,
+                )
+            except Exception as exc:
+                raise RuntimeError("MangaDex At-Home request failed") from exc
+            try:
+                _assert_approved_peer(response, approved)
+            except Exception:
+                _close_quietly(response)
+                raise
+            status = int(getattr(response, "status_code", 200) or 200)
+            if 300 <= status < 400:
+                location = str((getattr(response, "headers", {}) or {}).get("Location") or "").strip()
+                _close_quietly(response)
+                if status not in {301, 302, 303, 307, 308} or not location:
+                    raise RuntimeError("MangaDex At-Home redirect was refused")
+                current = urljoin(current, location)
+                continue
+            try:
+                response.raise_for_status()
+            except Exception as exc:
+                _close_quietly(response)
+                raise RuntimeError(f"MangaDex At-Home request returned HTTP {status}") from exc
+            return response
+        raise RuntimeError("MangaDex At-Home exceeded its redirect budget")
+    finally:
+        if owned:
+            close = getattr(session, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
 
 
 def at_home(chapter_id):
@@ -310,9 +483,14 @@ def write_cbz(row, payload, dest, data_saver=False, max_pages=None):
     try:
         with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for index, page in enumerate(pages, start=1):
-                response = requests.get(page_url(info, page, data_saver=data_saver), headers=mangadex_headers(), timeout=45)
-                response.raise_for_status()
-                content = response.content
+                # Every page is a separate fetch against the same volunteer
+                # host, so each one goes back through the bounded transport
+                # rather than trusting that the base URL was checked once.
+                response = at_home_get(page_url(info, page, data_saver=data_saver), timeout=45)
+                try:
+                    content = response.content
+                finally:
+                    _close_quietly(response)
                 if not content:
                     raise RuntimeError(f"MangaDex page {index} was empty")
                 archive.writestr(f"{index:04d}{page_extension(page)}", content)

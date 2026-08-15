@@ -139,6 +139,11 @@ SKIP = {
         "bundle, and a live authenticated instance; run locally against a "
         "throwaway instance instead"
     ),
+    "inkdrop-row-action-error-ordering-browser-smoke.py": (
+        "drives a real browser: needs playwright, a built web/frontend React "
+        "bundle, and a live authenticated instance; run locally against a "
+        "throwaway instance instead"
+    ),
     "inkdrop-public-docker-runtime-smoke.py": (
         "builds and boots the docker image; ~4 minutes when docker is present "
         "and the qa_image job already exercises the real container build"

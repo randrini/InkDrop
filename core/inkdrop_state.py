@@ -7746,6 +7746,7 @@ DOWNLOAD_TASK_STATUSES = {
     "transfer_failed",
     "transfer_stalled",
     "transfer_succeeded_missing_stage",
+    "transfer_evidence_expired",
     "transfer_stale_unknown",
     "transfer_missing_stale",
     "staged_file_missing_path",
@@ -7829,6 +7830,7 @@ SLSKD_TERMINAL_DOWNLOAD_STATUSES = SLSKD_FAILED_IMPORT_MATCH_STATUSES | {
     "transfer_failed",
     "transfer_stalled",
     "transfer_succeeded_missing_stage",
+    "transfer_evidence_expired",
     "transfer_stale_unknown",
     "transfer_missing_stale",
     "staged_file_missing_path",
@@ -8516,6 +8518,7 @@ def download_task_state(status):
         "transfer_failed",
         "transfer_stalled",
         "transfer_succeeded_missing_stage",
+        "transfer_evidence_expired",
         "transfer_stale_unknown",
         "transfer_missing_stale",
         "staged_file_missing_path",
@@ -10504,6 +10507,13 @@ def record_queue_source_attempt(db_path, queue_id, attempt, attempt_id=None, sta
                     source_attempt_id=source_id,
                     now=completed_at or started_at or now,
                 )
+                retired_bad_staged_tasks += retire_expired_transfer_evidence_download_tasks(
+                    con,
+                    queue["id"],
+                    attempt,
+                    source_attempt_id=source_id,
+                    now=completed_at or started_at or now,
+                )
             retired_failed_client_handoffs = 0
             if download_client_retry_failure:
                 retired_failed_client_handoffs = retire_active_download_client_handoffs_for_failed_candidate(
@@ -10532,6 +10542,7 @@ def record_queue_source_attempt(db_path, queue_id, attempt, attempt_id=None, sta
                 "transfer_failed",
                 "transfer_stalled",
                 "transfer_succeeded_missing_stage",
+                "transfer_evidence_expired",
                 "transfer_stale_unknown",
                 "transfer_missing_stale",
                 *SLSKD_FAILED_IMPORT_MATCH_STATUSES,
@@ -12862,9 +12873,17 @@ def direct_import_destination_unit_gate(con, queue, dest_path, raw, *, already_s
         "series": title,
         "query": " ".join(value for value in (title, str(target.get("issue_title") or "").strip()) if value),
     }
+    # The DB-backed semantics cache, not the bare reader: this gate is the
+    # reconciliation hot path, and the proof it feeds only runs on the narrow
+    # mixed volume/chapter shape that is about to be quarantined anyway.
+    def _archive_semantics(path):
+        return cached_archive_member_semantics(con, path)
+
     exact_source_volume = exact_manga_volume_target_identity(
         queue_context,
         {"matched_local_path": source_path, "matched_series": title},
+        allow_source_archive_evidence=True,
+        archive_semantics_reader=_archive_semantics,
     ) if source_path else None
     evidence_paths = [("source", source_path)]
     if exact_source_volume:
@@ -12875,6 +12894,11 @@ def direct_import_destination_unit_gate(con, queue, dest_path, raw, *, already_s
         collection_reason = collection_target_single_part_block_reason(
             queue_context,
             {"matched_local_path": evidence_path, "matched_series": title},
+            # Source only. InkDrop's own canonical output is volume-only
+            # naming, so a mixed-token file already sitting at the destination
+            # is unexplained foreign content and stays strictly gated.
+            allow_source_archive_evidence=(evidence_role == "source"),
+            archive_semantics_reader=_archive_semantics,
         )
         if collection_reason:
             return {
@@ -17110,6 +17134,46 @@ NON_VOLUME_MANGA_SOURCE_PATTERN = re.compile(
     r"\b(?:(?:part|pt|chapter|chap|ch|c|issue)\.?\s*0*\d+|page(?:s|\s*pack)?(?:\s*0*\d+)?)\b",
     re.I,
 )
+# The redundant chapter-style suffix in a name like "Soul Eater v15 c015.cbz".
+# Matched on the raw filename (not the normalized text) so the closing
+# character is still there to bound the number.
+MIXED_MARKER_CHAPTER_SUFFIX_PATTERN = re.compile(
+    r"(?:^|[^a-z0-9])(?:chapter|chap|ch|c)[\s._-]*0*\d{1,5}(?:\.\d+)?(?=$|[^0-9a-z])",
+    re.I,
+)
+# "v15 c015-020", "v15 c015-c020", "v15 c015 to 020": a chapter RANGE, which is
+# a partial-volume claim, not a redundant single-chapter label. Ill-formed for
+# the mixed-marker proof below, which refuses to guess.
+MIXED_MARKER_CHAPTER_RANGE_PATTERN = re.compile(
+    r"(?:^|[^a-z0-9])(?:chapter|chap|ch|c)[\s._-]*0*\d{1,5}(?:\.\d+)?"
+    r"\s*(?:[-\u2010-\u2015\u2212~/&]|\bto\b|\bthrough\b)\s*(?:(?:chapter|chap|ch|c)[\s._-]*)?\d",
+    re.I,
+)
+
+
+def source_identity_path_text(value):
+    """The part of a staged file's path that actually identifies it.
+
+    A file's unit identity is its own name plus the release folder it arrived
+    in. The directories above that are wherever the download client happened
+    to put it, and they carry no identity at all -- but a whole-path scan reads
+    them anyway. A correct TPB staged under /downloads/c3_tmp/ was quarantined
+    as "single_part_file_does_not_satisfy_collection_target" because "c3" in an
+    unrelated temp directory parsed as chapter 3, and the depth is unbounded:
+    the same token five levels up did it too.
+
+    The release folder is kept deliberately. Scene folders carry real
+    volume/issue evidence ("Series Name v03 (2023) (Digital)") and several
+    proofs depend on it, so trimming to the bare filename would break matching
+    that legitimately works today. Only the ancestors above it are dropped.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parts = [part for part in text.replace("\\", "/").split("/") if part not in ("", ".")]
+    if not parts:
+        return ""
+    return "/".join(parts[-2:])
 
 
 def collection_guard_text(*values):
@@ -17252,26 +17316,214 @@ def collection_guard_chapter_satisfied_by_declared_volume(queue, raw, record, is
     return True
 
 
-def exact_manga_volume_target_identity(queue, record=None):
-    """Return the durable exact volume identity accepted by the collection guard."""
-    queue = dict(queue or {})
-    record = dict(record or {})
-    raw = json_loads(queue.get("raw_json") or "{}", {})
-    raw = raw if isinstance(raw, dict) else {}
-    issue_tokens = collection_guard_issue_tokens(
+def collection_guard_target_issue_tokens(queue, raw):
+    return collection_guard_issue_tokens(
         queue.get("issue_number"),
         queue.get("normalized_number"),
         raw.get("issue_number"),
         raw.get("normalized_number"),
         raw.get("trusted_issue"),
     )
-    if not collection_guard_exact_manga_volume_proof(queue, raw, record, issue_tokens):
+
+
+def collection_guard_source_volume_archive_evidence(source_path, volume_token, semantics_reader=None):
+    """Evidence, read off the archive itself, that this file IS volume N.
+
+    "Dorohedoro v06 c006.cbz" (one chapter that happens to sit in volume 6) and
+    "Soul Eater v15 c015.cbz" (a whole volume filed with a redundant chapter
+    label) are the same string. The volume number matching the wanted volume
+    does not separate them either -- chapter 6 really is in volume 6. So the
+    filename gets no vote here; only the archive does:
+
+    1. Trusted source evidence -- the packager's own ComicInfo.xml declares a
+       volume unit, for a named series, with this exact volume number, and
+       archive_member_semantics() rated that declaration authoritative (it has
+       identity words and credible image payload behind it). Same shape as the
+       trusted-TPB issue title that lifts trusted_issue_missing_source_number:
+       structured metadata stating the unit, not a number scraped out of text.
+    2. Archive content evidence -- the archive's own member names carry this
+       volume number and no chapter number anywhere.
+
+    Everything weaker is not evidence and returns None, which leaves the
+    caller's quarantine in place. That deliberately includes the common case of
+    an archive with bare page names and no ComicInfo: a false positive here
+    silently settles a whole-volume want with one chapter, which is worse than
+    the unnecessary quarantine it would replace.
+
+    archive_member_semantics() already fails closed on the hostile shapes --
+    "conflicting" for a ComicInfo that says chapter while members say volume,
+    for both marker families present, and for two ComicInfo documents; a
+    non-"fully_checked" integrity when any page could not be read and
+    validated. All of those fall through to None below.
+    """
+    path = Path(str(source_path or "").strip())
+    if path.suffix.lower() != ".cbz":
+        # archive_member_semantics() only reads .cbz. A .cbr/.pdf cannot be
+        # content-proved, so it keeps the existing quarantine.
         return None
-    number = next(iter(issue_tokens))
-    return {"unit_type": "volume", "volume_number": number, "normalized_number": number}
+    try:
+        if not path.is_file():
+            return None
+    except OSError:
+        return None
+    reader = semantics_reader or inkdrop_artifact_acceptance.archive_member_semantics
+    try:
+        semantics = reader(path)
+    except Exception:
+        return None
+    semantics = semantics if isinstance(semantics, dict) else {}
+    if not semantics.get("checked") or semantics.get("archive_integrity") != "fully_checked":
+        return None
+    if str(semantics.get("semantic_unit") or "").strip().lower() != "volume":
+        return None
+    if semantics.get("chapter_numbers"):
+        return None
+    comicinfo = semantics.get("comicinfo") if isinstance(semantics.get("comicinfo"), dict) else {}
+    declared_member_volumes = [str(value) for value in (semantics.get("volume_numbers") or []) if str(value or "").strip()]
+    member_volumes = collection_guard_issue_tokens(*declared_member_volumes)
+    if declared_member_volumes and member_volumes != {volume_token}:
+        # Compared against the raw list, not the parsed tokens: a decimal
+        # member volume ("Vol.15.5") drops out of collection_guard_issue_tokens()
+        # entirely, and treating that as "the members said nothing" would let a
+        # ComicInfo declaration of volume 15 outvote members that plainly say
+        # otherwise.
+        return None
+    signal = ""
+    if (
+        boolish(comicinfo.get("authoritative"), False)
+        and str(comicinfo.get("semantic_unit") or "").strip().lower() == "volume"
+        and collection_guard_issue_tokens(comicinfo.get("volume")) == {volume_token}
+    ):
+        signal = "trusted_comicinfo_volume_declaration"
+    elif member_volumes == {volume_token}:
+        signal = "archive_member_volume_structure"
+    if not signal:
+        return None
+    page_count = int(semantics.get("credible_image_count") or 0)
+    completeness = inkdrop_artifact_acceptance.volume_completeness_decision(
+        page_count,
+        int(semantics.get("credible_image_payload_bytes") or 0),
+        path.name,
+        "volume",
+    )
+    if completeness.get("partial_artifact_suspected"):
+        # Reuses the existing volume safety floor rather than inventing a
+        # second page-count rule. See the PR notes: InkDrop stores no
+        # per-series page-count history, so there is no honest "expected
+        # chapter length for THIS series" to compare against -- this only
+        # rejects archives too small to be any volume at all.
+        return None
+    return {
+        "signal": signal,
+        "volume_number": volume_token,
+        "page_count": page_count,
+        "comicinfo_evidence": list(comicinfo.get("evidence") or []),
+        "archive_evidence": list(semantics.get("evidence") or []),
+    }
 
 
-def collection_target_single_part_block_reason(queue, record=None):
+def collection_guard_source_mixed_marker_volume_proof(queue, raw, record, issue_tokens, semantics_reader=None):
+    """A FRESH SOURCE archive whose filename carries both an exact-matching
+    volume marker and a redundant chapter-style suffix, proved by the archive's
+    own contents to actually be that volume.
+
+    Scoped to fresh-source acceptance on purpose. InkDrop's own canonical
+    output is always volume-only naming ("v15.cbz"), so a mixed-token file
+    sitting at the DESTINATION is unexplained foreign content and stays under
+    the strict check -- callers opt in explicitly, and nothing opts in for a
+    destination path.
+
+    Everything the target side of collection_guard_exact_manga_volume_proof()
+    demands is demanded here unchanged. Only the source-side requirement (a
+    filename with no non-volume marker at all) is replaced -- by archive
+    evidence, never by the filename's own volume number.
+    """
+    media_type = str(queue.get("media_type") or raw.get("media_type") or "").strip().lower()
+    if media_type not in MANGA_MEDIA_TYPES or len(issue_tokens) != 1:
+        return None
+    target_identity_text = collection_guard_text(
+        queue.get("query") or raw.get("query"),
+        queue.get("issue_title") or raw.get("issue_title"),
+    )
+    if (
+        collection_guard_explicit_volume_tokens(target_identity_text) != issue_tokens
+        or not collection_guard_has_only_exact_singular_volume_tokens(target_identity_text)
+    ):
+        return None
+    if NON_VOLUME_MANGA_SOURCE_PATTERN.search(collection_guard_normalized_text(target_identity_text)):
+        return None
+    unit_policy = media_management_manga_unit_policy({**raw, **queue})
+    if unit_policy.get("has_manga_unit_policy") and not unit_policy.get("manga_unit_allows_volume"):
+        return None
+    source_path = str(record.get("matched_local_path") or "").strip()
+    if not source_path:
+        return None
+    source_name = Path(source_path).name
+    if (
+        collection_guard_explicit_volume_tokens(source_name) != issue_tokens
+        or not collection_guard_has_only_exact_singular_volume_tokens(source_name)
+    ):
+        # A volume span, a decimal volume, a second volume number, or a volume
+        # number that is not the wanted one. Ill-formed for this proof.
+        return None
+    chapter_suffixes = MIXED_MARKER_CHAPTER_SUFFIX_PATTERN.findall(source_name)
+    if len(chapter_suffixes) != 1 or MIXED_MARKER_CHAPTER_RANGE_PATTERN.search(source_name):
+        # No mixed marker at all is already collection_guard_exact_manga_volume_proof()'s
+        # case and must not get a second, looser path to the same answer. More
+        # than one, or a range, is a partial-volume claim.
+        return None
+    residue = MIXED_MARKER_CHAPTER_SUFFIX_PATTERN.sub(" ", source_name)
+    if NON_VOLUME_MANGA_SOURCE_PATTERN.search(collection_guard_normalized_text(residue)):
+        # A "part"/"page pack"/"issue" marker is a different claim than a
+        # redundant chapter label, and volume evidence must not launder it.
+        return None
+    return collection_guard_source_volume_archive_evidence(
+        source_path,
+        next(iter(issue_tokens)),
+        semantics_reader=semantics_reader,
+    )
+
+
+def exact_manga_volume_target_identity(
+    queue,
+    record=None,
+    *,
+    allow_source_archive_evidence=False,
+    archive_semantics_reader=None,
+):
+    """Return the durable exact volume identity accepted by the collection guard."""
+    queue = dict(queue or {})
+    record = dict(record or {})
+    raw = json_loads(queue.get("raw_json") or "{}", {})
+    raw = raw if isinstance(raw, dict) else {}
+    issue_tokens = collection_guard_target_issue_tokens(queue, raw)
+    if collection_guard_exact_manga_volume_proof(queue, raw, record, issue_tokens):
+        number = next(iter(issue_tokens))
+        return {"unit_type": "volume", "volume_number": number, "normalized_number": number}
+    if not allow_source_archive_evidence:
+        return None
+    evidence = collection_guard_source_mixed_marker_volume_proof(
+        queue, raw, record, issue_tokens, semantics_reader=archive_semantics_reader
+    )
+    if not evidence:
+        return None
+    number = evidence["volume_number"]
+    return {
+        "unit_type": "volume",
+        "volume_number": number,
+        "normalized_number": number,
+        "volume_evidence": evidence["signal"],
+        "volume_evidence_page_count": evidence["page_count"],
+    }
+
+
+def collection_target_single_part_block_reason(
+    queue,
+    record=None,
+    *,
+    allow_source_archive_evidence=False,
+    archive_semantics_reader=None,
+):
     queue = dict(queue or {})
     record = dict(record or {})
     raw = json_loads(queue.get("raw_json") or "{}", {})
@@ -17295,22 +17547,32 @@ def collection_target_single_part_block_reason(queue, record=None):
     if not target_is_collection:
         return ""
     source_identity_text = collection_guard_text(
-        record.get("matched_local_path"),
+        # Scoped to the file and its release folder. Everything above that is
+        # staging/temp structure the download client chose, and reading it as
+        # unit identity quarantines correct files -- see
+        # source_identity_path_text().
+        source_identity_path_text(record.get("matched_local_path")),
         record.get("title"),
         record.get("reason"),
     )
     source_text = collection_guard_text(source_identity_text, record.get("query"), record.get("matched_series"))
     if not source_text:
         return ""
+    if allow_source_archive_evidence and collection_guard_source_mixed_marker_volume_proof(
+        queue,
+        raw,
+        record,
+        collection_guard_target_issue_tokens(queue, raw),
+        semantics_reader=archive_semantics_reader,
+    ):
+        # Must run before the blanket single-part scan below: that scan matches
+        # the redundant "c015" and returns on the first hit, so a proof placed
+        # after it would never be reached. The archive itself proved this is
+        # the wanted volume; see collection_guard_source_volume_archive_evidence().
+        return ""
     if SINGLE_PART_SOURCE_PATTERN.search(collection_guard_normalized_text(source_text)):
         return "single_part_file_does_not_satisfy_collection_target"
-    issue_tokens = collection_guard_issue_tokens(
-        queue.get("issue_number"),
-        queue.get("normalized_number"),
-        raw.get("issue_number"),
-        raw.get("normalized_number"),
-        raw.get("trusted_issue"),
-    )
+    issue_tokens = collection_guard_target_issue_tokens(queue, raw)
     media_type = str(queue.get("media_type") or raw.get("media_type") or "").strip().lower()
     target_has_volume_marker = bool(VOLUME_MARKER_PATTERN.search(collection_guard_text(
         queue.get("query"), queue.get("issue_title"), raw.get("query"), raw.get("issue_title")
@@ -18525,6 +18787,143 @@ def duplicate_active_handoff_group_key(task):
     return (queue_id, source_key or "download_client", provider_key or client_key or source_key)
 
 
+# A waiting SLSKD candidate whose staged file never matched leaves a
+# download_task parked at status='staged_filename_mismatch', state='queued'.
+# It is a real record of a real attempt and must stay readable -- but it is a
+# record of something that never left InkDrop. Nothing was handed to a
+# download client, so it has no external client id, and two of them on the
+# same queue item for the same candidate are not two remote downloads. They
+# are the same attempt observed twice.
+#
+# The strict duplicate-live-task audit
+# (tools/inkdrop_duplicate_live_task_audit.py) counts every one of those as a
+# live duplicate, because "live" there is a phase test and this phase is one
+# of them. Live production carried exactly one such group.
+DOWNLOAD_TASK_DUPLICATE_CANDIDATE_MISMATCH_STATUSES = {"staged_filename_mismatch"}
+
+
+def duplicate_candidate_mismatch_group_key(task):
+    """(queue id, candidate identity, client) for a mismatch row, or None.
+
+    Deliberately keyed on candidate_identity rather than the looser
+    source/provider key the handoff cleanup uses: two rows only describe the
+    same attempt if they are about the same candidate. A row with no
+    candidate identity is never grouped -- there is nothing to prove it is
+    the same work as anything else.
+    """
+    task = task if isinstance(task, dict) else {}
+    queue_id = str(task.get("queue_id") or "").strip()
+    candidate = str(task.get("candidate_identity") or "").strip()
+    if not queue_id or not candidate:
+        return None
+    if str(task.get("status") or "").strip().lower() not in DOWNLOAD_TASK_DUPLICATE_CANDIDATE_MISMATCH_STATUSES:
+        return None
+    return (queue_id, candidate, download_task_client_key(task) or "")
+
+
+def duplicate_candidate_mismatch_download_task_payload(task, survivor, now, key):
+    raw = json_loads((task or {}).get("raw_json") or "{}", {})
+    raw = raw if isinstance(raw, dict) else {}
+    raw.update(
+        {
+            "previous_status": (task or {}).get("status"),
+            "previous_state": (task or {}).get("state"),
+            "cleanup_reason": "duplicate same-queue/same-candidate staged-filename-mismatch row with no download client identity",
+            "duplicate_candidate_group": list(key),
+            "canonical_download_task_id": (survivor or {}).get("id"),
+            "retired_at": now,
+        }
+    )
+    return raw
+
+
+def cleanup_duplicate_candidate_mismatch_download_tasks(con, now):
+    """Keep one mismatch row per queue item + candidate; retire the rest.
+
+    Fails closed in the direction that matters: if ANY row in the group
+    carries a real download-client identity, the whole group is left alone.
+    Two rows where one is genuinely tracked in a client are not a duplicate
+    to canonicalize away -- retiring one of those would hide a real transfer.
+
+    Retiring never deletes. The row keeps its title, paths, timestamps and
+    raw payload, gains its previous status/state and the canonical row's id,
+    and emits a history event, so the audit trail survives.
+    """
+    if not con:
+        return 0
+    rows = con.execute(
+        """
+        select dt.id, dt.queue_id, dt.wanted_id, dt.series_id, dt.issue_id,
+               dt.source_attempt_id, dt.source, dt.provider_id, dt.provider,
+               dt.protocol, dt.download_client, dt.external_id,
+               dt.candidate_identity, dt.title, dt.status, dt.state,
+               dt.lifecycle_phase, dt.save_path, dt.local_path,
+               dt.started_at, dt.updated_at, dt.completed_at, dt.raw_json
+        from download_tasks dt
+        join queue_items q on q.id = dt.queue_id
+        where q.active = 1
+          and lower(coalesce(dt.status, '')) in ('staged_filename_mismatch')
+          and nullif(trim(coalesce(dt.queue_id, '')), '') is not null
+          and nullif(trim(coalesce(dt.candidate_identity, '')), '') is not null
+        order by coalesce(dt.updated_at, dt.completed_at, dt.started_at, 0) desc, dt.id desc
+        """
+    ).fetchall()
+    groups = {}
+    for row in rows:
+        task = dict(row)
+        key = duplicate_candidate_mismatch_group_key(task)
+        if not key:
+            continue
+        groups.setdefault(key, []).append(task)
+
+    retired = 0
+    for key, tasks in groups.items():
+        if len(tasks) < 2:
+            continue
+        if any(str(task.get("external_id") or "").strip() for task in tasks):
+            # At least one of these really is tracked in a download client.
+            # Whatever is going on, it is not internal duplication.
+            continue
+        tasks.sort(
+            key=lambda task: (
+                download_task_lifecycle_rank(task),
+                download_task_timestamp(task),
+                str(task.get("id") or ""),
+            ),
+            reverse=True,
+        )
+        survivor = tasks[0]
+        survivor_ts = download_task_timestamp(survivor)
+        for task in tasks[1:]:
+            if not task.get("id"):
+                continue
+            retire_download_task(
+                con,
+                task,
+                status="superseded_duplicate_candidate",
+                state="failed",
+                ts=max(now, survivor_ts, download_task_timestamp(task)),
+                raw_payload=duplicate_candidate_mismatch_download_task_payload(task, survivor, now, key),
+                source_attempt_id=survivor.get("source_attempt_id"),
+            )
+            con.execute(
+                """
+                update download_tasks
+                set lifecycle_phase='superseded',
+                    retry_eligible=0,
+                    failure_reason=coalesce(nullif(failure_reason, ''), ?)
+                where id=?
+                """,
+                (
+                    "Duplicate record of the same waiting candidate on this queue item; "
+                    "the canonical row is kept.",
+                    task["id"],
+                ),
+            )
+            retired += 1
+    return retired
+
+
 def cleanup_duplicate_active_handoff_download_tasks(con, now):
     if not con:
         return 0
@@ -18988,6 +19387,111 @@ def failed_slskd_staged_download_task_payload(task, attempt, now):
         }
     )
     return raw
+
+
+# The download_task shape that the historical-missing-stage retry resurrects:
+# status='transfer_succeeded_missing_stage' on an already-failed row. The retry
+# selector in inkdrop_manual_source_autoresolve.db_import_retry_records()
+# reaches those rows regardless of state, but every retirement path here only
+# ever covered state in ('import_ready','importing') -- so a row in this shape
+# was permanently selectable and never retireable, and the resolver re-derived
+# "completed but nothing staged" against it on every pass, indefinitely.
+EXPIRED_TRANSFER_EVIDENCE_RETIRABLE_STATUSES = {"transfer_succeeded_missing_stage"}
+
+
+def retire_expired_transfer_evidence_download_tasks(
+    con, queue_id, attempt, source_attempt_id=None, now=None
+):
+    """Close out the download_task whose stale completion evidence just expired.
+
+    Without this the row keeps its resurrectable status forever and the next
+    resolver pass rebuilds the same dead candidate from it.
+    """
+    if not con or not queue_id or not isinstance(attempt, dict):
+        return 0
+    if str(attempt.get("status") or "").strip().lower() != "transfer_evidence_expired":
+        return 0
+    now = safe_float(now, None) or time.time()
+    attempt_identity = str(attempt.get("candidate_identity") or "").strip()
+    attempt_external = str(
+        attempt.get("external_id") or attempt.get("slskd_transfer_id") or ""
+    ).strip()
+    attempt_path_key = normalize_download_task_identity(download_task_local_path(attempt))
+    placeholders = ",".join("?" for _ in EXPIRED_TRANSFER_EVIDENCE_RETIRABLE_STATUSES)
+    rows = con.execute(
+        f"""
+        select id, queue_id, wanted_id, series_id, issue_id, source_attempt_id,
+               source, provider_id, provider, protocol, download_client, external_id,
+               candidate_identity, lifecycle_phase, outcome, display_phase,
+               failure_reason, retry_eligible, title, status, state, category,
+               save_path, local_path, size_bytes, progress, started_at, updated_at,
+               completed_at, raw_json
+        from download_tasks
+        where queue_id=?
+          and lower(coalesce(status, '')) in ({placeholders})
+          and (
+                lower(coalesce(source, '')) in ('slskd','soulseek')
+             or lower(coalesce(protocol, '')) in ('slskd','soulseek')
+             or lower(coalesce(download_client, '')) = 'slskd'
+          )
+        """,
+        (queue_id, *sorted(EXPIRED_TRANSFER_EVIDENCE_RETIRABLE_STATUSES)),
+    ).fetchall()
+    reason = str(
+        attempt.get("reason") or attempt.get("failure_reason") or "transfer_evidence_expired"
+    ).strip()
+    retired = 0
+    for row in rows:
+        task = dict(row)
+        if source_attempt_id and task.get("source_attempt_id") == source_attempt_id:
+            continue
+        # Retire only the row this expiry is actually about. The peer username
+        # is scrubbed out of persisted evidence, so identity here is the
+        # candidate identity, the SLSKD transfer id, or the staged path -- any
+        # one matching is enough, but a row that contradicts all the ones we
+        # have is a different candidate and is left alone.
+        task_identity = str(task.get("candidate_identity") or "").strip()
+        task_external = str(task.get("external_id") or "").strip()
+        task_path_key = normalize_download_task_identity(
+            download_task_import_path(task) or task.get("local_path")
+        )
+        matched = (
+            (attempt_identity and task_identity and attempt_identity == task_identity)
+            or (attempt_external and task_external and attempt_external == task_external)
+            or (attempt_path_key and task_path_key and attempt_path_key == task_path_key)
+        )
+        if not matched:
+            continue
+        payload = json_loads(task.get("raw_json") or "{}", {})
+        payload = payload if isinstance(payload, dict) else {}
+        payload.update(
+            {
+                "previous_status": task.get("status"),
+                "previous_state": task.get("state"),
+                "cleanup_reason": reason,
+                "failure_reason": reason,
+                "lifecycle_phase": "failed_candidate",
+                "retry_eligible": True,
+                "transfer_evidence_expired": True,
+                "transfer_evidence_expired_at": now,
+                "transfer_evidence_expired_at_iso": utc_stamp(now),
+            }
+        )
+        retire_download_task(
+            con,
+            task,
+            status="transfer_evidence_expired",
+            state="failed",
+            ts=now,
+            raw_payload=payload,
+            source_attempt_id=source_attempt_id,
+        )
+        con.execute(
+            "update download_tasks set failure_reason=?, retry_eligible=1, lifecycle_phase='failed_candidate' where id=?",
+            (reason, task["id"]),
+        )
+        retired += 1
+    return retired
 
 
 def retire_failed_slskd_staged_download_tasks(con, queue_id, attempt, source_attempt_id=None, now=None):
@@ -25137,6 +25641,7 @@ MANUAL_SOURCE_SEARCH_STATUSES = {
     "transfer_failed",
     "transfer_stalled",
     "transfer_succeeded_missing_stage",
+    "transfer_evidence_expired",
     "transfer_stale_unknown",
     "transfer_missing_stale",
     "retry_pending",
@@ -26772,10 +27277,30 @@ def merge_wanted_items_group(con, series_id, canonical_issue_id, wanted_rows, no
             best_reason = wanted["reason"]
         best_priority = max(best_priority, int(wanted["priority"] or 50))
         best_created = min(best_created, float(wanted["created_at"] or now))
-    con.execute(
+    # wanted_items.issue_id is a real foreign key, and canonical_issue_id came
+    # from a SELECT taken before this write. ~30 background jobs each open
+    # their own subprocess connection to this same DB file, and every one of
+    # them runs this sweep: two of them can disagree about which row in a
+    # duplicate group is canonical, because the ordering that picks it reads
+    # queue/source/import reference counts and updated_at, all of which the
+    # others are concurrently changing. So the row this process chose as the
+    # survivor can be deleted by another process as its loser in the gap
+    # before this insert runs, and the insert then throws
+    # sqlite3.IntegrityError: FOREIGN KEY constraint failed.
+    #
+    # That is the same check-then-act shape the issues DELETE below already
+    # had, and it gets the same treatment: fold the existence test into the
+    # statement so SQLite evaluates it atomically. If the canonical issue is
+    # gone, this writes nothing and reports zero rows.
+    #
+    # Reproduced at roughly 1 run in 14 of the concurrent-subprocess fixture,
+    # in merge_wanted_items_group rather than in the issues cleanup the
+    # earlier fix targeted.
+    cur = con.execute(
         """
         insert into wanted_items(id, series_id, issue_id, reason, status, priority, created_at, updated_at, raw_json)
-        values(?,?,?,?,?,?,?,?,?)
+        select ?,?,?,?,?,?,?,?,?
+        where exists (select 1 from issues where id=?)
         on conflict(id) do update set
           series_id=excluded.series_id,
           issue_id=excluded.issue_id,
@@ -26795,8 +27320,17 @@ def merge_wanted_items_group(con, series_id, canonical_issue_id, wanted_rows, no
             best_created,
             now,
             json_dumps({"deduped_wanted_rows": raw_rows, "deduped_at": now, "deduped_at_iso": utc_stamp(now)}),
+            canonical_issue_id,
         ),
     )
+    if not cur.rowcount:
+        # The survivor this group was going to collapse onto no longer exists,
+        # so there is nothing safe to retarget the losers to. Leave the group
+        # untouched -- deleting them here would destroy rows whose replacement
+        # was never written. The sweep is idempotent and re-runs, and whichever
+        # process deleted that issue is performing this same merge for the
+        # group it does see.
+        return changed
     for wanted in wanted_rows:
         if wanted["id"] == canonical_wanted_id:
             continue
@@ -34135,6 +34669,7 @@ def sync_state(state_dir, db_path=None, *, retire_absent_json=False):
             counts["retired_download_queue_items_requeued"] = cleanup_queue_items_with_retired_download_tasks(con, now)
             counts["superseded_slskd_queue_active_download_tasks_retired"] = cleanup_superseded_slskd_queue_active_download_tasks(con, now)
             counts["duplicate_active_handoff_tasks_retired"] = cleanup_duplicate_active_handoff_download_tasks(con, now)
+            counts["duplicate_candidate_mismatch_tasks_retired"] = cleanup_duplicate_candidate_mismatch_download_tasks(con, now)
             counts["inactive_download_tasks_retired"] = cleanup_inactive_active_download_tasks(con, now)
             counts["duplicate_download_tasks_removed"] = cleanup_duplicate_download_tasks(con)
             counts["stale_slskd_wrong_title_bad_candidates"] = sync_stale_slskd_wrong_title_bad_candidates(con, now)
@@ -35789,6 +36324,7 @@ def sync_queue_state(
             retired_download_queue_items_requeued = cleanup_queue_items_with_retired_download_tasks(con, now)
             superseded_slskd_queue_active_download_tasks_retired = cleanup_superseded_slskd_queue_active_download_tasks(con, now)
             duplicate_active_handoff_tasks_retired = cleanup_duplicate_active_handoff_download_tasks(con, now)
+            duplicate_candidate_mismatch_tasks_retired = cleanup_duplicate_candidate_mismatch_download_tasks(con, now)
             inactive_download_tasks_retired = cleanup_inactive_active_download_tasks(con, now)
             download_task_dupes_removed = cleanup_duplicate_download_tasks(con)
             stale_active_queue_display_cleared = cleanup_queue_items_without_active_download_work(con, now)
@@ -35906,6 +36442,7 @@ def sync_queue_state(
                 "retired_download_queue_items_requeued": retired_download_queue_items_requeued,
                 "superseded_slskd_queue_active_download_tasks_retired": superseded_slskd_queue_active_download_tasks_retired,
                 "duplicate_active_handoff_tasks_retired": duplicate_active_handoff_tasks_retired,
+                "duplicate_candidate_mismatch_tasks_retired": duplicate_candidate_mismatch_tasks_retired,
                 "inactive_download_tasks_retired": inactive_download_tasks_retired,
                 "duplicate_download_tasks_removed": download_task_dupes_removed,
                 "stale_active_queue_display_cleared": stale_active_queue_display_cleared,
@@ -36206,6 +36743,7 @@ def sync_import_results(state_dir, db_path=None):
             superseded_slskd_queue_active_download_tasks_retired = cleanup_superseded_slskd_queue_active_download_tasks(con, now)
             con.commit()
             duplicate_active_handoff_tasks_retired = cleanup_duplicate_active_handoff_download_tasks(con, now)
+            duplicate_candidate_mismatch_tasks_retired = cleanup_duplicate_candidate_mismatch_download_tasks(con, now)
             con.commit()
             inactive_download_tasks_retired = cleanup_inactive_active_download_tasks(con, now)
             con.commit()
@@ -36300,7 +36838,7 @@ def sync_import_results(state_dir, db_path=None):
             con.commit()
         summary = state_summary(path)
         summary.update(source)
-        summary.update({"ok": True, "db_path": str(path), "synced": {"imports": count, "import_status_events": retired_import_status_events, "download_reconciliation": reconciliation_count, "bad_source_candidates": bad_source_candidate_count, "stale_download_task_bad_candidates": stale_download_task_bad_candidates, "stale_slskd_wrong_title_bad_candidates": stale_slskd_wrong_title_bad_candidates, "download_tasks": download_task_count, "provider_contract_backfill": provider_contract_backfill, "superseded_download_tasks_retired": superseded_download_tasks_retired, "superseded_sent_download_tasks_retired": superseded_sent_download_tasks_retired, "local_pack_superseded_handoff_tasks_retired": local_pack_superseded_handoff_tasks_retired, "stale_download_client_handoff_tasks_retired": stale_download_client_handoff_tasks_retired, "wrong_title_active_slskd_download_tasks_retired": wrong_title_active_slskd_download_tasks_retired, "retired_download_queue_items_requeued": retired_download_queue_items_requeued, "superseded_slskd_queue_active_download_tasks_retired": superseded_slskd_queue_active_download_tasks_retired, "duplicate_active_handoff_tasks_retired": duplicate_active_handoff_tasks_retired, "inactive_download_tasks_retired": inactive_download_tasks_retired, "duplicate_download_tasks_removed": download_task_dupes_removed, "download_task_history": download_task_history_count, "legacy_folder_completion_backfill": legacy_folder_completion_backfill, "queue_verified_pending_scan_backfill": queue_verified_pending_scan_backfill, "optional_folder_scan_pending_promoted": optional_folder_scan_pending_promoted, "pending_pack_import_backfill": pending_pack_import_backfill, "direct_import_verification": direct_import_verification, "verified_queue_backfill": verified_backfill_count, "import_source_attempt_links": source_linked_count, "superseded_adapter_import_results": superseded_adapter_import_results, "missing_folder_import_proofs_retracted": missing_folder_import_proofs_retracted, "wrong_unit_page_pack_import_proofs_retracted": wrong_unit_page_pack_import_proofs_retracted, "active_download_queue_settled": active_download_queue_settled_count, "verified_import_queue_settled": verified_import_settled_count, "duplicate_issue_wanted_reconciled": duplicate_issue_wanted_reconciled, "collected_edition_coverage_reconciled": collected_edition_coverage_reconciled, "expired_import_authorities_released": expired_import_authorities_released, "queue_scheduler_evidence_backfilled": queue_scheduler_evidence_backfilled, "optional_folder_import_queue_settled": optional_folder_import_settled_count, "folder_presence_backfill": folder_presence_backfill, "folder_presence_wanted_backfill": folder_presence_wanted_backfill, "collection_single_part_verified_reopened": collection_single_part_verified_reopened, "superseded_duplicates": superseded_count, "duplicate_verified_activity_attempts_removed": verification_dupes_removed, "media_files": media_files}, "synced_at": now, "synced_at_iso": utc_stamp(now)})
+        summary.update({"ok": True, "db_path": str(path), "synced": {"imports": count, "import_status_events": retired_import_status_events, "download_reconciliation": reconciliation_count, "bad_source_candidates": bad_source_candidate_count, "stale_download_task_bad_candidates": stale_download_task_bad_candidates, "stale_slskd_wrong_title_bad_candidates": stale_slskd_wrong_title_bad_candidates, "download_tasks": download_task_count, "provider_contract_backfill": provider_contract_backfill, "superseded_download_tasks_retired": superseded_download_tasks_retired, "superseded_sent_download_tasks_retired": superseded_sent_download_tasks_retired, "local_pack_superseded_handoff_tasks_retired": local_pack_superseded_handoff_tasks_retired, "stale_download_client_handoff_tasks_retired": stale_download_client_handoff_tasks_retired, "wrong_title_active_slskd_download_tasks_retired": wrong_title_active_slskd_download_tasks_retired, "retired_download_queue_items_requeued": retired_download_queue_items_requeued, "superseded_slskd_queue_active_download_tasks_retired": superseded_slskd_queue_active_download_tasks_retired, "duplicate_active_handoff_tasks_retired": duplicate_active_handoff_tasks_retired, "duplicate_candidate_mismatch_tasks_retired": duplicate_candidate_mismatch_tasks_retired, "inactive_download_tasks_retired": inactive_download_tasks_retired, "duplicate_download_tasks_removed": download_task_dupes_removed, "download_task_history": download_task_history_count, "legacy_folder_completion_backfill": legacy_folder_completion_backfill, "queue_verified_pending_scan_backfill": queue_verified_pending_scan_backfill, "optional_folder_scan_pending_promoted": optional_folder_scan_pending_promoted, "pending_pack_import_backfill": pending_pack_import_backfill, "direct_import_verification": direct_import_verification, "verified_queue_backfill": verified_backfill_count, "import_source_attempt_links": source_linked_count, "superseded_adapter_import_results": superseded_adapter_import_results, "missing_folder_import_proofs_retracted": missing_folder_import_proofs_retracted, "wrong_unit_page_pack_import_proofs_retracted": wrong_unit_page_pack_import_proofs_retracted, "active_download_queue_settled": active_download_queue_settled_count, "verified_import_queue_settled": verified_import_settled_count, "duplicate_issue_wanted_reconciled": duplicate_issue_wanted_reconciled, "collected_edition_coverage_reconciled": collected_edition_coverage_reconciled, "expired_import_authorities_released": expired_import_authorities_released, "queue_scheduler_evidence_backfilled": queue_scheduler_evidence_backfilled, "optional_folder_import_queue_settled": optional_folder_import_settled_count, "folder_presence_backfill": folder_presence_backfill, "folder_presence_wanted_backfill": folder_presence_wanted_backfill, "collection_single_part_verified_reopened": collection_single_part_verified_reopened, "superseded_duplicates": superseded_count, "duplicate_verified_activity_attempts_removed": verification_dupes_removed, "media_files": media_files}, "synced_at": now, "synced_at_iso": utc_stamp(now)})
         summary["synced"]["rejected_import_status_events"] = len(import_status_sync["rejected"])
         summary["synced"]["contradictory_completion_provenance_retracted"] = contradictory_completion_provenance_retracted
         return summary
@@ -40413,6 +40951,41 @@ def apply_series_duplicate_merge(
             ).fetchone()
             if shadow_policy and target_policy and tuple(shadow_policy) != tuple(target_policy):
                 blockers.append("conflicting_source_profile_overrides")
+
+        # A queue_claim is a live worker's lease on a queue row, held as
+        # (queue_id, owner_id): heartbeat_queue_claim() and
+        # release_queue_claim() both match on that exact pair. The merge
+        # rewrites queue rows underneath it in two ways, and neither is safe
+        # while a worker still holds the claim.
+        #
+        # When the surviving row already has its own claim, the shadow's is
+        # deleted outright -- the worker holding it keeps working and its
+        # heartbeat silently stops matching, so the row it is actively
+        # processing looks unclaimed to everyone else.
+        #
+        # When the surviving row has no claim, the shadow's claim is moved by
+        # rewriting queue_id. The worker still owns the OLD identity, so its
+        # next heartbeat and its eventual release both match zero rows: the
+        # lease it thinks it holds cannot be renewed and cannot be let go, and
+        # it sits there until it expires on its own.
+        #
+        # Neither is recoverable by the worker, so refuse rather than repair.
+        # Liveness matches what the rest of the claim lifecycle means by it:
+        # cleanup_queue_claims deletes expires_at <= now, so strictly-greater
+        # is live and a claim expiring exactly at now is already reclaimable.
+        if shadow and target:
+            live_claim = con.execute(
+                """
+                select 1 from queue_claims
+                join queue_items on queue_items.id = queue_claims.queue_id
+                where queue_items.series_id in (?, ?)
+                  and queue_claims.expires_at > ?
+                limit 1
+                """,
+                (shadow_series_id, target_series_id, now),
+            ).fetchone()
+            if live_claim:
+                blockers.append("active_queue_claim")
 
         preview = {
             "ok": True,
@@ -54868,6 +55441,8 @@ def source_attempt_row_from_record(row):
             add_part("verified")
         elif status in {"enqueue_response_ambiguous", "ambiguous_enqueue_response"}:
             add_part("ambiguous enqueue response")
+        elif status == "transfer_evidence_expired":
+            add_part("download no longer available")
         elif status in {"transfer_failed", "transfer_stalled", "transfer_succeeded_missing_stage", "transfer_stale_unknown", "transfer_missing_stale"}:
             add_part("transfer retry needed")
         if live_state and live_state != status:
@@ -54912,6 +55487,8 @@ def source_attempt_row_from_record(row):
         out["next_action"] = "SLSKD import verified"
     elif source == "slskd" and status in {"enqueue_response_ambiguous", "ambiguous_enqueue_response"}:
         out["next_action"] = "SLSKD enqueue response was ambiguous; InkDrop will recheck before retrying"
+    elif source == "slskd" and status == "transfer_evidence_expired":
+        out["next_action"] = "The peer's copy is gone and nothing was left staged; InkDrop is searching for another source"
     elif source == "slskd" and status in {"transfer_failed", "transfer_stalled", "transfer_succeeded_missing_stage", "transfer_stale_unknown", "transfer_missing_stale"}:
         out["next_action"] = "SLSKD transfer failed; automatic retry will continue"
     elif source == "slskd" and status in {"api_error", "download_api_error", "download_preflight_api_error", "transient_error", "provider_unavailable", "provider_wait", "source_busy"}:

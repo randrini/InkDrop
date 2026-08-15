@@ -170,6 +170,33 @@ def _active_log(path):
     return path.name.endswith(".log") or path.name.endswith(".jsonl")
 
 
+def _legacy_state_log_root(log_dir):
+    """Return the legacy top-level log root for the default runtime scan.
+
+    Older installs wrote ``*.log`` files directly under ``INKDROP_STATE_DIR``,
+    and several long-lived writers still do. Rotation only ever walked
+    ``INKDROP_LOG_DIR``, so those files grew without bound while System Status
+    -- which does inspect them -- reported "auto-rotation will clear it on its
+    next pass" about a file no rotation pass would ever look at.
+
+    Keep explicit ``--log-dir`` calls isolated, and never broaden this legacy
+    compatibility pass to JSONL files because several top-level JSONL files are
+    workflow authority rather than disposable diagnostics.
+    """
+
+    if log_dir is not None:
+        return None
+    state_root = Path(inkdrop_runtime_config.state_dir())
+    canonical_root = Path(inkdrop_runtime_config.log_dir())
+    try:
+        if state_root.resolve() == canonical_root.resolve():
+            return None
+    except OSError:
+        if state_root == canonical_root:
+            return None
+    return state_root
+
+
 def _snapshot(path):
     try:
         row = path.stat()
@@ -291,6 +318,7 @@ def maintain_logs(
     now=None,
 ):
     root = Path(log_dir or inkdrop_runtime_config.log_dir())
+    legacy_state_root = _legacy_state_log_root(log_dir)
     selected = policy or policy_from_env()
     now = time.time() if now is None else float(now)
     summary = {
@@ -320,7 +348,15 @@ def maintain_logs(
         return summary
     try:
         root.mkdir(parents=True, exist_ok=True)
-        active_logs = sorted(path for path in root.rglob("*") if _active_log(path) and _regular_file(path))
+        active_logs = [path for path in root.rglob("*") if _active_log(path) and _regular_file(path)]
+        if legacy_state_root is not None:
+            try:
+                active_logs.extend(
+                    path for path in legacy_state_root.glob("*.log") if _regular_file(path)
+                )
+            except OSError:
+                pass
+        active_logs = sorted(set(active_logs), key=str)
         active_opened = open_inode_provider()
         for path in active_logs:
             summary["scanned"] += 1
@@ -347,7 +383,13 @@ def maintain_logs(
 
         expiry = now - int(selected.retention_days) * 86400
         grouped = {}
-        for path in root.rglob("*"):
+        generation_paths = list(root.rglob("*"))
+        if legacy_state_root is not None:
+            try:
+                generation_paths.extend(legacy_state_root.glob("*.log.*"))
+            except OSError:
+                pass
+        for path in set(generation_paths):
             parsed = _rotated_log(path)
             if parsed and _regular_file(path):
                 reference = _generation_reference_seconds(path, parsed)

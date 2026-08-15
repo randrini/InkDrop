@@ -359,7 +359,7 @@ def _same_origin(current_url, next_url):
 class _ConstrainedRedirectHandler(urlrequest.HTTPRedirectHandler):
     """Validate every urllib redirect before the next request is issued."""
 
-    def __init__(self, *, request, allowed_schemes, allowed_hosts, max_redirects):
+    def __init__(self, *, request, allowed_schemes, allowed_hosts, max_redirects, secret_header_names=()):
         self.original_request = request
         self.allowed_schemes = allowed_schemes
         self.allowed_hosts = allowed_hosts
@@ -368,6 +368,9 @@ class _ConstrainedRedirectHandler(urlrequest.HTTPRedirectHandler):
         self.redirect_url_hashes = []
         self.cross_origin_redirect_count = 0
         self.stripped_secret_headers = []
+        # Names the provider definition itself filled from a secret, which the
+        # fixed credential-name list cannot know about.
+        self.secret_header_names = list(secret_header_names or ())
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         next_count = self.redirect_count + 1
@@ -400,24 +403,46 @@ class _ConstrainedRedirectHandler(urlrequest.HTTPRedirectHandler):
         # this host's key.
         if not _same_origin(req.full_url, newurl):
             self.cross_origin_redirect_count += 1
-            for name in _secret_header_names_on(follow_up):
+            for name in _secret_header_names_on(follow_up, self.secret_header_names):
                 follow_up.remove_header(name)
                 if name not in self.stripped_secret_headers:
                     self.stripped_secret_headers.append(name)
         return follow_up
 
 
-def _secret_header_names_on(request):
+def secret_ref_header_names(request):
+    """Header names whose authored value carried a secret ref.
+
+    SECRET_HEADER_NAMES is a list of names known to be credentials --
+    Authorization, X-Api-Key, and friends. It cannot know that a provider
+    definition put its token in X-Custom-Auth, so a redirect boundary built
+    only on that list forwards the resolved credential to a different origin.
+    A header the definition itself filled from a secret is a credential by
+    provenance, whatever it is called, so the name is collected before
+    resolution replaces the ref with the value.
+    """
+    names = []
+    for name, value in _header_items(_dict(request).get("headers")):
+        if _contains_secret_ref(value) and name not in names:
+            names.append(name)
+    return names
+
+
+def _secret_header_names_on(request, extra_names=()):
     """Header names on a urllib Request that carry a credential.
 
     Both stores matter: Request.headers holds what the caller set, and
     unredirected_hdrs holds what the handler chain added -- remove_header()
     clears both, but only for a name it is actually given.
+
+    urllib capitalizes header names as it stores them, so provenance names are
+    matched case-insensitively rather than by identity.
     """
+    extra = {_lower(name) for name in (extra_names or ()) if str(name or "").strip()}
     names = []
     for store in (getattr(request, "headers", None), getattr(request, "unredirected_hdrs", None)):
         for name in list(_dict(store).keys()):
-            if _lower(name) in SECRET_HEADER_NAMES and name not in names:
+            if (_lower(name) in SECRET_HEADER_NAMES or _lower(name) in extra) and name not in names:
                 names.append(name)
     return names
 
@@ -435,11 +460,14 @@ def scrub_secret_values(text, secrets):
     """
     result = str(text or "")
     for secret in sorted({str(value) for value in (secrets or []) if str(value or "").strip()}, key=len, reverse=True):
-        if secret in result:
-            result = result.replace(secret, "<redacted>")
-        quoted = parse.quote(secret, safe="")
-        if quoted != secret and quoted in result:
-            result = result.replace(quoted, "<redacted>")
+        # Every encoding the value can reach the text in, not just the raw one.
+        # request_url() builds the query with urlencode(), which uses
+        # quote_plus() and writes a space as "+", while quote() writes "%20" --
+        # so a secret containing a space survived a quote()-only scrub and
+        # reached request_failed evidence fully encoded.
+        for form in (secret, parse.quote(secret, safe=""), parse.quote_plus(secret)):
+            if form and form in result:
+                result = result.replace(form, "<redacted>")
     return result
 
 
@@ -733,6 +761,7 @@ def source_http_get(
                 allowed_schemes=allowed_schemes,
                 allowed_hosts=effective_allowed_hosts,
                 max_redirects=max_redirects,
+                secret_header_names=secret_ref_header_names(original_request),
             )
             opener_fn = urlrequest.build_opener(redirect_handler).open
         else:

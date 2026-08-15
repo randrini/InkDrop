@@ -815,5 +815,3 @@ def source_attempt_seed(provider_id, path=None):
         "auto_download_allowed": summary["auto_download_allowed"],
         "requires_manual_review": summary["requires_manual_review"],
     }
-
-

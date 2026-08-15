@@ -23151,6 +23151,18 @@ body[data-inkdrop-view="source_memory"] #opDetailDock:not(:has(.source-memory-de
   color: var(--muted);
 }
 
+.queue-row-detail-redacted {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.queue-row-reveal-btn {
+  height: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
 .queue-empty-line {
   margin: 0 0 12px;
   color: var(--muted);

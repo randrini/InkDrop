@@ -204,6 +204,12 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<GroupKey>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<QueueRowDetail | null>(null);
+  // The route withholds exact paths, the download client's item id and the
+  // provider peer's username by default; this says whether this row actually
+  // had something withheld, so the reveal offer appears only where it means
+  // something.
+  const [detailRedacted, setDetailRedacted] = useState(false);
+  const [revealing, setRevealing] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const { pendingIds, doneIds, actionError, clearActionError, runRowAction } = useRowActions(() => loadPage(offset, queueFilter, { quiet: true }));
@@ -290,23 +296,52 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
       setDetailId(null);
       setDetail(null);
       setDetailError(null);
+      setDetailRedacted(false);
       return;
     }
     setDetailId(row.id);
     setDetail(null);
     setDetailError(null);
+    setDetailRedacted(false);
     setDetailLoading(true);
     try {
-      const data = await request<{ ok: boolean; view: { rows?: QueueRowDetail[] } }>(
-        `/api/inkdrop-state/queue?queue_id=${encodeURIComponent(row.id)}&summary=compact&limit=1`,
-      );
-      const full = data.view?.rows?.[0];
-      if (!full) throw new InkDropApiError("No detail available for this row.", { status: 200, code: "queue_detail_missing" });
-      setDetail(full);
+      await fetchDetail(row.id, false);
     } catch (cause) {
       setDetailError(cause instanceof InkDropApiError ? cause.message : "Could not load details.");
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function fetchDetail(rowId: string, reveal: boolean) {
+    const data = await request<{ ok: boolean; view: { rows?: QueueRowDetail[]; operational_detail_redacted?: boolean } }>(
+      `/api/inkdrop-state/queue?queue_id=${encodeURIComponent(rowId)}&summary=compact&limit=1${reveal ? "&reveal=1" : ""}`,
+    );
+    const full = data.view?.rows?.[0];
+    if (!full) throw new InkDropApiError("No detail available for this row.", { status: 200, code: "queue_detail_missing" });
+    setDetail(full);
+    setDetailRedacted(Boolean(data.view?.operational_detail_redacted));
+  }
+
+  // Exact paths, the download client's item id and the provider peer's
+  // username are withheld by default -- an operator who needs them to
+  // troubleshoot asks for them, the server checks that they are an admin, and
+  // the ask is written to the auth audit log.
+  async function revealDetail(rowId: string) {
+    setRevealing(true);
+    setDetailError(null);
+    try {
+      await fetchDetail(rowId, true);
+    } catch (cause) {
+      setDetailError(
+        cause instanceof InkDropApiError && cause.status === 403
+          ? "Only an administrator can show the full paths and client identifiers."
+          : cause instanceof InkDropApiError
+            ? cause.message
+            : "Could not show the full details.",
+      );
+    } finally {
+      setRevealing(false);
     }
   }
 
@@ -556,6 +591,21 @@ export function Queue({ payload }: { payload: QueueViewPayload }) {
                             ))}
                             {detailFields(detail).length === 0 && <p className="queue-row-detail-loading">Nothing extra is tracked for this row yet.</p>}
                           </dl>
+                        )}
+                        {detail && detailRedacted && (
+                          <p className="queue-row-detail-redacted">
+                            Showing file names only. The full paths, the download client's item id and the
+                            provider peer are hidden.{" "}
+                            <button
+                              type="button"
+                              className="queue-row-reveal-btn"
+                              disabled={revealing}
+                              onClick={() => void revealDetail(row.id)}
+                              title="Administrators only. Showing these is recorded in the security audit log."
+                            >
+                              {revealing ? "Showing…" : "Show them"}
+                            </button>
+                          </p>
                         )}
                         {detail && detail.last_attempt?.source_attempt_id && (
                           <button
