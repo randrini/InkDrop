@@ -58068,8 +58068,19 @@ def find_manual_review_raw_by_id(review_id):
                     item = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if review_id_for(item) == review_id:
+                rid = review_id_for(item)
+                if rid == review_id:
                     latest = item
+                    break
+                # review_id_for() hashes different inputs (reason, series,
+                # issue, query, candidate.title) with sha256[:16], but
+                # normalize_review_exception_id hashes (review, series,
+                # issue_number, review_reason, source) with sha256[:24].
+                # The frontend sends the latter; try both forms.
+                nid = normalize_review_exception_id(item)
+                if nid and nid == review_id:
+                    latest = item
+                    break
     except OSError:
         return None
     return latest
@@ -58734,14 +58745,25 @@ def quarantine_unmatched_group(payload):
 
 
 def find_manual_review(review_id):
+    # The frontend sends review_ids from normalize_review_exception_id()
+    # (sha256[:24] of "review|series|issue_number|reason|source"), but
+    # review_id_for() hashes different inputs (reason, series, issue, query,
+    # candidate.title) with sha256[:16]. Try both key forms so action
+    # endpoints (approve-local-file, ignore, etc.) always find the row.
     for item in load_manual_review_raw(limit=500):
         if review_id_for(item) == review_id:
+            return item
+        nid = normalize_review_exception_id(item)
+        if nid and nid == review_id:
             return item
     item = find_manual_review_raw_by_id(review_id)
     if item:
         return item
     for item in automation_exhausted_queue_review_rows(limit=500, include_hidden=True):
         if review_id_for(item) == review_id:
+            return item
+        nid = normalize_review_exception_id(item)
+        if nid and nid == review_id:
             return item
     # review_exceptions rows (the repeat-bad-candidate circuit breaker and
     # anything else synced via inkdrop_state.sync_review_exceptions) are
